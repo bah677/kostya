@@ -1,0 +1,5 @@
+-- Устарело: внутренние рассылки (mailing_campaigns) здесь не используются.
+-- Внешние кампании «Вар1–Вар6» — в ref_keys, см.:
+--   scripts/sql/ref_reaction_latency_by_slot.sql
+--
+-- psql "$DATABASE_URL" -f scripts/sql/ref_reaction_latency_by_slot.sql

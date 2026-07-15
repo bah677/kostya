@@ -1,0 +1,39 @@
+# Secrets
+.env
+**/.env
+**/.env.*
+!**/.env.example
+
+# Python
+**/venv/
+**/.venv/
+**/__pycache__/
+**/*.py[cod]
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
+**/*.egg-info/
+
+# Project data / logs (local runtime)
+**/data/
+**/log/
+**/LogFromProd/
+**/exports/
+**/chroma_data/
+
+# Nested legacy git (archived locally, do not publish)
+**/.git_archived_*/
+**/.git_old_*/
+
+# IDE / OS
+.cursor/
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Large / local media dumps
+**/*.mp4
+**/*.mov
+mt5setup.exe
+webview2.exe

@@ -1,0 +1,42 @@
+Нормализация копии БД Biblia (например biblia_db_dev) под ожидания монорепо club_ai.
+
+Запуск (пример):
+  export PGDATABASE=biblia_db_dev
+  export PGUSER=postgres
+  # или: PGPASSWORD=... PGHOST=localhost PGPORT=5432
+
+  bash migrations/biblia/normalize_to_club_ai/apply_normalize_biblia_to_club_ai.sh
+
+Прод (подробный сценарий: бэкап, супер-owner рассылок, ping, полный apply):
+  см. migrations/biblia/normalize_to_club_ai/apply_biblia_normalize_production.sh
+  (аргумент migrate | ping | hints | help)
+
+Порядок:
+  1) Локальные скрипты 10–20 (users, payments+donations, referrals, license/orders, messages).
+  2) migrations/biblia/bootstrap_club_runtime_minimal.sql
+  3) migrations/001 … 012, 013 (messages.processing_time_ms), 007, 009, 010, biblia/002_daily_mailing…
+
+Если падает 004_messages_unique_inbound.sql — в БД ещё есть дубли входящих; прогнать снова
+migrations/002_messages_dedupe.sql, затем повторить с 004.
+
+На проде: сделать бэкап, краткое окно без записи в messages/payments при необходимости, тот же скрипт.
+
+Владелец таблиц рассылок (mailing_*): если они остались за role postgres, выполните один раз от суперпользователя:
+
+  psql -U postgres -d biblia_db_dev -v ON_ERROR_STOP=1 \\
+    -f migrations/biblia/normalize_to_club_ai/98_mailing_tables_owner_bot_user.sql
+
+Права на все таблицы в public (permission denied при запуске бота): от суперпользователя,
+после правки app_role в файле — имя роли = DB_USER в .env:
+
+  sudo -u postgres psql -d biblia_db_dev -v ON_ERROR_STOP=1 \\
+    -f migrations/biblia/normalize_to_club_ai/99_grant_app_role_public_schema.sql
+
+(То же для клубной БД DB_NAME, если там та же ситуация после восстановления/клонирования.)
+
+После этого снова от bot_user:
+
+  psql ... -f migrations/012_mailing_audience_claimed_at.sql
+  psql ... -f migrations/biblia/002_daily_mailing_and_donation_counters.sql
+
+Также добавлен шаг 15_messages_add_surrogate_id_pk.sql в apply-скрипт (у старой Biblia не было колонки id в messages).

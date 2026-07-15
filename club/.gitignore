@@ -1,0 +1,30 @@
+# Секреты и окружение
+.env
+.env.*
+!.env.example
+
+# Python
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+
+# Данные и логи (не уезжают на GitHub)
+data/
+log/
+LogFromProd/
+exports/
+chroma_data/
+
+# IDE
+.cursor/
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db

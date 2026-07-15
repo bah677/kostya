@@ -1,0 +1,6 @@
+venv/
+log/
+LogFromProd/
+exports/
+**/__pycache__/
+**/*.log
