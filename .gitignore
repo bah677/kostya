@@ -37,3 +37,4 @@ Thumbs.db
 **/*.mov
 mt5setup.exe
 webview2.exe
+scripts/bots.conf.avatar_paths_patched
