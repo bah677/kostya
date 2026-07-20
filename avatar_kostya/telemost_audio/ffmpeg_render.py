@@ -21,7 +21,7 @@ def _ffmpeg_bin() -> str:
 
 def _timing_offset_sec() -> float:
     return float(
-        getattr(config, "TELEMOST_AUDIO_CLIPS_OFFSET_SEC", -2.5) or -2.5
+        getattr(config, "TELEMOST_AUDIO_CLIPS_OFFSET_SEC", -0.5) or -0.5
     )
 
 
@@ -88,7 +88,7 @@ async def render_audio_clips(
     moments: Sequence[AudioClipMoment],
     *,
     work_dir: str | Path,
-    max_duration_sec: int = 60,
+    max_duration_sec: int = 120,
 ) -> List[Path]:
     src = Path(audio_path)
     if not src.is_file():

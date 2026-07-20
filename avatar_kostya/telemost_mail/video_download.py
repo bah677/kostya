@@ -6,8 +6,9 @@ import logging
 import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 from urllib.parse import urlparse
 
 import httpx
@@ -19,19 +20,29 @@ def _safe_meeting_id(meeting_id: str) -> str:
     return re.sub(r"[^\w\-]+", "_", (meeting_id or "unknown").strip())[:64]
 
 
-def _yt_dlp_bin() -> Optional[str]:
-    return shutil.which("yt-dlp") or shutil.which("youtube-dl")
+def _yt_dlp_cmd() -> Optional[List[str]]:
+    """``python -m yt_dlp`` — устойчиво к битому shebang после переезда venv."""
+    try:
+        import yt_dlp  # noqa: F401
+
+        return [sys.executable, "-m", "yt_dlp"]
+    except Exception:
+        pass
+    bin_name = shutil.which("yt-dlp") or shutil.which("youtube-dl")
+    if bin_name:
+        return [bin_name]
+    return None
 
 
 def _download_via_yt_dlp(url: str, out_path: Path) -> bool:
-    bin_name = _yt_dlp_bin()
-    if not bin_name:
+    cmd_base = _yt_dlp_cmd()
+    if not cmd_base:
         return False
     out_tpl = str(out_path.with_suffix(".%(ext)s"))
     cmd = [
-        bin_name,
+        *cmd_base,
         "-f",
-        "best[ext=mp4]/best",
+        "best[ext=mp4]/bestaudio/best",
         "--no-playlist",
         "--merge-output-format",
         "mp4",
@@ -47,23 +58,26 @@ def _download_via_yt_dlp(url: str, out_path: Path) -> bool:
             timeout=7200,
             check=False,
         )
-        if proc.returncode != 0:
-            logger.warning(
-                "yt-dlp failed: %s",
-                (proc.stderr or proc.stdout or "")[-600:],
-            )
-            return False
-        if out_path.is_file():
-            return True
-        candidates = sorted(out_path.parent.glob(out_path.stem + ".*"))
-        for c in candidates:
-            if c.suffix.lower() in {".mp4", ".mkv", ".webm"} and c.stat().st_size > 0:
-                c.rename(out_path)
-                return True
-        return False
     except Exception as e:
         logger.error("yt-dlp download: %s", e)
         return False
+    if proc.returncode != 0:
+        logger.warning(
+            "yt-dlp failed: %s",
+            (proc.stderr or proc.stdout or "")[-600:],
+        )
+        return False
+    if out_path.is_file():
+        return True
+    candidates = sorted(out_path.parent.glob(out_path.stem + ".*"))
+    for c in candidates:
+        if (
+            c.suffix.lower() in {".mp4", ".mkv", ".webm", ".mp3", ".m4a", ".ogg"}
+            and c.stat().st_size > 0
+        ):
+            c.rename(out_path)
+            return True
+    return False
 
 
 def _download_direct(url: str, out_path: Path) -> bool:
@@ -71,7 +85,7 @@ def _download_direct(url: str, out_path: Path) -> bool:
         with httpx.stream("GET", url, follow_redirects=True, timeout=600.0) as r:
             r.raise_for_status()
             ctype = (r.headers.get("content-type") or "").lower()
-            if "text/html" in ctype and "video" not in ctype:
+            if "text/html" in ctype and "video" not in ctype and "audio" not in ctype:
                 return False
             out_path.parent.mkdir(parents=True, exist_ok=True)
             with out_path.open("wb") as f:
@@ -91,8 +105,8 @@ def download_recording_video(
     dest_dir: str | Path,
 ) -> Optional[str]:
     """
-    Скачивает видео в ``dest_dir/{meeting_id}.mp4``.
-    Сначала yt-dlp (Я.Диск / Телемост), затем прямой HTTP.
+    Скачивает медиа в ``dest_dir/{meeting_id}.mp4``.
+    Сначала yt-dlp (``python -m yt_dlp``), затем прямой HTTP.
     """
     link = (url or "").strip()
     if not link:
@@ -103,14 +117,18 @@ def download_recording_video(
     out = root / f"{mid}.mp4"
     if out.is_file() and out.stat().st_size > 10_000:
         return str(out.resolve())
+    for alt in (root / f"{mid}.mp3",):
+        if alt.is_file() and alt.stat().st_size > 10_000:
+            return str(alt.resolve())
 
     host = (urlparse(link).netloc or "").lower()
-    if _yt_dlp_bin() and (
+    yandex_host = (
         "yandex" in host
         or "yadi.sk" in host
         or "telemost" in host
         or "disk" in host
-    ):
+    )
+    if yandex_host and _yt_dlp_cmd():
         if _download_via_yt_dlp(link, out):
             logger.info("recording downloaded via yt-dlp: %s", out)
             return str(out.resolve())
@@ -119,7 +137,7 @@ def download_recording_video(
         logger.info("recording downloaded direct: %s", out)
         return str(out.resolve())
 
-    if _yt_dlp_bin() and _download_via_yt_dlp(link, out):
+    if _yt_dlp_cmd() and _download_via_yt_dlp(link, out):
         return str(out.resolve())
 
     logger.error("recording download failed meeting_id=%s url=%s", meeting_id, link[:120])

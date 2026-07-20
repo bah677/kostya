@@ -1,21 +1,31 @@
-"""Публикация полной аудио-записи эфира/молитвы голосовым в RAG-группу."""
+"""Публикация полной аудио-записи эфира/молитвы голосовым.
+
+Временно: в топик шортсов админ-группы (как клипы), не в клубные топики эфир/молитва.
+"""
 
 from __future__ import annotations
 
 import asyncio
 import logging
 import uuid
-from html import escape as html_escape
 from pathlib import Path
 from typing import Any, Dict, Optional
 
 from aiogram.enums import ParseMode
 from aiogram.types import FSInputFile
 
+from bot.utils.rag_admin_context import rag_shorts_chat_topic
 from config import config
 from telemost_audio.ffmpeg_render import render_full_voice_ogg
 from telemost_audio.full_voice_caption import build_full_voice_caption
-from telemost_audio.recording_kind import KIND_EFIR, KIND_MOLITVA
+from telemost_audio.recording_kind import (
+    KIND_EFIR,
+    KIND_LABELS,
+    KIND_MOLITVA,
+    KIND_POKAYANIE,
+    KIND_QA,
+    is_media_recording_kind,
+)
 from telemost_mail.imap_client import YandexImapClient
 from telemost_audio.recording_resolver import wait_and_download_audio
 
@@ -23,20 +33,42 @@ logger = logging.getLogger(__name__)
 
 _active_full: set[str] = set()
 
+# Временно True: полная запись → топик шортсов. Вернуть False → клуб (эфир/молитва/покаяние).
+_FULL_VOICE_TO_SHORTS_TOPIC = True
+
 
 def _target_topic(recording_kind: str) -> tuple[int, Optional[int]]:
+    kind = (recording_kind or "").strip().lower()
+    if not is_media_recording_kind(kind):
+        return 0, None
+
+    if _FULL_VOICE_TO_SHORTS_TOPIC:
+        chat, topic = rag_shorts_chat_topic()
+        return int(chat or 0), topic
+
     chat = int(
         getattr(config, "TELEMOST_FULL_VOICE_CHAT_ID", 0)
         or getattr(config, "RAG_GROUP_CHAT_ID", 0)
         or 0
     )
-    kind = (recording_kind or "").strip().lower()
     if kind == KIND_MOLITVA:
         topic = int(getattr(config, "TELEMOST_MOLITVA_TOPIC_ID", 2) or 2)
-    elif kind == KIND_EFIR:
-        topic = int(getattr(config, "TELEMOST_EFIR_TOPIC_ID", 3) or 3)
+    elif kind == KIND_POKAYANIE:
+        topic = int(getattr(config, "TELEMOST_POKAYANIE_TOPIC_ID", 0) or 0)
+        if not topic:
+            logger.warning(
+                "telemost_full_voice: TELEMOST_POKAYANIE_TOPIC_ID не задан — пропуск клубной выкладки"
+            )
+            return 0, None
+    elif kind == KIND_QA:
+        topic = int(getattr(config, "TELEMOST_QA_TOPIC_ID", 0) or 0)
+        if not topic:
+            logger.warning(
+                "telemost_full_voice: TELEMOST_QA_TOPIC_ID не задан — пропуск клубной выкладки"
+            )
+            return 0, None
     else:
-        return 0, None
+        topic = int(getattr(config, "TELEMOST_EFIR_TOPIC_ID", 3) or 3)
     return chat, topic or None
 
 
@@ -47,14 +79,15 @@ def enqueue_telemost_full_voice(
     meta: Dict[str, Any],
     *,
     recording_kind: str,
+    force: bool = False,
 ) -> bool:
     if not getattr(config, "TELEMOST_FULL_VOICE_ENABLED", True):
         return False
     kind = (recording_kind or "").strip().lower()
-    if kind not in {KIND_EFIR, KIND_MOLITVA}:
+    if not is_media_recording_kind(kind):
         return False
     pid = str(pending_id)
-    if pid in _active_full:
+    if pid in _active_full and not force:
         logger.info("telemost_full_voice: already running pending_id=%s", pid)
         return False
     _active_full.add(pid)
@@ -69,6 +102,78 @@ def enqueue_telemost_full_voice(
         name=f"telemost_full_voice_{pid[:8]}",
     )
     return True
+
+
+async def enqueue_telemost_full_voice_by_meeting_id(
+    bot_app: Any,
+    meeting_id: str,
+    *,
+    force: bool = True,
+    recording_kind: Optional[str] = None,
+) -> tuple[bool, str]:
+    """Выложить полную голосовую запись встречи по номеру."""
+    from html import escape as html_escape
+
+    from telemost_audio.recording_kind import recording_kind_from_content_type
+
+    storage = getattr(bot_app, "user_storage", None)
+    if storage is None:
+        return False, "Хранилище недоступно"
+    mid = (meeting_id or "").strip()
+    if not mid:
+        return False, "Укажите номер встречи"
+    row = await storage.get_telemost_pending_by_meeting_id(mid)
+    if not row:
+        return False, f"Конспект встречи №<code>{html_escape(mid)}</code> не найден"
+    status = str(row.get("status") or "")
+    if status != "indexed":
+        return False, (
+            f"№<code>{html_escape(mid)}</code> ещё не в RAG "
+            f"(status=<code>{html_escape(status)}</code>). Сначала загрузите конспект."
+        )
+    try:
+        pending_id = uuid.UUID(str(row["id"]))
+    except (ValueError, TypeError):
+        return False, "Некорректный pending_id"
+
+    # meta как в audio pipeline
+    from telemost_mail.classifier_llm import TelemostClassification
+
+    clf_raw = row.get("classification") or {}
+    classification = TelemostClassification(
+        is_club_meeting=bool(clf_raw.get("is_club_meeting")),
+        recommend_index=bool(clf_raw.get("recommend_index")),
+        title=str(clf_raw.get("title") or ""),
+        meeting_topic=str(clf_raw.get("meeting_topic") or ""),
+        content_type=str(clf_raw.get("content_type") or ""),
+        content_category=str(clf_raw.get("content_category") or "dialog"),
+        product=str(clf_raw.get("product") or ""),
+        tags=str(clf_raw.get("tags") or ""),
+        summary=str(clf_raw.get("summary") or ""),
+        admin_note=str(clf_raw.get("admin_note") or ""),
+        reason=str(clf_raw.get("reason") or ""),
+    )
+    source_label = classification.title or (row.get("subject") or "Телемост")[:80]
+    meta = classification.as_chroma_metadata(source_label=source_label)
+    extra = row.get("extra_metadata") or {}
+    if isinstance(extra, dict) and extra.get("meeting_date"):
+        meta["date"] = str(extra["meeting_date"])[:32]
+
+    kind = (recording_kind or "").strip().lower()
+    if not is_media_recording_kind(kind):
+        kind = recording_kind_from_content_type(str(clf_raw.get("content_type") or ""))
+
+    title = meta.get("topic_title") or meta.get("source") or row.get("subject") or "Запись"
+    if not enqueue_telemost_full_voice(
+        bot_app,
+        pending_id,
+        row,
+        meta,
+        recording_kind=kind,
+        force=force,
+    ):
+        return False, "Полная запись уже выкладывается"
+    return True, f"№{mid} ({KIND_LABELS.get(kind, kind)}): {str(title)[:90]}"
 
 
 async def _run_full_voice_pipeline(
@@ -95,15 +200,25 @@ async def _run_full_voice_pipeline(
         if isinstance(clf, dict):
             summary = str(clf.get("summary") or "")
 
-    kind_label = "Молитва" if recording_kind == KIND_MOLITVA else "Эфир"
+    kind_label = KIND_LABELS.get(recording_kind, "Запись")
 
     try:
         if not bot or not chat_id or not storage:
-            logger.warning("telemost_full_voice: missing bot/chat/storage")
+            logger.warning(
+                "telemost_full_voice: missing bot/chat/storage chat=%s",
+                chat_id,
+            )
             return
 
         extra = row.get("extra_metadata") or {}
         meeting_id = (extra.get("meeting_id") if isinstance(extra, dict) else "") or ""
+        if not meeting_id:
+            clf = row.get("classification") or {}
+            if isinstance(clf, dict):
+                ex = clf.get("extra") or {}
+                if isinstance(ex, dict):
+                    meeting_id = str(ex.get("meeting_id") or "")
+
         transcript = (row.get("transcript_text") or "").strip()
 
         imap = YandexImapClient(
@@ -145,10 +260,18 @@ async def _run_full_voice_pipeline(
         caption = await build_full_voice_caption(
             meeting_title=str(title),
             summary=summary,
-            transcript_excerpt=transcript[:3000],
+            transcript_excerpt=transcript[:12000],
             recording_kind=recording_kind,
             philosophy_hint=philosophy,
         )
+        if _FULL_VOICE_TO_SHORTS_TOPIC:
+            prefix = f"📻 Полная запись · {kind_label}\n\n"
+            if caption and not caption.startswith("📻"):
+                caption = prefix + caption
+            elif not caption:
+                caption = prefix.strip()
+            if len(caption) > 1024:
+                caption = caption[:1021].rstrip() + "…"
 
         await bot.send_voice(
             chat_id,
@@ -158,28 +281,13 @@ async def _run_full_voice_pipeline(
             message_thread_id=topic_id,
         )
         logger.info(
-            "telemost_full_voice sent kind=%s chat=%s topic=%s pending=%s",
+            "telemost_full_voice sent kind=%s chat=%s topic=%s pending=%s dest=%s",
             recording_kind,
             chat_id,
             topic_id,
             pid,
+            "shorts_topic" if _FULL_VOICE_TO_SHORTS_TOPIC else "club_topic",
         )
-
-        shorts_chat, shorts_topic = (
-            int(config.rag_shorts_chat_id or 0),
-            int(getattr(config, "RAG_SHORTS_TOPIC_ID", 0) or 0) or None,
-        )
-        if shorts_chat:
-            try:
-                await bot.send_message(
-                    shorts_chat,
-                    f"📻 Полная запись <b>{html_escape(kind_label)}</b> опубликована "
-                    f"в топике клуба для «{html_escape(str(title)[:100])}».",
-                    parse_mode=ParseMode.HTML,
-                    message_thread_id=shorts_topic,
-                )
-            except Exception as e:
-                logger.warning("telemost_full_voice notify shorts: %s", e)
 
     except Exception as e:
         logger.exception("telemost_full_voice pending=%s: %s", pid, e)

@@ -30,6 +30,7 @@ from telemost_mail.transcript import extract_expert_speech, extract_expert_speec
 from telemost_audio.recording_kind import (
     apply_recording_kind_to_classification,
     is_media_recording_kind,
+    wants_shorts_clips,
 )
 
 if TYPE_CHECKING:
@@ -426,14 +427,20 @@ class TelemostMailService:
         if n > 0 and self._bot_app is not None:
             fresh = await self._storage.get_telemost_mail_pending(pending_id)
             if fresh and is_media_recording_kind(recording_kind):
-                if getattr(config, "TELEMOST_VIDEO_SHORTS_ENABLED", False):
-                    from telemost_shorts.pipeline import enqueue_telemost_shorts
+                # Молитвы: только RAG + полная запись (без шортсов).
+                if wants_shorts_clips(recording_kind):
+                    if getattr(config, "TELEMOST_VIDEO_SHORTS_ENABLED", False):
+                        from telemost_shorts.pipeline import enqueue_telemost_shorts
 
-                    enqueue_telemost_shorts(self._bot_app, pending_id, fresh, meta)
-                if getattr(config, "TELEMOST_AUDIO_CLIPS_ENABLED", False):
-                    from telemost_audio.pipeline import enqueue_telemost_audio
+                        enqueue_telemost_shorts(
+                            self._bot_app, pending_id, fresh, meta
+                        )
+                    if getattr(config, "TELEMOST_AUDIO_CLIPS_ENABLED", False):
+                        from telemost_audio.pipeline import enqueue_telemost_audio
 
-                    enqueue_telemost_audio(self._bot_app, pending_id, fresh, meta)
+                        enqueue_telemost_audio(
+                            self._bot_app, pending_id, fresh, meta
+                        )
                 from telemost_audio.full_voice_pipeline import enqueue_telemost_full_voice
 
                 enqueue_telemost_full_voice(

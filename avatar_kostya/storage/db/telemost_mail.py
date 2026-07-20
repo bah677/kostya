@@ -391,7 +391,10 @@ class TelemostMailMixin:
                     """
                     SELECT * FROM telemost_mail_pending
                     WHERE classification->'extra'->>'meeting_id' = $1
-                    ORDER BY created_at DESC
+                    ORDER BY
+                        CASE WHEN status = 'indexed' THEN 0 ELSE 1 END,
+                        resolved_at DESC NULLS LAST,
+                        created_at DESC
                     LIMIT 1
                     """,
                     mid,

@@ -215,6 +215,15 @@ class GroupRagIndexerFeature(BaseFeature):
 
         gids = list(index_map.keys())
         chat_filter = F.chat.id.in_(gids)
+        exclude_topics = frozenset(
+            int(x) for x in (self.config.rag_exclude_topic_ids or frozenset())
+        )
+
+        def _not_excluded_topic(m: Message) -> bool:
+            tid = m.message_thread_id
+            if tid is None or not exclude_topics:
+                return True
+            return int(tid) not in exclude_topics
 
         dispatcher.message.register(
             self._on_forum_topic_created,
@@ -235,10 +244,12 @@ class GroupRagIndexerFeature(BaseFeature):
             self._on_group_message,
             chat_filter,
             F.func(lambda m: not _message_looks_like_bot_command(m)),
+            F.func(_not_excluded_topic),
         )
         dispatcher.channel_post.register(
             self._on_channel_post,
             chat_filter,
+            F.func(_not_excluded_topic),
         )
         for gid, topics in index_map.items():
             t_desc = f"топики: {sorted(topics)}" if topics else "все топики"

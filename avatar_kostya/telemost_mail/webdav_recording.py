@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
+import shutil
+import subprocess
 from pathlib import Path
 from typing import Optional, Sequence
 
@@ -13,6 +16,54 @@ from yandex_disk.webdav import RemoteFile, YandexDiskWebDAV
 logger = logging.getLogger(__name__)
 
 _VIDEO_EXTS = (".webm", ".mp4", ".mkv", ".mov")
+
+# Ниже этого порога audio_only считаем урезанным / ранним → берём звук из видео.
+_DEFAULT_MIN_AUDIO_SEC = 180.0
+
+
+def probe_media_duration_sec(path: str | Path) -> Optional[float]:
+    """Длительность файла через ffprobe; None если не удалось."""
+    p = Path(path)
+    if not p.is_file():
+        return None
+    ffprobe = shutil.which("ffprobe") or "ffprobe"
+    try:
+        proc = subprocess.run(
+            [
+                ffprobe,
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "default=noprint_wrappers=1:nokey=1",
+                str(p),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+        if proc.returncode != 0:
+            return None
+        return float((proc.stdout or "").strip())
+    except Exception:
+        return None
+
+
+def _min_full_audio_sec() -> float:
+    return float(
+        getattr(config, "TELEMOST_AUDIO_MIN_FULL_DURATION_SEC", _DEFAULT_MIN_AUDIO_SEC)
+        or _DEFAULT_MIN_AUDIO_SEC
+    )
+
+
+def audio_duration_is_full(path: str | Path) -> bool:
+    dur = probe_media_duration_sec(path)
+    if dur is None:
+        # Не можем проверить — не считаем «полным», чтобы не залипнуть на битом кэше.
+        return False
+    return dur >= _min_full_audio_sec()
 
 
 def _safe_meeting_id(meeting_id: str) -> str:
@@ -124,14 +175,79 @@ async def find_telemost_audio_on_webdav(meeting_id: str) -> Optional[str]:
     return best.path
 
 
+async def _extract_audio_from_video_file(
+    video_local: Path,
+    out_mp3: Path,
+) -> bool:
+    if not shutil.which("ffmpeg"):
+        logger.error("ffmpeg not found — cannot extract audio from video")
+        return False
+
+    def _extract() -> bool:
+        cmd = [
+            "ffmpeg",
+            "-y",
+            "-i",
+            str(video_local),
+            "-vn",
+            "-acodec",
+            "libmp3lame",
+            "-q:a",
+            "4",
+            str(out_mp3),
+        ]
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=7200)
+        return (
+            proc.returncode == 0
+            and out_mp3.is_file()
+            and out_mp3.stat().st_size > 10_000
+        )
+
+    return await asyncio.to_thread(_extract)
+
+
+async def _download_video_for_audio(
+    webdav: YandexDiskWebDAV,
+    meeting_id: str,
+    root: Path,
+) -> Optional[Path]:
+    video_remote = await find_telemost_video_on_webdav(meeting_id)
+    if not video_remote:
+        return None
+    mid = _safe_meeting_id(meeting_id)
+    v_ext = Path(video_remote).suffix.lower() or ".webm"
+    video_local = root / f"{mid}_src{v_ext}"
+    try:
+        if not (video_local.is_file() and video_local.stat().st_size > 10_000):
+            await webdav.download(video_remote, str(video_local))
+    except Exception as e:
+        logger.error("webdav video-for-audio meeting_id=%s: %s", meeting_id, e)
+        return None
+    if video_local.is_file() and video_local.stat().st_size > 10_000:
+        return video_local
+    return None
+
+
 async def download_telemost_audio_webdav(
     meeting_id: str,
     *,
     dest_dir: str | Path,
 ) -> Optional[str]:
-    remote_path = await find_telemost_audio_on_webdav(meeting_id)
-    if not remote_path:
-        return None
+    """Скачивает аудио с Диска.
+
+    Берёт audio_only, но если он короче порога (ранний/урезанный файл Телемоста) —
+    вытаскивает звук из полного видео на Диске.
+    """
+    root = Path(dest_dir)
+    root.mkdir(parents=True, exist_ok=True)
+    mid = _safe_meeting_id(meeting_id)
+    cached_mp3 = root / f"{mid}_audio.mp3"
+    if (
+        cached_mp3.is_file()
+        and cached_mp3.stat().st_size > 10_000
+        and audio_duration_is_full(cached_mp3)
+    ):
+        return str(cached_mp3.resolve())
 
     login = (getattr(config, "YANDEX_DISK_LOGIN", "") or "").strip()
     password = (getattr(config, "YANDEX_DISK_PASSWORD", "") or "").strip()
@@ -139,22 +255,66 @@ async def download_telemost_audio_webdav(
     if not webdav.configured:
         return None
 
-    root = Path(dest_dir)
-    root.mkdir(parents=True, exist_ok=True)
-    ext = Path(remote_path).suffix.lower() or ".mp3"
-    out = root / f"{_safe_meeting_id(meeting_id)}_audio{ext}"
-    if out.is_file() and out.stat().st_size > 10_000:
-        return str(out.resolve())
+    remote_path = await find_telemost_audio_on_webdav(meeting_id)
+    audio_local: Optional[Path] = None
+    if remote_path:
+        ext = Path(remote_path).suffix.lower() or ".mp3"
+        out = root / f"{mid}_audio{ext}"
+        need_dl = not (
+            out.is_file()
+            and out.stat().st_size > 10_000
+            and audio_duration_is_full(out)
+        )
+        if need_dl:
+            try:
+                await webdav.download(remote_path, str(out))
+            except Exception as e:
+                logger.error("webdav audio download meeting_id=%s: %s", meeting_id, e)
+        if out.is_file() and out.stat().st_size > 10_000:
+            audio_local = out
+            logger.info("audio downloaded via webdav: %s", out)
 
-    try:
-        await webdav.download(remote_path, str(out))
-    except Exception as e:
-        logger.error("webdav audio download meeting_id=%s: %s", meeting_id, e)
+    if audio_local is not None and audio_duration_is_full(audio_local):
+        return str(audio_local.resolve())
+
+    # Короткий / нет audio_only → звук из видео.
+    if audio_local is not None:
+        dur = probe_media_duration_sec(audio_local)
+        logger.warning(
+            "webdav audio_only too short meeting_id=%s duration=%s — extract from video",
+            meeting_id,
+            f"{dur:.1f}s" if dur is not None else "?",
+        )
+
+    video_local = await _download_video_for_audio(webdav, meeting_id, root)
+    if not video_local:
+        if audio_local is not None:
+            logger.warning(
+                "webdav: no video to replace short audio, keeping short file meeting_id=%s",
+                meeting_id,
+            )
+            return str(audio_local.resolve())
         return None
 
-    if out.is_file() and out.stat().st_size > 10_000:
-        logger.info("audio downloaded via webdav: %s", out)
-        return str(out.resolve())
+    ok = await _extract_audio_from_video_file(video_local, cached_mp3)
+    if ok and audio_duration_is_full(cached_mp3):
+        logger.info(
+            "audio extracted from webdav video meeting_id=%s -> %s",
+            meeting_id,
+            cached_mp3,
+        )
+        return str(cached_mp3.resolve())
+    if ok:
+        dur = probe_media_duration_sec(cached_mp3)
+        logger.warning(
+            "extracted audio still short meeting_id=%s duration=%s",
+            meeting_id,
+            f"{dur:.1f}s" if dur is not None else "?",
+        )
+        return str(cached_mp3.resolve())
+    logger.error("ffmpeg extract audio failed meeting_id=%s", meeting_id)
+    if audio_local is not None:
+        return str(audio_local.resolve())
     return None
 
 

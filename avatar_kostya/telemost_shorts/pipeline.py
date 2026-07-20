@@ -97,12 +97,23 @@ async def enqueue_telemost_shorts_last(
     regenerate_moments: bool = True,
 ) -> tuple[bool, str]:
     """Принудительная нарезка последнего эфира, загруженного в RAG."""
+    from telemost_audio.recording_kind import (
+        recording_kind_from_content_type,
+        wants_shorts_clips,
+    )
+
     storage = getattr(bot_app, "user_storage", None)
     if storage is None:
         return False, "Хранилище недоступно"
     row = await storage.get_last_indexed_telemost_mail()
     if not row:
         return False, "Нет проиндексированных эфиров Телемоста"
+    clf = row.get("classification") or {}
+    kind = recording_kind_from_content_type(
+        str(clf.get("content_type") or "") if isinstance(clf, dict) else ""
+    )
+    if not wants_shorts_clips(kind):
+        return False, "По молитвам шортсы не нарезаем — только RAG и полная запись."
     try:
         pending_id = uuid.UUID(str(row["id"]))
     except (ValueError, TypeError):
@@ -237,7 +248,7 @@ async def _run_shorts_pipeline(
             return
 
         count = int(getattr(config, "TELEMOST_SHORTS_COUNT", 5) or 5)
-        max_dur = int(getattr(config, "TELEMOST_SHORTS_MAX_DURATION_SEC", 60) or 60)
+        max_dur = int(getattr(config, "TELEMOST_SHORTS_MAX_DURATION_SEC", 120) or 120)
         philosophy = getattr(config, "TELEMOST_SHORTS_PHILOSOPHY_HINT", "") or ""
 
         moments: List[ClipMoment] = await pick_viral_moments(

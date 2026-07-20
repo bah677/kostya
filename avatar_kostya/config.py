@@ -228,7 +228,7 @@ class AppConfig:
     TELEMOST_SHORTS_ENABLED: bool = False
     TELEMOST_VIDEO_SHORTS_ENABLED: bool = False
     TELEMOST_SHORTS_COUNT: int = 5
-    TELEMOST_SHORTS_MAX_DURATION_SEC: int = 60
+    TELEMOST_SHORTS_MAX_DURATION_SEC: int = 120
     TELEMOST_SHORTS_USE_ARENA: bool = False
     TELEMOST_SHORTS_VIDEO_DIR: str = "data/telemost_video"
     TELEMOST_SHORTS_WORK_DIR: str = "data/telemost_shorts"
@@ -236,12 +236,14 @@ class AppConfig:
     TELEMOST_SHORTS_WAIT_RECORDING_SEC: int = 7200
     TELEMOST_SHORTS_POLL_INTERVAL_SEC: int = 120
     TELEMOST_RECORDINGS_WEBDAV_DIR: str = "/Записи Телемоста"
-    TELEMOST_SHORTS_SUBTITLE_OFFSET_SEC: float = -2.5
+    TELEMOST_SHORTS_SUBTITLE_OFFSET_SEC: float = -0.5
+    TELEMOST_SHORTS_CUT_OFFSET_SEC: float = -0.5
 
     TELEMOST_AUDIO_CLIPS_ENABLED: bool = False
     TELEMOST_AUDIO_CLIPS_COUNT: int = 5
-    TELEMOST_AUDIO_CLIPS_MAX_DURATION_SEC: int = 60
-    TELEMOST_AUDIO_CLIPS_OFFSET_SEC: float = -2.5
+    TELEMOST_AUDIO_CLIPS_MAX_DURATION_SEC: int = 120
+    TELEMOST_AUDIO_CLIPS_OFFSET_SEC: float = -0.5
+    TELEMOST_AUDIO_MIN_FULL_DURATION_SEC: int = 180
     TELEMOST_AUDIO_DIR: str = "data/telemost_audio"
     TELEMOST_AUDIO_WORK_DIR: str = "data/telemost_audio_clips"
     TELEMOST_AUDIO_CLUB_BOT_USERNAME: str = "Talk_God_Bot"
@@ -251,9 +253,28 @@ class AppConfig:
     TELEMOST_FULL_VOICE_CHAT_ID: int = 0
     TELEMOST_EFIR_TOPIC_ID: int = 3
     TELEMOST_MOLITVA_TOPIC_ID: int = 2
+    # Топик «Покаяние» — задать позже (0 = пока не публиковать в клубной ветке).
+    TELEMOST_POKAYANIE_TOPIC_ID: int = 0
+    # Топик «Вопрос-ответ» — задать позже (0 = пока не публиковать в клубной ветке).
+    TELEMOST_QA_TOPIC_ID: int = 0
 
     RAG_SHORTS_CHAT_ID: int = 0
     RAG_SHORTS_TOPIC_ID: int = 582
+
+    # Shorts mail wizard → mailing club / biblia
+    CLUB_BOT_TOKEN: str = ""
+    CLUB_DB_HOST: str = "localhost"
+    CLUB_DB_PORT: str = "5432"
+    CLUB_DB_NAME: str = ""
+    CLUB_DB_USER: str = ""
+    CLUB_DB_PASSWORD: str = ""
+    BIBLIA_MAIL_BOT_TOKEN: str = ""
+    BIBLIA_MAIL_DB_HOST: str = "localhost"
+    BIBLIA_MAIL_DB_PORT: str = "5432"
+    BIBLIA_MAIL_DB_NAME: str = ""
+    BIBLIA_MAIL_DB_USER: str = ""
+    BIBLIA_MAIL_DB_PASSWORD: str = ""
+    BIBLIA_BOT_USERNAME: str = "otvet_iz_biblii_bot"
 
     # Админская группа RAG: уведомления, догрузка, публичность источников (формат: -1003756916561 / 3756916561).
     RAG_ADMIN_CHAT_ID: int = 0
@@ -264,6 +285,28 @@ class AppConfig:
     TELEMOST_MAIL_NOTIFY_TOPIC_ID: int = 0
     RAG_SOURCE_VISIBILITY_CHAT_ID: int = 0
     RAG_SOURCE_VISIBILITY_TOPIC_ID: int = 0
+
+    @property
+    def club_mail_database_url(self) -> str:
+        if not (self.CLUB_DB_NAME and self.CLUB_DB_USER and self.CLUB_DB_PASSWORD):
+            return ""
+        return (
+            f"postgresql://{self.CLUB_DB_USER}:{self.CLUB_DB_PASSWORD}"
+            f"@{self.CLUB_DB_HOST}:{self.CLUB_DB_PORT}/{self.CLUB_DB_NAME}"
+        )
+
+    @property
+    def biblia_mail_database_url(self) -> str:
+        if not (
+            self.BIBLIA_MAIL_DB_NAME
+            and self.BIBLIA_MAIL_DB_USER
+            and self.BIBLIA_MAIL_DB_PASSWORD
+        ):
+            return ""
+        return (
+            f"postgresql://{self.BIBLIA_MAIL_DB_USER}:{self.BIBLIA_MAIL_DB_PASSWORD}"
+            f"@{self.BIBLIA_MAIL_DB_HOST}:{self.BIBLIA_MAIL_DB_PORT}/{self.BIBLIA_MAIL_DB_NAME}"
+        )
 
     @property
     def rag_shorts_chat_id(self) -> int:
@@ -640,7 +683,7 @@ def load_app_config() -> AppConfig:
             "TELEMOST_SHORTS_COUNT", 5, min_v=1, max_v=10
         ),
         TELEMOST_SHORTS_MAX_DURATION_SEC=_safe_int_env(
-            "TELEMOST_SHORTS_MAX_DURATION_SEC", 60, min_v=15, max_v=60
+            "TELEMOST_SHORTS_MAX_DURATION_SEC", 120, min_v=45, max_v=120
         ),
         TELEMOST_SHORTS_USE_ARENA=_env_flag_true(
             "TELEMOST_SHORTS_USE_ARENA", default=False
@@ -664,7 +707,10 @@ def load_app_config() -> AppConfig:
             os.getenv("TELEMOST_RECORDINGS_WEBDAV_DIR") or "/Записи Телемоста"
         ).strip(),
         TELEMOST_SHORTS_SUBTITLE_OFFSET_SEC=float(
-            os.getenv("TELEMOST_SHORTS_SUBTITLE_OFFSET_SEC", "-2.5") or -2.5
+            os.getenv("TELEMOST_SHORTS_SUBTITLE_OFFSET_SEC", "-0.5") or -0.5
+        ),
+        TELEMOST_SHORTS_CUT_OFFSET_SEC=float(
+            os.getenv("TELEMOST_SHORTS_CUT_OFFSET_SEC", "-0.5") or -0.5
         ),
         TELEMOST_AUDIO_CLIPS_ENABLED=_env_flag_true(
             "TELEMOST_AUDIO_CLIPS_ENABLED", default=False
@@ -673,10 +719,13 @@ def load_app_config() -> AppConfig:
             "TELEMOST_AUDIO_CLIPS_COUNT", 5, min_v=1, max_v=10
         ),
         TELEMOST_AUDIO_CLIPS_MAX_DURATION_SEC=_safe_int_env(
-            "TELEMOST_AUDIO_CLIPS_MAX_DURATION_SEC", 60, min_v=45, max_v=60
+            "TELEMOST_AUDIO_CLIPS_MAX_DURATION_SEC", 120, min_v=45, max_v=120
         ),
         TELEMOST_AUDIO_CLIPS_OFFSET_SEC=float(
-            os.getenv("TELEMOST_AUDIO_CLIPS_OFFSET_SEC", "-2.5") or -2.5
+            os.getenv("TELEMOST_AUDIO_CLIPS_OFFSET_SEC", "-0.5") or -0.5
+        ),
+        TELEMOST_AUDIO_MIN_FULL_DURATION_SEC=_safe_int_env(
+            "TELEMOST_AUDIO_MIN_FULL_DURATION_SEC", 180, min_v=60, max_v=3600
         ),
         TELEMOST_AUDIO_DIR=(
             os.getenv("TELEMOST_AUDIO_DIR") or "data/telemost_audio"
@@ -705,10 +754,29 @@ def load_app_config() -> AppConfig:
         TELEMOST_MOLITVA_TOPIC_ID=int(
             os.getenv("TELEMOST_MOLITVA_TOPIC_ID", "2") or 2
         ),
+        TELEMOST_POKAYANIE_TOPIC_ID=int(
+            os.getenv("TELEMOST_POKAYANIE_TOPIC_ID", "0") or 0
+        ),
+        TELEMOST_QA_TOPIC_ID=int(os.getenv("TELEMOST_QA_TOPIC_ID", "0") or 0),
         RAG_SHORTS_CHAT_ID=_normalize_supergroup_chat_id(
             int(os.getenv("RAG_SHORTS_CHAT_ID", "0") or 0)
         ),
         RAG_SHORTS_TOPIC_ID=int(os.getenv("RAG_SHORTS_TOPIC_ID", "582") or 582),
+        CLUB_BOT_TOKEN=(os.getenv("CLUB_BOT_TOKEN") or "").strip(),
+        CLUB_DB_HOST=os.getenv("CLUB_DB_HOST", "localhost") or "localhost",
+        CLUB_DB_PORT=os.getenv("CLUB_DB_PORT", "5432") or "5432",
+        CLUB_DB_NAME=(os.getenv("CLUB_DB_NAME") or "").strip(),
+        CLUB_DB_USER=(os.getenv("CLUB_DB_USER") or "").strip(),
+        CLUB_DB_PASSWORD=os.getenv("CLUB_DB_PASSWORD") or "",
+        BIBLIA_MAIL_BOT_TOKEN=(os.getenv("BIBLIA_MAIL_BOT_TOKEN") or "").strip(),
+        BIBLIA_MAIL_DB_HOST=os.getenv("BIBLIA_MAIL_DB_HOST", "localhost") or "localhost",
+        BIBLIA_MAIL_DB_PORT=os.getenv("BIBLIA_MAIL_DB_PORT", "5432") or "5432",
+        BIBLIA_MAIL_DB_NAME=(os.getenv("BIBLIA_MAIL_DB_NAME") or "").strip(),
+        BIBLIA_MAIL_DB_USER=(os.getenv("BIBLIA_MAIL_DB_USER") or "").strip(),
+        BIBLIA_MAIL_DB_PASSWORD=os.getenv("BIBLIA_MAIL_DB_PASSWORD") or "",
+        BIBLIA_BOT_USERNAME=(
+            os.getenv("BIBLIA_BOT_USERNAME") or "otvet_iz_biblii_bot"
+        ).strip().lstrip("@"),
         RAG_SOURCE_VISIBILITY_CHAT_ID=_normalize_supergroup_chat_id(
             int(os.getenv("RAG_SOURCE_VISIBILITY_CHAT_ID", "0") or 0)
         ),

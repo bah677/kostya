@@ -118,6 +118,14 @@ async def scan_imap_for_recording(
     return None
 
 
+def _has_video_and_audio_links(row: Optional[dict]) -> bool:
+    if not row:
+        return False
+    video = (row.get("video_url") or "").strip()
+    audio = (row.get("audio_url") or "").strip()
+    return _url_video_score(video) > 0 and _url_video_score(audio) > 0
+
+
 async def wait_and_download_recording(
     meeting_id: str,
     *,
@@ -126,7 +134,8 @@ async def wait_and_download_recording(
     notify: Optional[NotifyFn] = None,
 ) -> Optional[str]:
     """
-    Ждёт письмо с записью (или берёт из БД/IMAP), скачивает видео.
+    Ждёт письмо со ссылками на видео и аудио, затем скачивает видео.
+    WebDAV / публичная ссылка — только после письма.
     """
     mid = (meeting_id or "").strip()
     if not mid:
@@ -168,56 +177,37 @@ async def wait_and_download_recording(
             if local:
                 from pathlib import Path
 
-                if Path(local).is_file():
+                if Path(local).is_file() and Path(local).stat().st_size > 10_000:
                     return local
-            url = (row.get("video_url") or "").strip()
-            if _url_video_score(url) <= 0:
-                await scan_imap_for_recording(imap, mid, storage=storage, limit=80)
-                row = await storage.get_telemost_recording(mid)
-                url = (row.get("video_url") or "").strip() if row else ""
-            if url and _url_video_score(url) > 0:
-                await _notify(notify, "⬇️ Скачиваю запись эфира…")
-                path = await _try_download(url)
-                if path:
-                    await storage.set_telemost_recording_local_path(mid, path)
-                    return path
-                if not notified_download_fail:
-                    await _notify(
-                        notify,
-                        f"⚠️ Не удалось скачать видео по ссылке из письма "
-                        f"(№<code>{mid}</code>). Повторяю…",
-                    )
-                    notified_download_fail = True
 
-        scanned = await scan_imap_for_recording(
-            imap, mid, storage=storage, limit=80
-        )
-        if scanned:
-            from pathlib import Path
-
-            if Path(scanned).is_file():
-                return scanned
+        if not _has_video_and_audio_links(row):
+            await scan_imap_for_recording(imap, mid, storage=storage, limit=80)
             row = await storage.get_telemost_recording(mid)
-            if row and row.get("video_url"):
-                url = (row.get("video_url") or "").strip()
-                if _url_video_score(url) > 0:
-                    path = await _try_download(url)
-                    if path:
-                        await storage.set_telemost_recording_local_path(mid, path)
-                        return path
-            elif not row:
-                path = await download_telemost_recording_webdav(mid, dest_dir=dest)
-                if path:
-                    await storage.set_telemost_recording_local_path(mid, path)
-                    return path
 
-        if not row and not notified_wait:
+        if not _has_video_and_audio_links(row):
+            if not notified_wait:
+                await _notify(
+                    notify,
+                    f"⏳ Жду письмо со ссылками на <b>видео и аудио</b> "
+                    f"№<code>{mid}</code> (до {wait_sec // 60} мин.)…",
+                )
+                notified_wait = True
+            await asyncio.sleep(max(30, poll_sec))
+            continue
+
+        url = ((row or {}).get("video_url") or "").strip()
+        await _notify(notify, "⬇️ Скачиваю запись эфира…")
+        path = await _try_download(url)
+        if path:
+            await storage.set_telemost_recording_local_path(mid, path)
+            return path
+        if not notified_download_fail:
             await _notify(
                 notify,
-                f"⏳ Жду письмо с <b>записью</b> встречи №<code>{mid}</code> "
-                f"(до {wait_sec // 60} мин.)…",
+                f"⚠️ Не удалось скачать видео по ссылке из письма "
+                f"(№<code>{mid}</code>). Повторяю…",
             )
-            notified_wait = True
+            notified_download_fail = True
 
         await asyncio.sleep(max(30, poll_sec))
 

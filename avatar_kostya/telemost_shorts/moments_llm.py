@@ -1,4 +1,4 @@
-"""LLM: 5 виральных моментов эфира (≤60 с) в духе философии эксперта."""
+"""LLM: виральные моменты эфира — сначала мысль, затем окно 45–120 с."""
 
 from __future__ import annotations
 
@@ -14,6 +14,9 @@ from telemost_mail.timestamped_speech import SpeechSegment
 
 logger = logging.getLogger(__name__)
 
+_MIN_CLIP_SEC = 45.0
+_MAX_CLIP_SEC = 120.0  # 2 мин
+
 
 @dataclass(frozen=True)
 class ClipMoment:
@@ -28,29 +31,43 @@ class ClipMoment:
         return max(0.0, self.end_sec - self.start_sec)
 
 
-_SYSTEM = """Ты монтажёр коротких вертикальных роликов (Shorts/Reels) для духовного наставника.
+_SYSTEM = """Ты монтажёр Shorts/Reels. В расшифровке — ТОЛЬКО реплики Константина (Кости). Чужие реплики уже отфильтрованы.
 
-Задача: выбрать ровно {count} отрывков из расшифровки эфира.
-Каждый отрывок:
-- длительность строго от 20 до {max_sec} секунд (end_sec - start_sec);
-- только речь эксперта (Константин / Костя);
-- эмоционально сильный, «цепляющий», мотивирует досмотреть запись целиком;
-- отражает философию: разговор с Богом, честность, глубина, без кликбейта и пустых обещаний.
+Работай СТРОГО В ДВА ШАГА (не наоборот):
+
+ШАГ 1 — ВЫБОР МЫСЛИ (самое важное).
+Сначала просмотри ВЕСЬ массив речи Константина и выбери законченную, интересную и цепляющую мысль:
+- одна ясная идея: начало → развитие → смысловой финал / вывод / удар;
+- хочется дослушать / переслать / открыть полный эфир;
+- НЕ «просто интересная фраза», НЕ приветствие, НЕ анонс, НЕ чужой вопрос без ответа Константина.
+В reason сначала сформулируй мысль своими словами (1–2 предложения): о чём кусок и чем цепляет.
+Только после этого переходи к шагу 2.
+
+ШАГ 2 — НАРЕЗКА ПОД УЖЕ ВЫБРАННУЮ МЫСЛЬ.
+Поставь start_sec / end_sec так, чтобы окно содержало ИМЕННО этот логический кусок целиком.
+Длительность может быть ЛЮБОЙ в диапазоне {min_sec}–{max_sec} секунд — бери столько, сколько нужно мысли.
+- Не режь мысль посередине ради «короче».
+- Не дотягивай пустой болтовнёй до лимита.
+- Убери края без мысли: оговорки, «ээ», повторы, уходы в сторону.
+- start — с первого предложения, где мысль Константина уже началась; end — после смыслового завершения.
+
+Выбери ровно {count} разных мыслей Константина (разные темы/углы, слабое пересечение по времени).
+Без кликбейта. Тон: честный разговор с Богом, глубина.
 
 Верни ТОЛЬКО JSON:
 {{
   "clips": [
     {{
-      "start_sec": 61.0,
-      "end_sec": 118.0,
-      "title": "короткий заголовок",
-      "hook": "фраза для подписи в Telegram",
-      "reason": "почему это вирально"
+      "start_sec": 412.0,
+      "end_sec": 518.0,
+      "title": "кратко: суть мысли",
+      "hook": "цепляющая фраза для подписи в Telegram",
+      "reason": "Мысль: … Почему цепляет: …"
     }}
   ]
 }}
 
-Не пересекай отрывки сильно; start/end должны попадать в реальные таймкоды реплик."""
+start/end — реальные секунды из расшифровки."""
 
 
 def _segments_for_prompt(
@@ -59,18 +76,20 @@ def _segments_for_prompt(
     *,
     skip_first: int = 0,
 ) -> str:
-    pool = list(segments)[skip_first : skip_first + limit]
-    lines: List[str] = []
-    for s in pool:
-        lines.append(
-            f"[{s.start_sec:.0f}s] {s.text[:220]}"
-        )
-    return "\n".join(lines)
+    from telemost_mail.timestamped_speech import format_expert_blocks_for_prompt
+
+    skip_blocks = max(0, skip_first // 4)
+    return format_expert_blocks_for_prompt(
+        segments,
+        limit_blocks=min(90, max(40, limit // 4)),
+        skip_first_blocks=skip_blocks,
+    )
 
 
 def _clamp_moment(
     m: ClipMoment,
     *,
+    min_sec: float,
     max_sec: float,
     max_end: float,
 ) -> ClipMoment:
@@ -81,18 +100,25 @@ def _clamp_moment(
     dur = end - start
     if dur > max_sec:
         end = start + max_sec
-    if dur < 15 and end < max_end:
-        end = min(start + min(max_sec, 45), max_end)
+        dur = end - start
+    if dur < min_sec and end < max_end:
+        end = min(start + min_sec, max_end)
     return ClipMoment(
         start_sec=start,
         end_sec=end,
         title=(m.title or "")[:120],
         hook=(m.hook or "")[:300],
-        reason=(m.reason or "")[:300],
+        reason=(m.reason or "")[:400],
     )
 
 
-def _parse_clips(raw: str, *, max_sec: float, max_end: float) -> List[ClipMoment]:
+def _parse_clips(
+    raw: str,
+    *,
+    min_sec: float,
+    max_sec: float,
+    max_end: float,
+) -> List[ClipMoment]:
     text = (raw or "").strip()
     m = re.search(r"\{[\s\S]*\}", text)
     if not m:
@@ -116,7 +142,11 @@ def _parse_clips(raw: str, *, max_sec: float, max_end: float) -> List[ClipMoment
                 hook=str(item.get("hook") or "").strip(),
                 reason=str(item.get("reason") or "").strip(),
             )
-            out.append(_clamp_moment(cm, max_sec=max_sec, max_end=max_end))
+            out.append(
+                _clamp_moment(
+                    cm, min_sec=min_sec, max_sec=max_sec, max_end=max_end
+                )
+            )
         except (TypeError, ValueError):
             continue
     return out
@@ -126,6 +156,7 @@ def _fallback_moments(
     segments: Sequence[SpeechSegment],
     *,
     count: int,
+    min_sec: float,
     max_sec: float,
     regenerate: bool = False,
 ) -> List[ClipMoment]:
@@ -149,8 +180,8 @@ def _fallback_moments(
         if any(abs(seg.start_sec - u) < max_sec * 0.5 for u in used_starts):
             continue
         end = min(seg.end_sec + max_sec * 0.6, seg.start_sec + max_sec)
-        if end - seg.start_sec < 15:
-            end = seg.start_sec + min(max_sec, 45)
+        if end - seg.start_sec < min_sec:
+            end = seg.start_sec + min(max_sec, min_sec)
         out.append(
             ClipMoment(
                 start_sec=seg.start_sec,
@@ -170,7 +201,7 @@ async def pick_viral_moments(
     philosophy_hint: str,
     meeting_title: str,
     count: int = 5,
-    max_duration_sec: int = 60,
+    max_duration_sec: int = 120,
     regenerate: bool = False,
 ) -> List[ClipMoment]:
     from config import config
@@ -178,7 +209,8 @@ async def pick_viral_moments(
     if not segments:
         return []
 
-    max_sec = max(20, min(60, int(max_duration_sec)))
+    max_sec = float(max(_MIN_CLIP_SEC, min(_MAX_CLIP_SEC, int(max_duration_sec))))
+    min_sec = _MIN_CLIP_SEC
     max_end = max(s.end_sec for s in segments) + 5.0
     skip_first = 0
     if regenerate and len(segments) > 20:
@@ -188,12 +220,18 @@ async def pick_viral_moments(
     title = (meeting_title or "Эфир").strip()
     variation = int(time.time()) % 10_000
 
-    user = f"Эфир: {title}\n\nРасшифровка (таймкод → текст):\n{prompt_body}"
+    user = (
+        f"Запись: {title}\n\n"
+        f"Источник: только речь Константина (Кости).\n"
+        f"Сначала из всего массива выбери {count} законченных цепляющих МЫСЛЕЙ Константина, "
+        f"и только потом под каждую мысль поставь таймкоды нарезки "
+        f"({int(min_sec)}–{int(max_sec)} с).\n\n"
+        f"Речь Константина блоками (таймкод → текст):\n{prompt_body}"
+    )
     if regenerate:
         user = (
-            f"Повторный запрос #{variation}. Нужны НОВЫЕ отрывки — другие таймкоды "
-            f"и другие темы, не повторяй типичный «безопасный» набор.\n"
-            f"Ищи неожиданные сильные моменты в других частях эфира.\n\n{user}"
+            f"Повторный запрос #{variation}. Нужны НОВЫЕ мысли и другие таймкоды — "
+            f"не повторяй типичный «безопасный» набор.\n\n{user}"
         )
     if hint:
         user = f"Философия эксперта:\n{hint}\n\n{user}"
@@ -206,10 +244,12 @@ async def pick_viral_moments(
             from openai import AsyncOpenAI
 
             client = AsyncOpenAI(api_key=key)
-            sys_prompt = _SYSTEM.format(count=count, max_sec=max_sec)
+            sys_prompt = _SYSTEM.format(
+                count=count, min_sec=int(min_sec), max_sec=int(max_sec)
+            )
             if regenerate:
                 sys_prompt += (
-                    "\n\nВажно: это перегенерация. Выбери другие отрывки, "
+                    "\n\nВажно: это перегенерация. Выбери другие мысли и отрывки, "
                     "чем могли бы выбрать в прошлый раз."
                 )
             r = await client.chat.completions.create(
@@ -218,17 +258,26 @@ async def pick_viral_moments(
                     {"role": "system", "content": sys_prompt},
                     {"role": "user", "content": user[:12000]},
                 ],
-                max_tokens=1200,
+                max_tokens=1600,
                 temperature=temperature,
                 response_format={"type": "json_object"},
             )
             out = r.choices[0].message.content if r.choices else ""
-            clips = _parse_clips(out or "", max_sec=max_sec, max_end=max_end)
+            clips = _parse_clips(
+                out or "",
+                min_sec=min_sec,
+                max_sec=max_sec,
+                max_end=max_end,
+            )
             if clips:
                 return clips[:count]
         except Exception as e:
             logger.warning("pick_viral_moments LLM: %s", e)
 
     return _fallback_moments(
-        segments, count=count, max_sec=max_sec, regenerate=regenerate
+        segments,
+        count=count,
+        min_sec=min_sec,
+        max_sec=max_sec,
+        regenerate=regenerate,
     )[:count]

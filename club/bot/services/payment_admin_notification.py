@@ -7,7 +7,7 @@ import json
 import logging
 from collections import Counter
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 from config import config, russian_days_phrase
@@ -17,6 +17,15 @@ if TYPE_CHECKING:
     from storage.user_storage import UserStorage
 
 logger = logging.getLogger(__name__)
+
+
+def _normalize_dt_for_compare(dt: Optional[datetime]) -> Optional[datetime]:
+    """Привести datetime к naive UTC для сравнений (asyncpg vs order.paid_at)."""
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return dt
+    return dt.astimezone(timezone.utc).replace(tzinfo=None)
 
 
 def is_promo_week_tariff_type(tariff_type: Optional[str]) -> bool:
@@ -194,7 +203,7 @@ async def _club_absence_after_kick_line(
     if not paid_at:
         return None
 
-    anchor = paid_at
+    anchor = _normalize_dt_for_compare(paid_at)
     kick_at: Optional[datetime] = None
     estimated = False
 
@@ -214,11 +223,13 @@ async def _club_absence_after_kick_line(
         prev_expires = await storage.get_license_history_previous_expires_for_payment(
             user_id, payment_id
         )
+        prev_expires = _normalize_dt_for_compare(prev_expires)
         if prev_expires and prev_expires < anchor:
             grace = max(0, int(config.CLUB_GROUP_EXPIRED_LICENSE_GRACE_DAYS))
             kick_at = prev_expires + timedelta(days=grace)
             estimated = True
 
+    kick_at = _normalize_dt_for_compare(kick_at)
     if not kick_at or kick_at >= anchor:
         return None
 

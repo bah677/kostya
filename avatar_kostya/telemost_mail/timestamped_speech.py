@@ -75,3 +75,45 @@ def merge_segments_window(
         for s in segments
         if s.end_sec > start_sec and s.start_sec < end_sec
     ]
+
+
+def format_expert_blocks_for_prompt(
+    segments: Sequence[SpeechSegment],
+    *,
+    gap_sec: float = 12.0,
+    limit_blocks: int = 90,
+    skip_first_blocks: int = 0,
+    max_text_per_block: int = 520,
+) -> str:
+    """Склеивает соседние реплики эксперта в блоки — удобнее искать целую мысль."""
+    if not segments:
+        return ""
+    blocks: List[tuple[float, float, str]] = []
+    cur_start: float | None = None
+    cur_end: float = 0.0
+    texts: List[str] = []
+    for s in segments:
+        if cur_start is None:
+            cur_start = s.start_sec
+            cur_end = s.end_sec
+            texts = [s.text]
+            continue
+        if s.start_sec - cur_end <= gap_sec:
+            texts.append(s.text)
+            cur_end = max(cur_end, s.end_sec)
+        else:
+            blocks.append((cur_start, cur_end, " ".join(texts)))
+            cur_start = s.start_sec
+            cur_end = s.end_sec
+            texts = [s.text]
+    if cur_start is not None and texts:
+        blocks.append((cur_start, cur_end, " ".join(texts)))
+
+    pool = blocks[skip_first_blocks : skip_first_blocks + limit_blocks]
+    lines: List[str] = []
+    for a, b, text in pool:
+        chunk = text.strip()
+        if len(chunk) > max_text_per_block:
+            chunk = chunk[: max_text_per_block - 1].rstrip() + "…"
+        lines.append(f"[{a:.0f}–{b:.0f}s] {chunk}")
+    return "\n\n".join(lines)

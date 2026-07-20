@@ -100,12 +100,23 @@ async def enqueue_telemost_audio_last(
     force: bool = True,
     regenerate_moments: bool = True,
 ) -> tuple[bool, str]:
+    from telemost_audio.recording_kind import (
+        recording_kind_from_content_type,
+        wants_shorts_clips,
+    )
+
     storage = getattr(bot_app, "user_storage", None)
     if storage is None:
         return False, "Хранилище недоступно"
     row = await storage.get_last_indexed_telemost_mail()
     if not row:
         return False, "Нет проиндексированных эфиров Телемоста"
+    clf = row.get("classification") or {}
+    kind = recording_kind_from_content_type(
+        str(clf.get("content_type") or "") if isinstance(clf, dict) else ""
+    )
+    if not wants_shorts_clips(kind):
+        return False, "По молитвам шортсы не нарезаем — только RAG и полная запись."
     try:
         pending_id = uuid.UUID(str(row["id"]))
     except (ValueError, TypeError):
@@ -122,6 +133,63 @@ async def enqueue_telemost_audio_last(
     ):
         return False, "Аудио-нарезка уже выполняется"
     return True, str(title)[:120]
+
+
+async def enqueue_telemost_audio_by_meeting_id(
+    bot_app: Any,
+    meeting_id: str,
+    *,
+    force: bool = True,
+    regenerate_moments: bool = True,
+) -> tuple[bool, str]:
+    """Нарезать аудио-шортсы для встречи по номеру (нужен indexed конспект)."""
+    from html import escape as html_escape
+
+    from telemost_audio.recording_kind import (
+        recording_kind_from_content_type,
+        wants_shorts_clips,
+    )
+
+    storage = getattr(bot_app, "user_storage", None)
+    if storage is None:
+        return False, "Хранилище недоступно"
+    mid = (meeting_id or "").strip()
+    if not mid:
+        return False, "Укажите номер встречи"
+    row = await storage.get_telemost_pending_by_meeting_id(mid)
+    if not row:
+        return False, f"Конспект встречи №<code>{html_escape(mid)}</code> не найден"
+    status = str(row.get("status") or "")
+    if status != "indexed":
+        return False, (
+            f"№<code>{html_escape(mid)}</code> ещё не в RAG "
+            f"(status=<code>{html_escape(status)}</code>). Сначала загрузите конспект."
+        )
+    clf = row.get("classification") or {}
+    kind = recording_kind_from_content_type(
+        str(clf.get("content_type") or "") if isinstance(clf, dict) else ""
+    )
+    if not wants_shorts_clips(kind):
+        return False, (
+            f"№<code>{html_escape(mid)}</code> — молитва: шортсы не нарезаем "
+            "(только RAG и полная запись)."
+        )
+    try:
+        pending_id = uuid.UUID(str(row["id"]))
+    except (ValueError, TypeError):
+        return False, "Некорректный pending_id"
+    meta = _build_chroma_meta_from_row(row)
+    title = meta.get("topic_title") or meta.get("source") or row.get("subject") or "Эфир"
+    if not enqueue_telemost_audio(
+        bot_app,
+        pending_id,
+        row,
+        meta,
+        force=force,
+        regenerate_moments=regenerate_moments,
+    ):
+        return False, "Аудио-нарезка уже выполняется"
+    return True, f"№{mid}: {str(title)[:100]}"
 
 
 async def _run_audio_pipeline(
@@ -218,7 +286,7 @@ async def _run_audio_pipeline(
             return
 
         count = int(getattr(config, "TELEMOST_AUDIO_CLIPS_COUNT", 5) or 5)
-        max_dur = int(getattr(config, "TELEMOST_AUDIO_CLIPS_MAX_DURATION_SEC", 60) or 60)
+        max_dur = int(getattr(config, "TELEMOST_AUDIO_CLIPS_MAX_DURATION_SEC", 120) or 120)
         philosophy = getattr(config, "TELEMOST_SHORTS_PHILOSOPHY_HINT", "") or ""
 
         moments: List[AudioClipMoment] = await pick_audio_moments(

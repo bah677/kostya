@@ -87,8 +87,13 @@ def _format_stretched_ass_text(wrapped: str) -> str:
 
 def _subtitle_offset_sec() -> float:
     return float(
-        getattr(config, "TELEMOST_SHORTS_SUBTITLE_OFFSET_SEC", -2.5) or -2.5
+        getattr(config, "TELEMOST_SHORTS_SUBTITLE_OFFSET_SEC", -0.5) or -0.5
     )
+
+
+def _cut_offset_sec() -> float:
+    """Сдвиг окна нарезки: отрицательный = начать/закончить раньше."""
+    return float(getattr(config, "TELEMOST_SHORTS_CUT_OFFSET_SEC", -0.5) or -0.5)
 
 
 def _write_ass(
@@ -149,8 +154,9 @@ def _render_one_sync(
     *,
     max_duration_sec: float,
 ) -> bool:
-    start = max(0.0, moment.start_sec)
-    end = min(moment.end_sec, start + max_duration_sec)
+    offset = _cut_offset_sec()
+    start = max(0.0, moment.start_sec + offset)
+    end = min(moment.end_sec + offset, start + max_duration_sec)
     duration = end - start
     if duration < 5:
         return False
@@ -218,7 +224,7 @@ async def render_vertical_clips(
     segments: Sequence[SpeechSegment],
     *,
     work_dir: str | Path,
-    max_duration_sec: int = 60,
+    max_duration_sec: int = 120,
 ) -> List[Path]:
     src = Path(video_path)
     if not src.is_file():

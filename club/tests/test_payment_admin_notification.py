@@ -42,6 +42,22 @@ class _FakeStorage:
 
 
 @pytest.mark.asyncio
+async def test_absence_line_mixed_naive_and_aware_datetimes():
+    from datetime import timezone as tz
+
+    paid = datetime(2026, 7, 20, 11, 27, 2, tzinfo=tz.utc)
+    storage = _FakeStorage(exclusion_at=datetime(2026, 7, 20, 9, 1, 52))
+    line = await _club_absence_after_kick_line(
+        storage,
+        user_id=1892103568,
+        payment_id=911,
+        paid_at=paid,
+    )
+    assert line is not None
+    assert "Не был в клубе после исключения" in line
+
+
+@pytest.mark.asyncio
 async def test_absence_line_from_exclusion_record():
     paid = datetime(2026, 6, 26, 21, 33)
     storage = _FakeStorage(exclusion_at=datetime(2026, 6, 10, 12, 0))

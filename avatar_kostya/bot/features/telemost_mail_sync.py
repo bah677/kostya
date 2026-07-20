@@ -26,6 +26,14 @@ from config import config
 from telemost_mail.classifier_llm import TelemostClassification
 from telemost_mail.decisions import resolve_mail_decision
 from telemost_mail.service import TelemostMailService
+from telemost_audio.recording_kind import (
+    KIND_EFIR,
+    KIND_MOLITVA,
+    KIND_OTHER,
+    KIND_POKAYANIE,
+    KIND_QA,
+    KIND_LABELS,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -33,10 +41,6 @@ CB_PREFIX = "tm_rag:"
 CB_LOAD = f"{CB_PREFIX}load:"
 CB_IGNORE = f"{CB_PREFIX}ignore:"
 CB_KIND = f"{CB_PREFIX}kind:"
-
-KIND_EFIR = "efir"
-KIND_MOLITVA = "molitva"
-KIND_OTHER = "other"
 
 
 class TelemostMailFeature(BaseFeature):
@@ -187,6 +191,16 @@ class TelemostMailFeature(BaseFeature):
                 ],
                 [
                     InlineKeyboardButton(
+                        text="💔 Покаяние",
+                        callback_data=f"{CB_KIND}{KIND_POKAYANIE}:{pending_id}",
+                    ),
+                    InlineKeyboardButton(
+                        text="❓ Вопрос-ответ",
+                        callback_data=f"{CB_KIND}{KIND_QA}:{pending_id}",
+                    ),
+                ],
+                [
+                    InlineKeyboardButton(
                         text="Другое",
                         callback_data=f"{CB_KIND}{KIND_OTHER}:{pending_id}",
                     ),
@@ -284,7 +298,13 @@ class TelemostMailFeature(BaseFeature):
     async def _on_kind_callback(self, callback: CallbackQuery, data: str) -> None:
         rest = data[len(CB_KIND) :]
         kind, _, pid_s = rest.partition(":")
-        if kind not in {KIND_EFIR, KIND_MOLITVA, KIND_OTHER}:
+        if kind not in {
+            KIND_EFIR,
+            KIND_MOLITVA,
+            KIND_POKAYANIE,
+            KIND_QA,
+            KIND_OTHER,
+        }:
             await callback.answer("Неизвестный тип", show_alert=True)
             return
         try:
@@ -303,11 +323,7 @@ class TelemostMailFeature(BaseFeature):
         resolve_mail_decision(pid_s, f"load:{kind}")
         result_html = result if n > 0 else html_escape(result)
 
-        kind_label = {
-            KIND_EFIR: "Эфир",
-            KIND_MOLITVA: "Молитва",
-            KIND_OTHER: "Другое",
-        }.get(kind, kind)
+        kind_label = KIND_LABELS.get(kind, kind)
 
         msg = callback.message
         if msg:
