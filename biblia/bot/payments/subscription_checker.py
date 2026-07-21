@@ -210,6 +210,7 @@ class SubscriptionChecker:
                 else None
             )
         await notify_admins_standalone_donation_success(
+            self.bot,
             self.user_storage,
             payment_row,
             rub_amount=rub_amount,

@@ -2,7 +2,6 @@
 import html
 import logging
 
-import aiohttp
 from aiogram import Dispatcher
 from aiogram.enums import ParseMode
 from aiogram.filters import Command, StateFilter
@@ -11,18 +10,18 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import Message
 
 from bot.features.base import BaseFeature
+from bot.utils.admin_channel import (
+    send_admin_audio,
+    send_admin_document,
+    send_admin_html_message,
+    send_admin_photo,
+    send_admin_video,
+    send_admin_video_note,
+    send_admin_voice,
+)
 from config import config
 
 logger = logging.getLogger(__name__)
-
-_TELEGRAM_SEND_METHOD = {
-    "photo": "sendPhoto",
-    "video": "sendVideo",
-    "voice": "sendVoice",
-    "audio": "sendAudio",
-    "video_note": "sendVideoNote",
-    "document": "sendDocument",
-}
 
 
 class MediaIdStates(StatesGroup):
@@ -32,7 +31,7 @@ class MediaIdStates(StatesGroup):
 class MediaIdHelperFeature(BaseFeature):
     """
     Получение file_id медиа по команде /code_id;
-    опционально — копия в админский топик через ADMIN_BOT_TOKEN.
+    опционально — копия в админский топик основным ботом.
     """
 
     name = "media_id_helper"
@@ -42,7 +41,6 @@ class MediaIdHelperFeature(BaseFeature):
         self.user_storage = user_storage
         self.bot = bot
         self.feature_manager = feature_manager
-        self.admin_bot_token = config.ADMIN_BOT_TOKEN
         self.admin_channel_id = config.ADMIN_CHANNEL_ID
         self.admin_topic_id = config.MEDIA_ID_TOPIC_ID
 
@@ -139,8 +137,8 @@ class MediaIdHelperFeature(BaseFeature):
         duration: int | None = None,
     ):
         try:
-            if not self.admin_bot_token or not self.admin_channel_id:
-                logger.warning("⚠️ ADMIN_BOT_TOKEN or ADMIN_CHANNEL_ID not configured")
+            if not self.admin_channel_id:
+                logger.warning("⚠️ ADMIN_CHANNEL_ID not configured")
                 return
 
             logger.info(
@@ -165,33 +163,43 @@ class MediaIdHelperFeature(BaseFeature):
                 caption += f"\n📄 <b>Имя файла:</b> <code>{html.escape(file_name)}</code>"
             caption += f"\n\n📌 <b>file_id:</b>\n<code>{html.escape(file_id)}</code>"
 
-            file = await self.bot.get_file(file_id)
-            file_content = await self.bot.download_file(file.file_path)
-
-            method = _TELEGRAM_SEND_METHOD.get(media_type)
-            if not method:
+            thread_kw = self.admin_topic_id if self.admin_topic_id > 0 else None
+            ok = False
+            if media_type == "photo":
+                ok = await send_admin_photo(
+                    self.bot, photo=file_id, caption=caption, thread_id=thread_kw
+                )
+            elif media_type == "video":
+                ok = await send_admin_video(
+                    self.bot, video=file_id, caption=caption, thread_id=thread_kw
+                )
+            elif media_type == "voice":
+                ok = await send_admin_voice(
+                    self.bot, voice=file_id, caption=caption, thread_id=thread_kw
+                )
+            elif media_type == "audio":
+                ok = await send_admin_audio(
+                    self.bot, audio=file_id, caption=caption, thread_id=thread_kw
+                )
+            elif media_type == "video_note":
+                vn_ok = await send_admin_video_note(
+                    self.bot, video_note=file_id, thread_id=thread_kw
+                )
+                cap_ok = await send_admin_html_message(
+                    self.bot, caption, thread_id=thread_kw
+                )
+                ok = vn_ok and cap_ok
+            elif media_type == "document":
+                ok = await send_admin_document(
+                    self.bot, document=file_id, caption=caption, thread_id=thread_kw
+                )
+            else:
                 logger.error("Unknown media_type for admin forward: %s", media_type)
                 return
 
-            url = f"https://api.telegram.org/bot{self.admin_bot_token}/{method}"
-
-            form_field = media_type if media_type != "document" else "document"
-            async with aiohttp.ClientSession() as session:
-                form_data = aiohttp.FormData()
-                form_data.add_field("chat_id", str(self.admin_channel_id))
-                form_data.add_field("caption", caption)
-                form_data.add_field("parse_mode", "HTML")
-                if self.admin_topic_id > 0:
-                    form_data.add_field("message_thread_id", str(self.admin_topic_id))
-                form_data.add_field(
-                    form_field,
-                    file_content,
-                    filename=file_name or f"file.{media_type}",
-                )
-                async with session.post(url, data=form_data) as resp:
-                    if resp.status == 200:
-                        logger.info("✅ Media forwarded to admin topic %s", self.admin_topic_id)
-                    else:
-                        logger.error("❌ Failed to forward media: %s", await resp.text())
+            if ok:
+                logger.info("✅ Media forwarded to admin topic %s", self.admin_topic_id)
+            else:
+                logger.error("❌ Failed to forward media to admin")
         except Exception as e:
             logger.error("❌ Error forwarding media to admin: %s", e)

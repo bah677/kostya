@@ -17,7 +17,7 @@ from aiogram.types import FSInputFile
 from bot.utils.rag_admin_context import rag_shorts_chat_topic
 from config import config
 from telemost_audio.ffmpeg_render import render_full_voice_ogg
-from telemost_audio.full_voice_caption import build_full_voice_caption
+from telemost_audio.full_voice_caption import build_full_voice_caption_parts
 from telemost_audio.recording_kind import (
     KIND_EFIR,
     KIND_LABELS,
@@ -257,7 +257,7 @@ async def _run_full_voice_pipeline(
             return
 
         philosophy = getattr(config, "TELEMOST_SHORTS_PHILOSOPHY_HINT", "") or ""
-        caption = await build_full_voice_caption(
+        title_plain, desc_plain, caption = await build_full_voice_caption_parts(
             meeting_title=str(title),
             summary=summary,
             transcript_excerpt=transcript[:12000],
@@ -273,13 +273,35 @@ async def _run_full_voice_pipeline(
             if len(caption) > 1024:
                 caption = caption[:1021].rstrip() + "…"
 
-        await bot.send_voice(
+        sent = await bot.send_voice(
             chat_id,
             FSInputFile(str(voice_path)),
             caption=caption,
             parse_mode=ParseMode.HTML,
             message_thread_id=topic_id,
         )
+        try:
+            await storage.create_caption_edit_session(
+                entity_type="full_voice",
+                chat_id=int(chat_id),
+                root_message_id=int(sent.message_id),
+                caption_html=caption,
+                title=title_plain,
+                description=desc_plain,
+                media_kind="voice",
+                topic_id=int(topic_id or 0),
+                pending_id=pending_id,
+                meeting_id=str(meeting_id or ""),
+                context={
+                    "meeting_title": str(title),
+                    "recording_kind": recording_kind,
+                    "kind_label": kind_label,
+                    "transcript_excerpt": transcript[:8000],
+                    "summary": summary[:1500],
+                },
+            )
+        except Exception as e:
+            logger.warning("full_voice caption session: %s", e)
         logger.info(
             "telemost_full_voice sent kind=%s chat=%s topic=%s pending=%s dest=%s",
             recording_kind,

@@ -136,8 +136,6 @@ class AppConfig:
     MIRON_BOT_TOKEN: str = ""
     OPENAI_API_KEY: str = ""
 
-    ADMIN_BOT_TOKEN: Optional[str] = None
-    ADMIN_BOT_ID: int = 0
     WORKFLOW_ID: str = ""
 
     YOOKASSA_SHOP_ID: str = ""
@@ -192,12 +190,18 @@ class AppConfig:
         )
 
     @property
-    def has_admin_bot(self) -> bool:
-        return bool(self.ADMIN_BOT_TOKEN)
-
-    @property
     def has_admin_channel(self) -> bool:
         return bool(self.ADMIN_CHANNEL_ID)
+
+    def resolved_admin_group_id(self) -> int:
+        """Числовой id админ-супергруппы для хендлеров (reply на тикеты)."""
+        raw = (self.ADMIN_CHANNEL_ID or "").strip()
+        if not raw:
+            return 0
+        try:
+            return int(raw)
+        except ValueError:
+            return 0
 
     @property
     def has_yookassa(self) -> bool:
@@ -242,7 +246,6 @@ def load_app_config() -> AppConfig:
         DONATION_RECURRING_ENABLED=_parse_bool_env(
             os.getenv("DONATION_RECURRING_ENABLED"), False
         ),
-        ADMIN_BOT_TOKEN=os.getenv("ADMIN_BOT_TOKEN"),
         DB_HOST=os.getenv("DB_HOST", "localhost"),
         DB_PORT=os.getenv("DB_PORT", ""),
         DB_NAME=_app_db_name(),
@@ -252,7 +255,6 @@ def load_app_config() -> AppConfig:
         PAYMENT_THREAD_ID=int(os.getenv("PAYMENT_THREAD_ID", "0")),
         SUPPORT_THREAD_ID=int(os.getenv("SUPPORT_THREAD_ID", "0")),
         BIBLIA_REPORT_THREAD_ID=int(os.getenv("BIBLIA_REPORT_THREAD_ID", "0") or "0"),
-        ADMIN_BOT_ID=int(os.getenv("ADMIN_BOT_ID", "0")),
         MEDIA_ID_TOPIC_ID=int(os.getenv("MEDIA_ID_TOPIC_ID", "0")),
         CLUB_GROUP_ID=int(os.getenv("CLUB_GROUP_ID", "0")),
         CLUB_POST_LINK=(os.getenv("CLUB_POST_LINK") or "").strip(),

@@ -299,6 +299,10 @@ async def _run_shorts_pipeline(
             return
 
         sent = 0
+        meeting_id = ""
+        extra_meta = row.get("extra_metadata") or {}
+        if isinstance(extra_meta, dict):
+            meeting_id = str(extra_meta.get("meeting_id") or "")
         for i, (clip_path, moment) in enumerate(zip(clips, moments), start=1):
             cap = (
                 f"<b>Short {i}/{len(clips)}</b> · {html_escape(moment.title)}\n"
@@ -306,7 +310,7 @@ async def _run_shorts_pipeline(
                 f"<i>{html_escape(moment.reason[:200])}</i>"
             )
             try:
-                await bot.send_video(
+                msg = await bot.send_video(
                     chat_id,
                     FSInputFile(str(clip_path)),
                     caption=cap,
@@ -315,6 +319,30 @@ async def _run_shorts_pipeline(
                     supports_streaming=True,
                 )
                 sent += 1
+                if storage is not None:
+                    try:
+                        await storage.create_caption_edit_session(
+                            entity_type="video_short",
+                            chat_id=int(chat_id),
+                            root_message_id=int(msg.message_id),
+                            caption_html=cap,
+                            title=moment.title,
+                            description=moment.hook,
+                            media_kind="video",
+                            topic_id=int(topic_id or 0),
+                            pending_id=pending_id,
+                            meeting_id=meeting_id,
+                            context={
+                                "meeting_title": str(title),
+                                "clip_index": i,
+                                "start_sec": moment.start_sec,
+                                "end_sec": moment.end_sec,
+                                "moment_reason": moment.reason,
+                                "score": getattr(moment, "score", 0),
+                            },
+                        )
+                    except Exception as se:
+                        logger.warning("video short caption session: %s", se)
                 await asyncio.sleep(0.8)
             except Exception as e:
                 logger.error("send short %s: %s", clip_path, e)

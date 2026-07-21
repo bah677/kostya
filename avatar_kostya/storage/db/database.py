@@ -7,6 +7,7 @@
 
 from storage.db._base import DatabaseBase
 from storage.db.bot_admins import BotAdminsMixin
+from storage.db.caption_edit_sessions import CaptionEditSessionsMixin
 from storage.db.creative_sessions import CreativeSessionsMixin
 from storage.db.forum_topic_names import ForumTopicNamesMixin
 from storage.db.gifts import GiftsMixin
@@ -28,6 +29,7 @@ from storage.db.rag_source_visibility import RagSourceVisibilityMixin
 class Database(
     ForumTopicNamesMixin,
     CreativeSessionsMixin,
+    CaptionEditSessionsMixin,
     BotAdminsMixin,
     UsersMixin,
     MessagesMixin,
@@ -50,6 +52,7 @@ class Database(
     Каждый mixin отвечает за свою предметную область:
       - ForumTopicNamesMixin  — forum_topic_names (кэш имён топиков для RAG)
       - CreativeSessionsMixin — creative_sessions, creative_task_turns (/new)
+      - CaptionEditSessionsMixin — caption_edit_sessions (reply-редактура подписей)
       - BotAdminsMixin        — bot_admins (доступ без лицензии; управление через суперадмина)
       - UsersMixin            — users (профиль, активность, бан, сессия агента)
       - MessagesMixin         — messages, token_usage, interaction_logs

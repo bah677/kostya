@@ -49,6 +49,16 @@ else
   echo "==> [git] Коммит: ${msg}"
 fi
 
+echo "==> [git] fetch + rebase origin/${GIT_BRANCH}"
+git fetch origin "${GIT_BRANCH}"
+if ! git rev-parse --verify "origin/${GIT_BRANCH}" >/dev/null 2>&1; then
+  echo "==> [git] remote-ветка origin/${GIT_BRANCH} пока не существует — push создаст её"
+elif ! git merge-base --is-ancestor "origin/${GIT_BRANCH}" HEAD 2>/dev/null; then
+  GIT_AUTHOR_NAME="${GIT_AUTHOR_NAME}" GIT_AUTHOR_EMAIL="${GIT_AUTHOR_EMAIL}" \
+  GIT_COMMITTER_NAME="${GIT_COMMITTER_NAME}" GIT_COMMITTER_EMAIL="${GIT_COMMITTER_EMAIL}" \
+    git rebase "origin/${GIT_BRANCH}" || die "rebase не удался — разрешите конфликты и запустите снова"
+fi
+
 echo "==> [git] push origin ${GIT_BRANCH}"
 if git push -u origin "${GIT_BRANCH}"; then
   echo "==> [git] OK: ${GIT_REMOTE_URL} (ветка ${GIT_BRANCH})"

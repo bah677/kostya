@@ -24,12 +24,14 @@ _REF_SUFFIX_LEN = 10
 
 _SYSTEM = """Ты копирайтер духовного клуба «ЛЮБЯЩИЕ БОГА».
 
-Для каждого аудио-отрывка эфира напиши продающую подпись к голосовому в Telegram.
+Для каждого аудио-отрывка эфира напиши подпись к голосовому в Telegram.
 
 Требования к каждому отрывку:
-- headline — цепляющий заголовок (до 80 символов), честный, без кликбейта;
-- summary — ОДНО предложение (до 200 символов), разворачивает суть отрывка так, что хочется послушать;
-- bible_quote — короткая подходящая цитата из Библии в кавычках «…» (до 180 символов), по смыслу связана с отрывком;
+- headline — цепляющий заголовок (до 80 символов). Это крючок, а НЕ краткое содержание куска;
+- summary — 1–2 предложения (до 220 символов): РАЗВЕРНИ и УСИЛЬ мысль отрывка,
+  чтобы человек не додумывал контекст; хочется послушать;
+  НЕ пересказ «о чём тут говорится» списком;
+- bible_quote — короткая подходящая цитата из Библии в кавычках «…» (до 180 символов);
 - bible_ref — ссылка на место Писания (например «Иоан. 3:16» или «Псалом 22:1»).
 
 Стиль: тёплый, живой, про отношения с Богом. Без markdown и HTML — только plain text в полях JSON.
@@ -274,17 +276,21 @@ async def build_audio_captions(
         if not bible_quote:
             bible_quote = "«Господь близок ко всем призывающим Его»"
             bible_ref = bible_ref or "Псалом 144:18"
+        headline = headline[:80]
+        summary = summary[:220]
+        bible_quote = bible_quote[:180]
+        bible_ref = bible_ref[:40]
         captions.append(
             AudioClipCaption(
-                headline=headline[:80],
-                summary=summary[:200],
-                bible_quote=bible_quote[:180],
-                bible_ref=bible_ref[:40],
+                headline=headline,
+                summary=summary,
+                bible_quote=bible_quote,
+                bible_ref=bible_ref,
                 html_text=_format_html_caption(
-                    headline[:80],
-                    summary[:200],
-                    bible_quote[:180],
-                    bible_ref[:40],
+                    headline,
+                    summary,
+                    bible_quote,
+                    bible_ref,
                 ),
                 ref_code=ref_code,
                 keyboard=club_button(ref_code),

@@ -247,6 +247,7 @@ class PaymentChecker:
                     if (payment_row.get("payment_type") or "") == "subscription":
                         notify_kind = "subscription_initial"
                     await notify_admins_standalone_donation_success(
+                        self.bot,
                         self.user_storage,
                         payment_row,
                         rub_amount=rub_amount,

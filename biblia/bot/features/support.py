@@ -1,25 +1,42 @@
 # bot/features/support.py
+"""Поддержка / обратная связь; уведомления и ответы админов через основной бот."""
+
+from __future__ import annotations
+
 import asyncio
 import html
 import logging
+import re
 from datetime import datetime
-from io import BytesIO
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
-import aiohttp
-from aiogram import Bot, Dispatcher
-from aiogram.enums import ParseMode
+from aiogram import Bot, Dispatcher, F
+from aiogram.enums import ChatType, ParseMode
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
-from aiogram.types import Message
+from aiogram.types import Message, User
 
+from bot.admin_guard import is_telegram_admin
 from bot.features.base import BaseFeature
 from bot.states import SupportStates
+from bot.utils.admin_channel import (
+    edit_admin_channel_message,
+    resolved_admin_group_id,
+    send_admin_animation,
+    send_admin_audio,
+    send_admin_document,
+    send_admin_html_message,
+    send_admin_photo,
+    send_admin_video,
+    send_admin_video_note,
+    send_admin_voice,
+)
 from config import config
 
 logger = logging.getLogger(__name__)
 
 _TICKET_MEDIA_CAPTION_MAX = 900
+_TICKET_PATTERN = re.compile(r"#?(TKT_BB)[A-Z0-9]+", re.IGNORECASE)
 
 
 class SupportFeature(BaseFeature):
@@ -39,7 +56,7 @@ class SupportFeature(BaseFeature):
         self._monitor_task: Optional[asyncio.Task] = None
 
     def set_bot(self, telegram_app):
-        """Основной бот нужен для скачивания вложений и ответов пользователям."""
+        """Основной бот: админ-канал, вложения, ответы пользователям."""
         self._bot = telegram_app.bot if telegram_app else None
 
     async def initialize(self) -> None:
@@ -51,7 +68,6 @@ class SupportFeature(BaseFeature):
         )
 
     async def teardown(self) -> None:
-        """Останавливает фоновый цикл мониторинга тикетов."""
         self._monitor_running = False
         if self._monitor_task:
             self._monitor_task.cancel()
@@ -64,6 +80,28 @@ class SupportFeature(BaseFeature):
 
     def register_handlers(self, dp: Dispatcher) -> None:
         dp.message.register(self.start_feedback, Command("feedback"))
+
+        gid = resolved_admin_group_id()
+        if gid and config.SUPPORT_THREAD_ID > 0:
+            dp.message.register(
+                self._support_thread_reply,
+                F.chat.id == gid,
+                F.message_thread_id == config.SUPPORT_THREAD_ID,
+                F.reply_to_message,
+                F.text,
+            )
+            logger.info(
+                "[%s] Reply на тикеты: chat=%s thread=%s",
+                self.name,
+                gid,
+                config.SUPPORT_THREAD_ID,
+            )
+        else:
+            logger.warning(
+                "[%s] Reply на тикеты не зарегистрирован "
+                "(нужны числовой ADMIN_CHANNEL_ID и SUPPORT_THREAD_ID)",
+                self.name,
+            )
 
     async def start_support(self, message: Message, state: FSMContext) -> None:
         user_id = message.from_user.id
@@ -90,7 +128,7 @@ class SupportFeature(BaseFeature):
         await message.answer(
             "<b>💬 Обратная связь</b>\n\n"
             "Мы всегда рады услышать ваше мнение! Ваши отзывы помогают нам становиться лучше.\n\n"
-            "<b>📝 Напишите, что вы думаете о клубе:</b>\n"
+            "<b>📝 Напишите, что вы думаете о боте:</b>\n"
             "• Что вам нравится?\n"
             "• Что можно улучшить?\n"
             "• Есть ли пожелания?\n\n"
@@ -181,8 +219,8 @@ class SupportFeature(BaseFeature):
         user,
         is_feedback: bool = False,
     ) -> None:
-        if not config.ADMIN_BOT_TOKEN or not config.ADMIN_CHANNEL_ID:
-            logger.warning("⚠️ Admin bot or channel not configured, skipping notification")
+        if not config.ADMIN_CHANNEL_ID or not self._bot:
+            logger.warning("⚠️ Admin channel or bot not configured, skipping notification")
             return
 
         user_name = user.first_name or ""
@@ -206,69 +244,31 @@ class SupportFeature(BaseFeature):
         )
 
         try:
-            post_data: Dict[str, Any] = {
-                "chat_id": config.ADMIN_CHANNEL_ID,
-                "text": notification_text,
-                "parse_mode": "HTML",
-                "disable_web_page_preview": True,
-            }
-            if config.SUPPORT_THREAD_ID and config.SUPPORT_THREAD_ID > 0:
-                post_data["message_thread_id"] = config.SUPPORT_THREAD_ID
-
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    f"https://api.telegram.org/bot{config.ADMIN_BOT_TOKEN}/sendMessage",
-                    json=post_data,
-                ) as resp:
-                    if resp.status == 200:
-                        logger.info(
-                            f"✅ Admin notification sent for ticket {ticket_number} (feedback={is_feedback})"
-                        )
-                    else:
-                        error = await resp.text()
-                        logger.error(f"❌ Failed to send admin notification: {error}")
-        except Exception as e:
-            logger.error(f"❌ Error notifying admins about ticket {ticket_number}: {e}", exc_info=True)
-
-    def _pick_ticket_media(self, message: Message) -> Optional[Tuple[str, str, str, str]]:
-        """
-        Telegram method name (sendPhoto …), multipart field name, file_id, filename for upload.
-        """
-        if message.photo:
-            p = message.photo[-1]
-            return ("sendPhoto", "photo", p.file_id, "photo.jpg")
-        if message.video:
-            v = message.video
-            fn = v.file_name or "video.mp4"
-            return ("sendVideo", "video", v.file_id, fn)
-        if message.animation:
-            a = message.animation
-            fn = a.file_name or "animation.mp4"
-            return ("sendAnimation", "animation", a.file_id, fn)
-        if message.document:
-            d = message.document
-            fn = d.file_name or "document.bin"
-            return ("sendDocument", "document", d.file_id, fn)
-        if message.audio:
-            a = message.audio
-            fn = a.file_name or "audio.mp3"
-            return ("sendAudio", "audio", a.file_id, fn)
-        if message.voice:
-            v = message.voice
-            return ("sendVoice", "voice", v.file_id, "voice.ogg")
-        if message.video_note:
-            vn = message.video_note
-            return ("sendVideoNote", "video_note", vn.file_id, "video_note.mp4")
-        if message.sticker:
-            st = message.sticker
-            if st.is_video:
-                ext = "webm"
-            elif st.is_animated:
-                ext = "tgs"
+            thread_id = (
+                config.SUPPORT_THREAD_ID
+                if config.SUPPORT_THREAD_ID and config.SUPPORT_THREAD_ID > 0
+                else None
+            )
+            ok = await send_admin_html_message(
+                self._bot,
+                notification_text,
+                thread_id=thread_id,
+            )
+            if ok:
+                logger.info(
+                    "✅ Admin notification sent for ticket %s (feedback=%s)",
+                    ticket_number,
+                    is_feedback,
+                )
             else:
-                ext = "webp"
-            return ("sendDocument", "document", st.file_id, f"sticker.{ext}")
-        return None
+                logger.error("❌ Failed to send admin notification for ticket %s", ticket_number)
+        except Exception as e:
+            logger.error(
+                "❌ Error notifying admins about ticket %s: %s",
+                ticket_number,
+                e,
+                exc_info=True,
+            )
 
     def _ticket_media_caption_html(
         self,
@@ -301,48 +301,276 @@ class SupportFeature(BaseFeature):
         user,
         is_feedback: bool,
     ) -> None:
-        if not config.ADMIN_BOT_TOKEN or not config.ADMIN_CHANNEL_ID:
-            return
-        if not self._bot:
-            logger.warning("⚠️ Bot not configured on SupportFeature, skip media relay")
+        if not config.ADMIN_CHANNEL_ID or not self._bot:
             return
 
-        picked = self._pick_ticket_media(message)
-        if not picked:
-            return
+        caption = self._ticket_media_caption_html(ticket_number, user_id, user, is_feedback)
+        thread_id = (
+            config.SUPPORT_THREAD_ID
+            if config.SUPPORT_THREAD_ID and config.SUPPORT_THREAD_ID > 0
+            else None
+        )
 
-        api_method, field_name, file_id, filename = picked
         try:
-            tg_file = await self._bot.get_file(file_id)
-            buf = BytesIO()
-            await self._bot.download_file(tg_file.file_path, buf)
-            blob = buf.getvalue()
-            if not blob:
-                logger.warning(f"⚠️ Empty media download for ticket {ticket_number}")
+            ok = False
+            if message.photo:
+                ok = await send_admin_photo(
+                    self._bot,
+                    photo=message.photo[-1].file_id,
+                    caption=caption,
+                    thread_id=thread_id,
+                )
+            elif message.video:
+                ok = await send_admin_video(
+                    self._bot,
+                    video=message.video.file_id,
+                    caption=caption,
+                    thread_id=thread_id,
+                )
+            elif message.animation:
+                ok = await send_admin_animation(
+                    self._bot,
+                    animation=message.animation.file_id,
+                    caption=caption,
+                    thread_id=thread_id,
+                )
+            elif message.document:
+                ok = await send_admin_document(
+                    self._bot,
+                    document=message.document.file_id,
+                    caption=caption,
+                    thread_id=thread_id,
+                )
+            elif message.audio:
+                ok = await send_admin_audio(
+                    self._bot,
+                    audio=message.audio.file_id,
+                    caption=caption,
+                    thread_id=thread_id,
+                )
+            elif message.voice:
+                ok = await send_admin_voice(
+                    self._bot,
+                    voice=message.voice.file_id,
+                    caption=caption,
+                    thread_id=thread_id,
+                )
+            elif message.video_note:
+                ok = await send_admin_video_note(
+                    self._bot,
+                    video_note=message.video_note.file_id,
+                    thread_id=thread_id,
+                )
+                if ok and caption:
+                    await send_admin_html_message(
+                        self._bot, caption, thread_id=thread_id
+                    )
+            elif message.sticker:
+                ok = await send_admin_document(
+                    self._bot,
+                    document=message.sticker.file_id,
+                    caption=caption,
+                    thread_id=thread_id,
+                )
+            else:
                 return
 
-            caption = self._ticket_media_caption_html(ticket_number, user_id, user, is_feedback)
-            async with aiohttp.ClientSession() as session:
-                form_data = aiohttp.FormData()
-                form_data.add_field("chat_id", str(config.ADMIN_CHANNEL_ID))
-                form_data.add_field("caption", caption)
-                form_data.add_field("parse_mode", "HTML")
-                if config.SUPPORT_THREAD_ID and config.SUPPORT_THREAD_ID > 0:
-                    form_data.add_field("message_thread_id", str(config.SUPPORT_THREAD_ID))
-                form_data.add_field(field_name, blob, filename=filename)
-
-                url = f"https://api.telegram.org/bot{config.ADMIN_BOT_TOKEN}/{api_method}"
-                async with session.post(url, data=form_data) as resp:
-                    if resp.status == 200:
-                        logger.info(f"✅ Admin media forwarded for ticket {ticket_number}")
-                    else:
-                        err = await resp.text()
-                        logger.error(f"❌ Failed to forward ticket media to admin: {err}")
+            if ok:
+                logger.info("✅ Admin media forwarded for ticket %s", ticket_number)
+            else:
+                logger.error("❌ Failed to forward ticket media to admin (%s)", ticket_number)
         except Exception as e:
             logger.error(
-                f"❌ Error forwarding ticket media ({ticket_number}): {e}",
+                "❌ Error forwarding ticket media (%s): %s",
+                ticket_number,
+                e,
                 exc_info=True,
             )
+
+    # ------------------------------------------------------------------ #
+    # Ответ админа reply в топике поддержки (как в club)
+    # ------------------------------------------------------------------ #
+
+    def _extract_ticket_number(self, text: str) -> Optional[str]:
+        if not text:
+            return None
+        m = _TICKET_PATTERN.search(text)
+        if not m:
+            return None
+        return m.group(0).lstrip("#").upper()
+
+    async def _ensure_support_admin(self, message: Message) -> bool:
+        if message.chat.type != ChatType.SUPERGROUP:
+            return False
+        if message.from_user is None or message.from_user.is_bot:
+            return False
+        uid = message.from_user.id
+        if not await is_telegram_admin(self.user_storage, uid):
+            await message.reply(
+                "⛔ Нет доступа. Telegram ID должен быть в таблице <code>admins</code>.",
+                parse_mode=ParseMode.HTML,
+            )
+            return False
+        return True
+
+    async def _support_ticket_reply_error(self, ticket_number: str) -> str:
+        ticket_number = (ticket_number or "").strip().upper()
+        row = await self.user_storage.get_ticket_by_number(ticket_number)
+        if not row:
+            return f"Тикет {ticket_number} не найден в базе."
+        status = str(row.get("status") or "")
+        if status == "closed":
+            updated = row.get("updated_at")
+            when = (
+                updated.strftime("%d.%m.%Y %H:%M")
+                if hasattr(updated, "strftime")
+                else "—"
+            )
+            return (
+                f"Тикет {ticket_number} уже закрыт ({when}). "
+                "Повторный ответ в этот тикет невозможен."
+            )
+        if status == "answered":
+            return (
+                f"Тикет {ticket_number}: ответ уже записан, доставка пользователю в очереди."
+            )
+        return f"Тикет {ticket_number} в статусе «{status}» — ответ сейчас принять нельзя."
+
+    async def _support_thread_reply(self, message: Message) -> None:
+        if not self._bot:
+            return
+        if not await self._ensure_support_admin(message):
+            return
+
+        processing = await message.reply("⏳ Записываю ответ в тикет…")
+        ticket_number: Optional[str] = None
+        err: Optional[str] = None
+
+        try:
+            orig = message.reply_to_message
+            orig_text = (orig.text or orig.caption or "") if orig else ""
+            ticket_number = self._extract_ticket_number(orig_text)
+            if not ticket_number:
+                err = "Не найден номер тикета (ожидается TKT_BB…) в сообщении."
+                return
+
+            body = (message.text or "").strip()
+            if not body:
+                err = "Пустой ответ."
+                return
+
+            row = await self.user_storage.apply_support_ticket_admin_reply(
+                ticket_number,
+                body,
+                message.from_user.id,
+            )
+            if not row:
+                err = await self._support_ticket_reply_error(ticket_number)
+                return
+
+            user_dm = self._format_response_message(
+                {
+                    "ticket_number": ticket_number,
+                    "admin_response": body,
+                }
+            )
+            try:
+                await self._bot.send_message(
+                    int(row["user_id"]),
+                    user_dm,
+                    parse_mode=ParseMode.HTML,
+                    disable_web_page_preview=True,
+                )
+                ok_send = True
+            except Exception as send_exc:
+                logger.warning(
+                    "support_thread_reply immediate send failed ticket=%s user=%s: %s",
+                    ticket_number,
+                    row.get("user_id"),
+                    send_exc,
+                )
+                ok_send = False
+
+            await self.user_storage.update_ticket_status(
+                ticket_number,
+                "closed" if ok_send else "answered",
+                admin_id=message.from_user.id,
+                admin_response=body,
+            )
+
+            if orig:
+                await self._append_support_answer_block(orig, body, message.from_user)
+
+            if ok_send:
+                await self._dm_ok(
+                    message.from_user.id,
+                    "✅ Ответ по тикету отправлен пользователю; тикет закрыт.",
+                )
+            else:
+                await self._dm_ok(
+                    message.from_user.id,
+                    "⚠️ Ответ записан, но отправка пользователю не удалась — "
+                    "доставит фоновый цикл поддержки.",
+                )
+        except Exception as e:
+            logger.exception("support_thread_reply: %s", e)
+            err = str(e)[:200]
+        finally:
+            for mid in (processing.message_id, message.message_id):
+                try:
+                    await self._bot.delete_message(message.chat.id, mid)
+                except Exception:
+                    pass
+            if err:
+                await self._dm_err(message.from_user.id, err, ticket_number)
+
+    async def _append_support_answer_block(
+        self,
+        original: Message,
+        reply_text: str,
+        admin: User,
+    ) -> None:
+        raw = original.text or original.caption or ""
+        base = re.sub(r"#\w+", "", raw).strip()
+        while "\n\n\n" in base:
+            base = base.replace("\n\n\n", "\n\n")
+        ts = datetime.now().strftime("%d.%m.%Y %H:%M")
+        un = f" (@{admin.username})" if admin.username else ""
+        block = (
+            f"\n\n━━━━━━━━━━━━━━━━━━━━━\n"
+            f"✅ <b>Ответ поддержки</b>\n"
+            f"👤 <b>Админ:</b> {html.escape(admin.full_name)}{html.escape(un)}\n"
+            f"⏰ <b>Время:</b> {ts}\n\n"
+            f"{html.escape(reply_text)}"
+        )
+        new_text = base + block
+        await edit_admin_channel_message(
+            self._bot,
+            message_id=original.message_id,
+            text=new_text,
+            chat_id=original.chat.id,
+        )
+
+    async def _dm_ok(self, admin_id: int, text: str) -> None:
+        try:
+            await self._bot.send_message(admin_id, text, parse_mode=ParseMode.HTML)
+        except Exception as e:
+            logger.debug("dm_ok to admin %s: %s", admin_id, e)
+
+    async def _dm_err(
+        self, admin_id: int, err: str, label: Optional[str] = None
+    ) -> None:
+        prefix = f"❌ {label}: " if label else "❌ "
+        try:
+            await self._bot.send_message(
+                admin_id, f"{prefix}{html.escape(err)}", parse_mode=ParseMode.HTML
+            )
+        except Exception as e:
+            logger.debug("dm_err to admin %s: %s", admin_id, e)
+
+    # ------------------------------------------------------------------ #
+    # Фоновая доставка answered → user
+    # ------------------------------------------------------------------ #
 
     async def _answered_tickets_loop(self) -> None:
         while self._monitor_running:
@@ -369,7 +597,9 @@ class SupportFeature(BaseFeature):
                         processed_count += 1
                 except Exception as e:
                     logger.error(f"❌ Error processing ticket {ticket['ticket_number']}: {e}")
-                    await self._update_ticket_status(ticket_id=ticket["id"], new_status="delivery_failed")
+                    await self._update_ticket_status(
+                        ticket_id=ticket["id"], new_status="delivery_failed"
+                    )
 
             if processed_count > 0:
                 logger.info(f"✅ Successfully processed {processed_count} tickets")
@@ -401,7 +631,7 @@ class SupportFeature(BaseFeature):
         admin_response = html.escape(ticket["admin_response"])
         return (
             f"📬 <b>Ответ от службы поддержки</b>\n\n"
-            f"По вашему обращению <b>#{ticket['ticket_number']}</b> получен ответ:\n\n"
+            f"По вашему обращению <b>#{html.escape(str(ticket['ticket_number']))}</b> получен ответ:\n\n"
             f"<i>{admin_response}</i>\n\n"
             f"━━━━━━━━━━━━━━━━━━━━━\n"
             f"Если у вас остались вопросы, создайте новое обращение через команду /support"
@@ -431,7 +661,7 @@ class SupportFeature(BaseFeature):
             async with self.user_storage.db.pool.acquire() as conn:
                 rows = await conn.fetch(
                     """
-                    SELECT 
+                    SELECT
                         ticket_id AS id,
                         ticket_number,
                         user_id,
@@ -440,8 +670,8 @@ class SupportFeature(BaseFeature):
                         user_message,
                         created_at,
                         updated_at
-                    FROM support_tickets 
-                    WHERE status = 'answered' 
+                    FROM support_tickets
+                    WHERE status = 'answered'
                       AND admin_response IS NOT NULL
                       AND admin_response != ''
                     ORDER BY updated_at ASC
@@ -457,7 +687,7 @@ class SupportFeature(BaseFeature):
             async with self.user_storage.db.pool.acquire() as conn:
                 await conn.execute(
                     """
-                    UPDATE support_tickets 
+                    UPDATE support_tickets
                        SET status = $1,
                            updated_at = NOW()
                      WHERE ticket_id = $2

@@ -348,7 +348,7 @@ async def _run_audio_pipeline(
             zip(clips, moments, captions), start=1
         ):
             try:
-                await bot.send_voice(
+                msg = await bot.send_voice(
                     chat_id,
                     FSInputFile(str(clip_path)),
                     caption=cap.html_text,
@@ -357,6 +357,36 @@ async def _run_audio_pipeline(
                     message_thread_id=topic_id,
                 )
                 sent += 1
+                if storage is not None:
+                    try:
+                        from telemost_audio.caption_llm import _moment_transcript
+
+                        await storage.create_caption_edit_session(
+                            entity_type="audio_short",
+                            chat_id=int(chat_id),
+                            root_message_id=int(msg.message_id),
+                            caption_html=cap.html_text,
+                            title=cap.headline,
+                            description=cap.summary,
+                            media_kind="voice",
+                            topic_id=int(topic_id or 0),
+                            pending_id=pending_id,
+                            meeting_id=str(meeting_id or ""),
+                            context={
+                                "meeting_title": str(title),
+                                "clip_index": i,
+                                "start_sec": moment.start_sec,
+                                "end_sec": moment.end_sec,
+                                "moment_title": moment.title,
+                                "moment_hook": moment.hook,
+                                "clip_transcript": _moment_transcript(segments, moment),
+                                "bible_quote": cap.bible_quote,
+                                "bible_ref": cap.bible_ref,
+                                "ref_code": cap.ref_code,
+                            },
+                        )
+                    except Exception as se:
+                        logger.warning("audio short caption session: %s", se)
                 logger.info(
                     "telemost_audio sent voice %s ref=%s",
                     i,

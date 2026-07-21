@@ -16,6 +16,7 @@ from bot.features.media_id_helper import MediaIdHelperFeature
 from bot.features.referral_program import ReferralProgramFeature
 from bot.features.scripture_messaging import ScriptureMessagingFeature
 from bot.features.shorts_mail_wizard import ShortsMailWizardFeature
+from bot.features.caption_editor_feature import CaptionEditorFeature
 from bot.features.support import SupportFeature
 from bot.handlers.messages import MessageHandlers
 
@@ -61,6 +62,7 @@ class BotApplication(TelegramBotApp):
         telemost_shorts = TelemostShortsFeature()
         telemost_audio = TelemostAudioFeature()
         shorts_mail_wizard = ShortsMailWizardFeature()
+        caption_editor = CaptionEditorFeature()
         group_rag_indexer = GroupRagIndexerFeature()
         yandex_disk_sync = YandexDiskSyncFeature()
         telemost_mail = TelemostMailFeature()
@@ -72,6 +74,8 @@ class BotApplication(TelegramBotApp):
             telemost_audio,
             # До catch-all индексатора: иначе #club/#biblia в exclude-топике съедаются.
             shorts_mail_wizard,
+            # Reply-редактура caption (после shorts_mail, до group indexer).
+            caption_editor,
             group_rag_indexer,
             yandex_disk_sync,
             telemost_mail,

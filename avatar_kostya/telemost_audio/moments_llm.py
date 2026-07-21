@@ -25,6 +25,8 @@ class AudioClipMoment:
     title: str
     hook: str
     reason: str
+    # 0..100: насколько момент хорош для шаринга (и публикации).
+    score: float = 0.0
 
     @property
     def duration_sec(self) -> float:
@@ -55,6 +57,11 @@ _SYSTEM = """Ты редактор аудио-мини-подкастов. В р
 hook — ОДНО короткое яркое предложение для подписи в Telegram (до 120 символов).
 Без кликбейта. Тон: честный разговор с Богом.
 
+Для КАЖДОГО выбранного момента оцени score по шкале 0..100:
+- насколько хочется переслать/поделиться этим кусочком,
+- насколько мысль завершенная и понятная,
+- насколько «усиливает» основную идею эфира.
+
 Верни ТОЛЬКО JSON:
 {{
   "clips": [
@@ -63,7 +70,8 @@ hook — ОДНО короткое яркое предложение для по
       "end_sec": 518.0,
       "title": "суть мысли",
       "hook": "Одно предложение — почему стоит послушать.",
-      "reason": "Мысль: … Почему цепляет: …"
+      "reason": "Усиление мысли для caption в Telegram (1–2 предложения). Не раскрывай весь эфир и не делай спойлеров.",
+      "score": 0.0
     }}
   ]
 }}
@@ -116,6 +124,7 @@ def _clamp_moment(
         title=(m.title or "")[:120],
         hook=hook[:120],
         reason=(m.reason or "")[:400],
+        score=float(getattr(m, "score", 0.0) or 0.0),
     )
 
 
@@ -148,6 +157,7 @@ def _parse_clips(
                 title=str(item.get("title") or "").strip(),
                 hook=str(item.get("hook") or item.get("title") or "").strip(),
                 reason=str(item.get("reason") or "").strip(),
+                score=float(item.get("score") or 0.0),
             )
             out.append(
                 _clamp_moment(
@@ -193,11 +203,52 @@ def _fallback_moments(
                 end_sec=end,
                 title=seg.text[:80],
                 hook=hook or seg.text[:120],
-                reason="fallback",
+                reason="fallback: ясная мысль — хочется дослушать и поделиться",
+                score=float(len(seg.text) or 0),
             )
         )
         used.append(seg.start_sec)
     return out
+
+
+def _rerank_candidates(
+    candidates: List[AudioClipMoment],
+    *,
+    final_count: int,
+    min_overlap_ratio: float = 0.35,
+) -> List[AudioClipMoment]:
+    """Топ по score с отсечением пересечений по времени и похожих формулировок."""
+    if not candidates:
+        return []
+
+    def overlap_ratio(a: AudioClipMoment, b: AudioClipMoment) -> float:
+        inter = max(0.0, min(a.end_sec, b.end_sec) - max(a.start_sec, b.start_sec))
+        denom = max(1e-6, min(a.duration_sec, b.duration_sec))
+        return inter / denom
+
+    def norm_tokens(s: str) -> set[str]:
+        return set(re.findall(r"[A-Za-zА-Яа-я0-9]+", (s or "").lower()))
+
+    ordered = sorted(candidates, key=lambda c: float(c.score or 0.0), reverse=True)
+    picked: List[AudioClipMoment] = []
+    picked_tokens: List[set[str]] = []
+
+    for c in ordered:
+        if len(picked) >= final_count:
+            break
+        if any(overlap_ratio(c, p) >= min_overlap_ratio for p in picked):
+            continue
+        toks = norm_tokens(c.title + " " + c.hook)
+        if picked_tokens and toks:
+            if max(
+                (len(toks & pt) / max(1, len(toks | pt)) if pt else 0.0)
+                for pt in picked_tokens
+            ) >= 0.7:
+                continue
+        picked.append(c)
+        picked_tokens.append(toks)
+
+    return picked[:final_count]
 
 
 async def pick_audio_moments(
@@ -217,61 +268,83 @@ async def pick_audio_moments(
     max_sec = float(max(_MIN_CLIP_SEC, min(_MAX_CLIP_SEC, int(max_duration_sec))))
     min_sec = _MIN_CLIP_SEC
     max_end = max(s.end_sec for s in segments) + 5.0
-    skip_first = 0
-    if regenerate and len(segments) > 20:
-        skip_first = random.randint(0, min(60, len(segments) // 5))
-    prompt_body = _segments_for_prompt(segments, skip_first=skip_first)
     hint = (philosophy_hint or "").strip()
     title = (meeting_title or "Эфир").strip()
     variation = int(time.time()) % 10_000
 
-    user = (
-        f"Запись: {title}\n\n"
-        f"Источник: только речь Константина (Кости).\n"
-        f"Сначала из всего массива выбери {count} законченных цепляющих МЫСЛЕЙ Константина, "
-        f"и только потом под каждую мысль поставь таймкоды нарезки "
-        f"({int(min_sec)}–{int(max_sec)} с).\n\n"
-        f"Речь Константина блоками (сек → текст):\n{prompt_body}"
-    )
-    if regenerate:
-        user = (
-            f"Повтор #{variation}: нужны ДРУГИЕ мысли и таймкоды.\n\n{user}"
-        )
-    if hint:
-        user = f"Философия:\n{hint}\n\n{user}"
-
     key = (config.OPENAI_API_KEY or "").strip()
     model = (getattr(config, "RAG_TAG_MODEL", None) or "gpt-4o-mini").strip()
     temperature = 0.9 if regenerate else 0.4
-    if key and prompt_body:
+
+    # Несколько окон по расшифровке → ~50–60 кандидатов → локальный топ-N.
+    n_seg = len(segments)
+    window = max(40, min(90, n_seg // 3 or n_seg))
+    step = max(20, window // 2)
+    skip_offsets = list(range(0, max(1, n_seg - window + 1), step))
+    if regenerate and n_seg > 20:
+        skip_offsets = [random.randint(0, min(60, n_seg // 5))] + skip_offsets
+    # Не больше 5 LLM-вызовов, чтобы не грузить сервер.
+    skip_offsets = skip_offsets[:5]
+    per_window = max(8, (55 + len(skip_offsets) - 1) // max(1, len(skip_offsets)))
+
+    all_candidates: List[AudioClipMoment] = []
+    if key:
         try:
             from openai import AsyncOpenAI
 
             client = AsyncOpenAI(api_key=key)
-            sys_prompt = _SYSTEM.format(
-                count=count, min_sec=int(min_sec), max_sec=int(max_sec)
-            )
-            if regenerate:
-                sys_prompt += "\n\nВыбери другие мысли и фрагменты, чем в прошлый раз."
-            r = await client.chat.completions.create(
-                model=model,
-                messages=[
-                    {"role": "system", "content": sys_prompt},
-                    {"role": "user", "content": user[:12000]},
-                ],
-                max_tokens=1600,
-                temperature=temperature,
-                response_format={"type": "json_object"},
-            )
-            out = r.choices[0].message.content if r.choices else ""
-            clips = _parse_clips(
-                out or "",
-                min_sec=min_sec,
-                max_sec=max_sec,
-                max_end=max_end,
-            )
-            if clips:
-                return clips[:count]
+            for skip_first in skip_offsets:
+                prompt_body = _segments_for_prompt(segments, skip_first=skip_first)
+                if not prompt_body.strip():
+                    continue
+                user = (
+                    f"Запись: {title}\n\n"
+                    f"Источник: только речь Константина (Кости).\n"
+                    f"Это ОДНО окно расшифровки (не весь эфир). "
+                    f"Найди до {per_window} законченных цепляющих МЫСЛЕЙ Константина "
+                    f"и поставь таймкоды ({int(min_sec)}–{int(max_sec)} с).\n"
+                    f"Старайся не повторять одно и то же.\n\n"
+                    f"Речь Константина блоками (сек → текст):\n{prompt_body}"
+                )
+                if regenerate:
+                    user = f"Повтор #{variation}: нужны ДРУГИЕ мысли.\n\n{user}"
+                if hint:
+                    user = f"Философия:\n{hint}\n\n{user}"
+                sys_prompt = _SYSTEM.format(
+                    count=per_window, min_sec=int(min_sec), max_sec=int(max_sec)
+                )
+                r = await client.chat.completions.create(
+                    model=model,
+                    messages=[
+                        {"role": "system", "content": sys_prompt},
+                        {"role": "user", "content": user[:12000]},
+                    ],
+                    max_tokens=2200,
+                    temperature=temperature,
+                    response_format={"type": "json_object"},
+                )
+                out = r.choices[0].message.content if r.choices else ""
+                clips = _parse_clips(
+                    out or "",
+                    min_sec=min_sec,
+                    max_sec=max_sec,
+                    max_end=max_end,
+                )
+                all_candidates.extend(clips)
+                logger.info(
+                    "pick_audio_moments window skip=%s candidates=%s total=%s",
+                    skip_first,
+                    len(clips),
+                    len(all_candidates),
+                )
+            if all_candidates:
+                top = _rerank_candidates(all_candidates, final_count=count)
+                logger.info(
+                    "pick_audio_moments pool=%s → top=%s",
+                    len(all_candidates),
+                    len(top),
+                )
+                return top
         except Exception as e:
             logger.warning("pick_audio_moments LLM: %s", e)
 

@@ -100,3 +100,34 @@ class SupportMixin:
         except Exception as e:
             logger.error(f"❌ Failed to update ticket status: {e}")
             return False
+
+    async def apply_support_ticket_admin_reply(
+        self,
+        ticket_number: str,
+        reply_text: str,
+        admin_id: int,
+    ) -> Optional[Dict[str, Any]]:
+        """Закрывает открытый тикет ответом админа (как в club admin_console)."""
+        ticket_number = (ticket_number or "").strip().upper()
+        try:
+            async with self.get_connection() as conn:
+                row = await conn.fetchrow(
+                    """
+                    UPDATE support_tickets
+                       SET admin_response = $2,
+                           admin_id = $3,
+                           replied_at = NOW(),
+                           status = 'answered',
+                           updated_at = NOW()
+                     WHERE ticket_number = $1
+                       AND status IN ('open', 'delivery_failed')
+                 RETURNING ticket_id, user_id
+                    """,
+                    ticket_number,
+                    reply_text,
+                    admin_id,
+                )
+                return dict(row) if row else None
+        except Exception as e:
+            logger.error(f"❌ apply_support_ticket_admin_reply failed: {e}")
+            return None

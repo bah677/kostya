@@ -5,8 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-import aiohttp
-from aiogram import Dispatcher, F
+from aiogram import Bot, Dispatcher, F
 from aiogram.enums import ChatType, ParseMode
 from aiogram.filters import Command
 from aiogram.types import Message
@@ -16,6 +15,7 @@ from apscheduler.triggers.cron import CronTrigger
 from bot.admin_guard import is_telegram_admin
 from bot.features.base import BaseFeature
 from bot.services.biblia_daily_report import BibliaDailyReportCollector
+from bot.utils.admin_channel import send_admin_html_message
 from config import config
 
 logger = logging.getLogger(__name__)
@@ -30,6 +30,10 @@ class DailyAdminReportFeature(BaseFeature):
         super().__init__()
         self.user_storage = user_storage
         self.scheduler = AsyncIOScheduler()
+        self._bot: Optional[Bot] = None
+
+    def set_bot(self, telegram_app) -> None:
+        self._bot = telegram_app.bot if telegram_app else None
 
     def register_handlers(self, dp: Dispatcher) -> None:
         dp.message.register(
@@ -46,9 +50,9 @@ class DailyAdminReportFeature(BaseFeature):
         ):
             logging.getLogger(sched_logger).setLevel(logging.WARNING)
 
-        if not config.ADMIN_BOT_TOKEN or not config.ADMIN_CHANNEL_ID:
+        if not config.ADMIN_CHANNEL_ID:
             logger.warning(
-                "[%s] Cron пропущен: ADMIN_BOT_TOKEN или ADMIN_CHANNEL_ID не заданы",
+                "[%s] Cron пропущен: ADMIN_CHANNEL_ID не задан",
                 self.name,
             )
         elif self.user_storage.pool is None:
@@ -119,8 +123,11 @@ class DailyAdminReportFeature(BaseFeature):
             logger.error("[%s] Ошибка cron-отчёта: %s", self.name, e, exc_info=True)
 
     async def send_report(self, *, thread_id: Optional[int] = None) -> bool:
-        if not config.ADMIN_BOT_TOKEN or not config.ADMIN_CHANNEL_ID:
-            logger.warning("[%s] ADMIN_BOT_TOKEN/ADMIN_CHANNEL_ID не заданы", self.name)
+        if not config.ADMIN_CHANNEL_ID:
+            logger.warning("[%s] ADMIN_CHANNEL_ID не задан", self.name)
+            return False
+        if self._bot is None:
+            logger.warning("[%s] Бот не привязан (set_bot)", self.name)
             return False
         if self.user_storage.pool is None:
             logger.warning("[%s] Пул БД недоступен", self.name)
@@ -128,32 +135,21 @@ class DailyAdminReportFeature(BaseFeature):
 
         report_html = await self.build_report_html(save_snapshot=True)
 
-        post_data = {
-            "chat_id": config.ADMIN_CHANNEL_ID,
-            "text": report_html,
-            "parse_mode": "HTML",
-            "disable_web_page_preview": True,
-        }
         resolved_thread = thread_id
         if resolved_thread is None:
             resolved_thread = config.BIBLIA_REPORT_THREAD_ID
-        if resolved_thread > 0:
-            post_data["message_thread_id"] = resolved_thread
 
-        try:
-            async with aiohttp.ClientSession() as session:
-                url = f"https://api.telegram.org/bot{config.ADMIN_BOT_TOKEN}/sendMessage"
-                async with session.post(url, json=post_data) as resp:
-                    if resp.status != 200:
-                        body = await resp.text()
-                        logger.error("[%s] Telegram API error: %s", self.name, body)
-                        return False
-            logger.info(
-                "[%s] Ежедневный отчёт отправлен (thread_id=%s)",
-                self.name,
-                resolved_thread or "(general)",
-            )
-            return True
-        except Exception as e:
-            logger.error("[%s] Ошибка отправки отчёта: %s", self.name, e, exc_info=True)
+        ok = await send_admin_html_message(
+            self._bot,
+            report_html,
+            thread_id=resolved_thread if resolved_thread and resolved_thread > 0 else None,
+        )
+        if not ok:
+            logger.error("[%s] Не удалось отправить ежедневный отчёт", self.name)
             return False
+        logger.info(
+            "[%s] Ежедневный отчёт отправлен (thread_id=%s)",
+            self.name,
+            resolved_thread or "(general)",
+        )
+        return True

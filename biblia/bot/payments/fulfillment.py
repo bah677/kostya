@@ -10,10 +10,9 @@ import secrets
 from datetime import datetime, timedelta
 from typing import Any, Dict, Optional
 
-import aiohttp
-
 from aiogram.enums import ParseMode
 
+from bot.utils.admin_channel import send_admin_html_message
 from config import config, russian_days_phrase
 
 from bot.payments.currency_converter import resolve_payment_datetime_for_rates
@@ -373,11 +372,8 @@ class PaidOrderFulfillment:
         is_renewal: bool = False,
     ):
         try:
-            admin_bot_token = config.ADMIN_BOT_TOKEN
-            admin_channel_id = config.ADMIN_CHANNEL_ID
-            admin_thread_id = config.PAYMENT_THREAD_ID
-            if not admin_bot_token or not admin_channel_id:
-                logger.warning("⚠️ Admin bot or channel not configured")
+            if not config.ADMIN_CHANNEL_ID:
+                logger.warning("⚠️ Admin channel not configured")
                 return
 
             user_data = payment.get("user_telegram_data", {})
@@ -413,21 +409,14 @@ class PaidOrderFulfillment:
                 f"📅 <b>Лицензия до:</b> {expires_str}"
             )
 
-            async with aiohttp.ClientSession() as session:
-                post_data: Dict[str, Any] = {
-                    "chat_id": admin_channel_id,
-                    "text": notification_text,
-                    "parse_mode": "HTML",
-                    "disable_web_page_preview": True,
-                }
-                if admin_thread_id and admin_thread_id > 0:
-                    post_data["message_thread_id"] = admin_thread_id
-                async with session.post(
-                    f"https://api.telegram.org/bot{admin_bot_token}/sendMessage",
-                    json=post_data,
-                ) as resp:
-                    if resp.status != 200:
-                        logger.error(f"❌ Failed to notify admin: {await resp.text()}")
+            admin_thread_id = config.PAYMENT_THREAD_ID
+            ok = await send_admin_html_message(
+                self.bot,
+                notification_text,
+                thread_id=admin_thread_id if admin_thread_id and admin_thread_id > 0 else None,
+            )
+            if not ok:
+                logger.error("❌ Failed to notify admin about donation")
         except Exception as e:
             logger.error(f"❌ Error notifying admins: {e}")
 
@@ -435,10 +424,7 @@ class PaidOrderFulfillment:
         self, order: Dict[str, Any], gift_expires_at: datetime, rub_amount: float
     ):
         try:
-            admin_bot_token = config.ADMIN_BOT_TOKEN
-            admin_channel_id = config.ADMIN_CHANNEL_ID
-            admin_thread_id = config.PAYMENT_THREAD_ID
-            if not admin_bot_token or not admin_channel_id:
+            if not config.ADMIN_CHANNEL_ID:
                 return
 
             import html as html_mod
@@ -462,20 +448,13 @@ class PaidOrderFulfillment:
                 f"⏰ <b>Срок активации:</b> до {expires_str}"
             )
 
-            async with aiohttp.ClientSession() as session:
-                post_data: Dict[str, Any] = {
-                    "chat_id": admin_channel_id,
-                    "text": notification_text,
-                    "parse_mode": "HTML",
-                    "disable_web_page_preview": True,
-                }
-                if admin_thread_id and admin_thread_id > 0:
-                    post_data["message_thread_id"] = admin_thread_id
-                async with session.post(
-                    f"https://api.telegram.org/bot{admin_bot_token}/sendMessage",
-                    json=post_data,
-                ) as resp:
-                    if resp.status != 200:
-                        logger.error(f"❌ Failed to notify admin about gift: {await resp.text()}")
+            admin_thread_id = config.PAYMENT_THREAD_ID
+            ok = await send_admin_html_message(
+                self.bot,
+                notification_text,
+                thread_id=admin_thread_id if admin_thread_id and admin_thread_id > 0 else None,
+            )
+            if not ok:
+                logger.error("❌ Failed to notify admin about gift")
         except Exception as e:
             logger.error(f"❌ Error notifying admins about gift: {e}")

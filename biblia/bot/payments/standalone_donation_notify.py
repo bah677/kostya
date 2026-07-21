@@ -7,8 +7,9 @@ import json
 import logging
 from typing import Any, Dict, Optional
 
-import aiohttp
+from aiogram import Bot
 
+from bot.utils.admin_channel import send_admin_html_message
 from config import config
 
 logger = logging.getLogger(__name__)
@@ -58,17 +59,15 @@ def _fmt_rub_line(rub_amount: Optional[float]) -> str:
 
 
 async def notify_admins_standalone_donation_success(
+    bot: Bot,
     user_storage,
     payment: Dict[str, Any],
     *,
     rub_amount: Optional[float] = None,
     kind: str = "donation",
 ) -> None:
-    admin_bot_token = config.ADMIN_BOT_TOKEN
-    admin_channel_id = config.ADMIN_CHANNEL_ID
-    admin_thread_id = getattr(config, "PAYMENT_THREAD_ID", None) or 0
-    if not admin_bot_token or not admin_channel_id:
-        logger.warning("⚠️ ADMIN_BOT_TOKEN or ADMIN_CHANNEL_ID not configured; skip standalone donation notify")
+    if not config.ADMIN_CHANNEL_ID:
+        logger.warning("⚠️ ADMIN_CHANNEL_ID not configured; skip standalone donation notify")
         return
 
     user_id = int(payment["user_id"])
@@ -113,26 +112,14 @@ async def notify_admins_standalone_donation_success(
         f"{html_module.escape(str(assistant_n or '0'))}\n"
     )
 
-    post_data = {
-        "chat_id": admin_channel_id,
-        "text": notification_text,
-        "parse_mode": "HTML",
-        "disable_web_page_preview": True,
-    }
-    if admin_thread_id and admin_thread_id > 0:
-        post_data["message_thread_id"] = admin_thread_id
-
-    try:
-        async with aiohttp.ClientSession() as session:
-            url = f"https://api.telegram.org/bot{admin_bot_token}/sendMessage"
-            async with session.post(url, json=post_data) as resp:
-                if resp.status != 200:
-                    logger.error(
-                        "❌ Failed standalone donation admin notify: %s",
-                        await resp.text(),
-                    )
-    except Exception as e:
-        logger.error("❌ Error sending standalone donation admin notify: %s", e, exc_info=True)
+    admin_thread_id = getattr(config, "PAYMENT_THREAD_ID", None) or 0
+    ok = await send_admin_html_message(
+        bot,
+        notification_text,
+        thread_id=admin_thread_id if admin_thread_id and admin_thread_id > 0 else None,
+    )
+    if not ok:
+        logger.error("❌ Failed standalone donation admin notify")
 
 
 async def send_donation_club_promo_message(bot, user_id: int) -> None:
