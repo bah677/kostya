@@ -631,22 +631,21 @@ class DonationMarathonFeature(BaseFeature):
             if not crypto:
                 await callback.answer("Крипта не в сборе", show_alert=True)
                 return
-            await self._show_crypto_for_marathon(callback, marathon)
+            await self._show_crypto_for_marathon(callback)
             return
 
-    async def _show_crypto_for_marathon(
-        self, callback: CallbackQuery, marathon: Dict[str, Any]
-    ) -> None:
+    async def _show_crypto_for_marathon(self, callback: CallbackQuery) -> None:
         address = (
             os.getenv("BIBLIA_CRYPTO_USDT_TRON_ADDRESS", "").strip()
             or "TTq5YQ8NHowe9zT4bqW7gW79kDeioFCnpu"
         )
         msg = (
-            f"💎 <b>Крипто для марафона «{marathon['name']}»</b>\n\n"
-            f"USDT TRC-20 (считаем <b>1 USDT = 1 USD</b>):\n"
+            "💎 <b>Донат криптовалютой</b>\n\n"
+            "Вы можете поддержать проект, отправив средства на следующий адрес:\n\n"
             f"<code>{address}</code>\n\n"
-            "После перевода админ занесёт сумму в прогресс вручную. "
-            "Можно написать в поддержку (/feedback) с txid."
+            "📌 <b>Сеть:</b> TRC-20 (Tron)\n"
+            "💡 <b>Важно:</b> Убедитесь, что используете правильную сеть для перевода.\n\n"
+            "Спасибо за вашу поддержку! ❤️"
         )
         await callback.message.edit_text(msg, parse_mode=ParseMode.HTML)
         await callback.answer()
