@@ -205,7 +205,9 @@ class DonationMarathonFeature(BaseFeature):
         await state.update_data(marathon_id=int(active["id"]))
         cur = str(active["goal_currency"]).upper()
         await message.answer(
-            f"Введите сумму взноса в валюте цели (<b>{cur}</b>), например <code>25</code>:",
+            f"Введите сумму в <b>USDT</b> (считаем USDT = USD).\n"
+            f"Валюта цели марафона: <b>{cur}</b> — переведём автоматически.\n"
+            f"Пример: <code>25</code>",
             parse_mode=ParseMode.HTML,
         )
 
@@ -283,12 +285,21 @@ class DonationMarathonFeature(BaseFeature):
             methods.append("USD")
         if data.get("accept_crypto"):
             methods.append("крипта")
+        goal = float(data.get("goal_amount") or 0)
+        cur = str(data.get("goal_currency") or "USD")
+        from bot.services.donation_marathon_progress import marathon_progress_line
+
+        progress = marathon_progress_line(
+            raised=0.0, goal=goal, currency=cur, donors=0
+        )
+        body = (data.get("description_html") or "").strip()
         return (
             "📋 <b>Проверка марафона</b>\n\n"
-            f"• Название: <b>{data.get('name')}</b>\n"
-            f"• Цель: <b>{format_money(float(data.get('goal_amount') or 0), data.get('goal_currency') or 'USD')}</b>\n"
+            f"• Название кнопки: <b>{data.get('name')}</b>\n"
+            f"• Цель: <b>{format_money(goal, cur)}</b>\n"
             f"• Засчитывать: <b>{', '.join(methods) or '—'}</b>\n\n"
-            f"{data.get('description_html') or ''}"
+            f"<b>Как увидят пользователи:</b>\n"
+            f"{body}\n\n{progress}"
         )
 
     def _accept_keyboard(self, data: Dict[str, Any]) -> InlineKeyboardMarkup:
@@ -383,8 +394,12 @@ class DonationMarathonFeature(BaseFeature):
                 return
             await state.set_state(MarathonAdminStates.description)
             await callback.message.edit_text(
-                "Введите <b>текст марафона</b> (HTML можно).\n"
-                "Его увидят при нажатии на кнопку вместе с прогрессом.",
+                "Введите <b>описание марафона в HTML</b>.\n"
+                "Его увидят при нажатии на кнопку; в конец автоматически "
+                "добавим строку с текущим прогрессом сбора.\n\n"
+                "Пример:\n"
+                "<pre>&lt;b&gt;Голос Кости для молитв&lt;/b&gt;\n"
+                "Собираем $300 на локальную озвучку.</pre>",
                 parse_mode=ParseMode.HTML,
             )
             await callback.answer()
@@ -482,16 +497,46 @@ class DonationMarathonFeature(BaseFeature):
         amount = float(data["crypto_amount"])
         user_id = int(data.get("crypto_user_id") or 0)
         admin_id = message.from_user.id if message.from_user else None
+        goal_cur = str(marathon["goal_currency"]).upper()
+
+        from datetime import date
+
+        from bot.payments.currency_converter import CurrencyConverterService
+        from bot.services.donation_marathon_fx import convert_amount_to_marathon_goal
+
+        converter = CurrencyConverterService()
+        fx = await convert_amount_to_marathon_goal(
+            amount=amount,
+            currency="USDT",
+            goal_currency=goal_cur,
+            amount_rub=None,
+            currency_converter=converter,
+            rate_date=date.today(),
+            fx_source_hint="usdt_eq_usd",
+        )
+        if fx is None or fx.amount_goal <= 0:
+            await state.clear()
+            await message.answer(
+                "❌ Не удалось перевести USDT в валюту цели (нет курса ЦБ?). "
+                "Попробуйте позже."
+            )
+            return
+
         row = await self.user_storage.add_marathon_contribution(
             marathon_id=mid,
             user_id=user_id,
-            amount_goal=amount,
-            amount_original=amount,
-            currency_original=str(marathon["goal_currency"]),
+            amount_goal=float(fx.amount_goal),
+            amount_original=float(fx.amount_original),
+            currency_original="USDT",
             payment_id=None,
             source="crypto_manual",
             note=note or None,
             created_by=admin_id,
+            goal_currency=fx.goal_currency,
+            amount_rub=fx.amount_rub,
+            rub_per_goal_unit=fx.rub_per_goal_unit,
+            rate_original_to_goal=fx.rate_original_to_goal,
+            fx_source=fx.fx_source,
         )
         await state.clear()
         if not row:
@@ -499,8 +544,9 @@ class DonationMarathonFeature(BaseFeature):
             return
         raised = await self.user_storage.get_marathon_raised_amount(mid)
         await message.answer(
-            f"✅ Крипто-взнос {format_money(amount, marathon['goal_currency'])} учтён.\n"
-            f"Всего: {format_money(raised, marathon['goal_currency'])}."
+            f"✅ Крипто-взнос {amount:g} USDT → "
+            f"{format_money(fx.amount_goal, goal_cur)} учтён.\n"
+            f"Всего: {format_money(raised, goal_cur)}."
         )
         closed = await self.maybe_autoclose_marathon(mid)
         if closed and user_id > 0 and self.bot:
@@ -597,7 +643,8 @@ class DonationMarathonFeature(BaseFeature):
         )
         msg = (
             f"💎 <b>Крипто для марафона «{marathon['name']}»</b>\n\n"
-            f"USDT TRC-20:\n<code>{address}</code>\n\n"
+            f"USDT TRC-20 (считаем <b>1 USDT = 1 USD</b>):\n"
+            f"<code>{address}</code>\n\n"
             "После перевода админ занесёт сумму в прогресс вручную. "
             "Можно написать в поддержку (/feedback) с txid."
         )

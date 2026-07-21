@@ -148,6 +148,11 @@ class DonationMarathonsMixin:
         source: str = "payment",
         note: Optional[str] = None,
         created_by: Optional[int] = None,
+        goal_currency: Optional[str] = None,
+        amount_rub: Optional[float] = None,
+        rub_per_goal_unit: Optional[float] = None,
+        rate_original_to_goal: Optional[float] = None,
+        fx_source: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         try:
             async with self.get_connection() as conn:
@@ -155,9 +160,11 @@ class DonationMarathonsMixin:
                     """
                     INSERT INTO donation_marathon_contributions (
                       marathon_id, user_id, amount_goal, amount_original,
-                      currency_original, payment_id, source, note, created_by
+                      currency_original, payment_id, source, note, created_by,
+                      goal_currency, amount_rub, rub_per_goal_unit,
+                      rate_original_to_goal, fx_source
                     )
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
                     ON CONFLICT (payment_id) WHERE payment_id IS NOT NULL DO NOTHING
                     RETURNING *
                     """,
@@ -170,6 +177,11 @@ class DonationMarathonsMixin:
                     source,
                     note,
                     created_by,
+                    (goal_currency or "").upper() or None,
+                    amount_rub,
+                    rub_per_goal_unit,
+                    rate_original_to_goal,
+                    fx_source,
                 )
                 if row:
                     return dict(row)

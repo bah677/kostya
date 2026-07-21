@@ -6,10 +6,8 @@ import logging
 from typing import Any, Dict, Optional, Tuple
 
 from bot.payments.currency_converter import resolve_payment_datetime_for_rates
-from bot.services.donation_marathon_progress import (
-    payment_amount_in_goal_currency,
-    thank_you_remaining_html,
-)
+from bot.services.donation_marathon_fx import convert_amount_to_marathon_goal
+from bot.services.donation_marathon_progress import thank_you_remaining_html
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +20,8 @@ async def attribute_payment_to_marathon(
     currency_converter=None,
 ) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
     """
-    Пишет contribution и при необходимости закрывает марафон.
+    Пишет contribution (сумма в валюте цели + FX-поля) и при необходимости закрывает марафон.
+    Таблица ``payments`` не меняется.
     Возвращает (marathon_row | None, thank_you_html | None).
     """
     marathon_id = payment.get("marathon_id")
@@ -48,27 +47,22 @@ async def attribute_payment_to_marathon(
     if resolved_rub is None and payment.get("amount_rub") is not None:
         resolved_rub = float(payment["amount_rub"])
 
-    rub_per_goal: Optional[float] = None
-    if goal_cur != "RUB" and pay_cur != goal_cur:
-        if currency_converter is not None:
-            try:
-                when = resolve_payment_datetime_for_rates(payment)
-                rub_per_goal = await currency_converter.get_rate_to_rub(goal_cur, when.date())
-            except Exception as e:
-                logger.warning("marathon FX for goal %s: %s", goal_cur, e)
-
-    amount_goal = payment_amount_in_goal_currency(
-        payment_amount=pay_amt,
-        payment_currency=pay_cur,
+    when = resolve_payment_datetime_for_rates(payment)
+    fx = await convert_amount_to_marathon_goal(
+        amount=pay_amt,
+        currency=pay_cur,
         goal_currency=goal_cur,
         amount_rub=resolved_rub,
-        rub_per_goal_unit=rub_per_goal,
+        currency_converter=currency_converter,
+        rate_date=when.date(),
     )
 
-    if amount_goal is None or amount_goal <= 0:
+    if fx is None or fx.amount_goal <= 0:
         logger.error(
-            "Не удалось перевести платёж %s в валюту марафона %s",
+            "Не удалось перевести платёж %s (%s %s) в валюту марафона %s",
             payment.get("id"),
+            pay_amt,
+            pay_cur,
             goal_cur,
         )
         return marathon if marathon.get("status") == "active" else None, None
@@ -76,11 +70,16 @@ async def attribute_payment_to_marathon(
     await user_storage.add_marathon_contribution(
         marathon_id=int(marathon_id),
         user_id=int(payment["user_id"]),
-        amount_goal=float(amount_goal),
-        amount_original=pay_amt,
-        currency_original=pay_cur,
+        amount_goal=float(fx.amount_goal),
+        amount_original=float(fx.amount_original),
+        currency_original=fx.currency_original,
         payment_id=int(payment["id"]),
         source="payment",
+        goal_currency=fx.goal_currency,
+        amount_rub=fx.amount_rub,
+        rub_per_goal_unit=fx.rub_per_goal_unit,
+        rate_original_to_goal=fx.rate_original_to_goal,
+        fx_source=fx.fx_source,
     )
 
     raised = await user_storage.get_marathon_raised_amount(int(marathon_id))
