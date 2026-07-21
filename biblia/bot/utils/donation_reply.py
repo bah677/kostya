@@ -1,4 +1,4 @@
-"""Клавиатура доната / клуба для ответов бота (общая логика messaging и challenge)."""
+"""Клавиатура доната / клуба / марафона для ответов бота."""
 
 from __future__ import annotations
 
@@ -25,6 +25,17 @@ def build_random_donation_club_inline_button() -> InlineKeyboardButton:
     return InlineKeyboardButton(text=_CLUB_BUTTON_TEXT, url=_CLUB_REF_URL)
 
 
+def build_marathon_inline_button(name: str) -> InlineKeyboardButton:
+    """Синяя кнопка активного марафона."""
+    label = (name or "Марафон").strip()[:64] or "Марафон"
+    btn = InlineKeyboardButton(text=label, callback_data="marathon_open")
+    try:
+        btn.style = "primary"
+    except Exception:
+        pass
+    return btn
+
+
 def donation_club_random_meta_button() -> dict:
     """Маркер в JSON кнопок кампании: при отправке подставить случайную кнопку."""
     return {DONATION_CLUB_RANDOM_META_KEY: True}
@@ -46,9 +57,15 @@ async def maybe_donation_keyboard(
     user_storage, user_id: int
 ) -> Tuple[Optional[InlineKeyboardMarkup], Optional[str]]:
     """
-    Решает, показывать ли кнопку доната или клуба.
+    Решает, показывать ли кнопку доната / клуба / марафона.
     Возвращает (keyboard | None, variant | None).
     """
+    marathon = await user_storage.get_active_donation_marathon()
+    if marathon:
+        await user_storage.increment_donation_button_counter(user_id)
+        btn = build_marathon_inline_button(str(marathon.get("name") or "Марафон"))
+        return InlineKeyboardMarkup(inline_keyboard=[[btn]]), "marathon"
+
     show_from_mailing = await user_storage.get_and_clear_show_donation_flag(user_id)
     prior_assistant = await user_storage.get_assistant_messages_count(user_id)
     is_first_response = prior_assistant == 0

@@ -50,6 +50,7 @@ class AdminMailingStates(StatesGroup):
     donation_club_button = State()
     audience = State()
     audience_first_n = State()
+    audience_questions_ge = State()
     custom_ids = State()
     exclude_campaigns = State()
     confirm = State()
@@ -151,6 +152,12 @@ def _aud_kb() -> InlineKeyboardMarkup:
                 InlineKeyboardButton(
                     text=aml_txt.BTN_AUD_CHALLENGE_NOT_IN,
                     callback_data=cb(a="aud", v="challenge_not_in").pack(),
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=aml_txt.BTN_AUD_QUESTIONS_GE,
+                    callback_data=cb(a="aud", v="questions_ge").pack(),
                 )
             ],
             [
@@ -559,6 +566,28 @@ def register_admin_mailing_handlers(
         recv_first_n, *admin_chat_filters, AdminMailingStates.audience_first_n, F.text
     )
 
+    async def recv_questions_ge(message: Message, state: FSMContext) -> None:
+        if message.from_user is None or not await uid_ok(message.from_user.id):
+            return
+        raw = (message.text or "").strip()
+        try:
+            n = int(raw)
+        except ValueError:
+            await message.reply(aml_txt.ERR_QUESTIONS_GE)
+            return
+        if n <= 0:
+            await message.reply(aml_txt.ERR_QUESTIONS_GE)
+            return
+        await state.update_data(aud_segment="questions_ge", aud_questions_ge=n)
+        await _goto_exclude_step(message.chat.id, state, bot)
+
+    dp.message.register(
+        recv_questions_ge,
+        *admin_chat_filters,
+        AdminMailingStates.audience_questions_ge,
+        F.text,
+    )
+
     async def recv_exclude_campaigns(message: Message, state: FSMContext) -> None:
         if message.from_user is None or not await uid_ok(message.from_user.id):
             return
@@ -639,6 +668,9 @@ def register_admin_mailing_handlers(
         elif seg == "challenge_not_in":
             all_active = await _fetch_all_active_user_ids()
             base = [u for u in all_active if u not in challenge_uids]
+        elif seg == "questions_ge":
+            n = int(data.get("aud_questions_ge") or 0)
+            base = await user_storage.list_user_ids_with_min_user_questions(n)
         else:
             raise ValueError(f"unknown aud_segment: {seg}")
 
@@ -703,6 +735,7 @@ def register_admin_mailing_handlers(
             recipient_hint=nh,
             custom_user_ids=data.get("custom_user_ids"),
             aud_first_n=data.get("aud_first_n"),
+            aud_questions_ge=data.get("aud_questions_ge"),
             exclude_campaign_ids=data.get("exclude_campaign_ids") or None,
             excluded_users_count=len(data.get("exclude_user_ids") or []),
             exclude_challenge_users=bool(data.get("exclude_challenge_users")),
@@ -919,6 +952,12 @@ def register_admin_mailing_handlers(
                 await state.set_state(AdminMailingStates.audience_first_n)
                 await query.message.edit_text(
                     aml_txt.PROMPT_FIRST_N_HTML,
+                    parse_mode=ParseMode.HTML,
+                )
+            elif v == "questions_ge":
+                await state.set_state(AdminMailingStates.audience_questions_ge)
+                await query.message.edit_text(
+                    aml_txt.PROMPT_QUESTIONS_GE_HTML,
                     parse_mode=ParseMode.HTML,
                 )
             elif v == "all":

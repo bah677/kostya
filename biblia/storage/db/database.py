@@ -10,6 +10,7 @@ from storage.db.admin_responses import AdminResponsesMixin
 from storage.db.admins import AdminsMixin
 from storage.db.bot_content import BotContentMixin
 from storage.db.club_access import ClubAccessMixin
+from storage.db.donation_marathons import DonationMarathonsMixin
 from storage.db.donation_subscriptions import DonationSubscriptionsMixin
 from storage.db.followup import FollowupMixin
 from storage.db.gifts import GiftsMixin
@@ -33,6 +34,7 @@ class Database(
     SupportMixin,
     PaymentsMixin,
     DonationSubscriptionsMixin,
+    DonationMarathonsMixin,
     ScriptureChallengeMixin,
     LicensesMixin,
     OrdersMixin,
@@ -56,6 +58,7 @@ class Database(
       - SupportMixin          — support_tickets
       - PaymentsMixin         — payments
       - DonationSubscriptionsMixin — donation_subscriptions (рекуррентные донаты BZB)
+      - DonationMarathonsMixin — donation_marathons + contributions
       - LicensesMixin         — license (включая бонусные продления)
       - OrdersMixin           — orders (включая подарочные)
       - TariffsMixin          — tariffs + tariff_prices

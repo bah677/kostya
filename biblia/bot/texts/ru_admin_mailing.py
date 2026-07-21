@@ -19,6 +19,7 @@ BTN_AUD_DONORS = "4️⃣ Кто делал донат"
 BTN_AUD_DONORS_2PLUS = "5️⃣ Кто делал 2+ доната"
 BTN_AUD_CHALLENGE_IN = "6️⃣ В челлендже"
 BTN_AUD_CHALLENGE_NOT_IN = "7️⃣ Не в челлендже"
+BTN_AUD_QUESTIONS_GE = "8️⃣ Кто задал N+ вопросов боту"
 BTN_EXCLUDE_CHALLENGE = "🚫 Исключить в челлендже"
 BTN_MEDIA_DONE = "✅ Готово"
 BTN_CONFIRM_CREATE = "✅ Создать кампанию"
@@ -62,7 +63,12 @@ PROMPT_FIRST_N_HTML = (
     "Сколько <b>первых</b> активных пользователей взять?\n"
     "После исключений в рассылке будет ровно <b>N</b>, если столько останется."
 )
+PROMPT_QUESTIONS_GE_HTML = (
+    "Сколько <b>минимум вопросов</b> пользователь должен был задать боту?\n"
+    "Например <code>100</code> — все, у кого ≥ 100 сообщений пользователя в диалоге."
+)
 ERR_FIRST_N = "❌ Введите целое число больше 0."
+ERR_QUESTIONS_GE = "❌ Введите целое число больше 0."
 PROMPT_EXCLUDE_CAMPAIGNS_HTML = (
     "<b>Шаг 2.</b> Исключить получателей прошлых рассылок?\n\n"
     "Последние кампании <i>(без «тест» и «(авто)» в названии)</i>:\n{list}\n\n"
@@ -221,7 +227,12 @@ def prompt_exclude_campaigns_html(campaigns: list) -> str:
     return PROMPT_EXCLUDE_CAMPAIGNS_HTML.format(list=format_recent_campaigns_list(campaigns))
 
 
-def segment_label(segment: Any, *, first_n: Optional[int] = None) -> str:
+def segment_label(
+    segment: Any,
+    *,
+    first_n: Optional[int] = None,
+    questions_ge: Optional[int] = None,
+) -> str:
     if segment == "all":
         return "все активные"
     if segment == "first_n" and first_n:
@@ -236,6 +247,10 @@ def segment_label(segment: Any, *, first_n: Optional[int] = None) -> str:
         return "в челлендже чтения Писания"
     if segment == "challenge_not_in":
         return "не в челлендже (активные)"
+    if segment == "questions_ge" and questions_ge:
+        return f"задали боту ≥ {questions_ge} вопросов (активные)"
+    if segment == "questions_ge":
+        return "задали боту N+ вопросов"
     return str(segment)
 
 
@@ -260,6 +275,7 @@ def confirm_blob_html(
     recipient_hint: Any,
     custom_user_ids: Optional[List[int]] = None,
     aud_first_n: Optional[int] = None,
+    aud_questions_ge: Optional[int] = None,
     exclude_campaign_ids: Optional[List[int]] = None,
     excluded_users_count: Optional[int] = None,
     exclude_challenge_users: bool = False,
@@ -281,7 +297,7 @@ def confirm_blob_html(
         f"• Медиа: {_media_summary(attachments)}",
         f"• Кнопки: {_button_summary(buttons)}",
         f"• Кнопка Донат/Клуб: {_donation_club_button_summary(add_donation_club_button)}",
-        f"• Аудитория: {html.escape(segment_label(segment, first_n=aud_first_n))}",
+        f"• Аудитория: {html.escape(segment_label(segment, first_n=aud_first_n, questions_ge=aud_questions_ge))}",
         f"• Получателей (итого): {recipient_hint}",
     ]
     if exclude_campaign_ids:

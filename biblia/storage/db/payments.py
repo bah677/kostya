@@ -23,6 +23,7 @@ class PaymentsMixin:
         currency: str = "RUB",
         order_id: Optional[int] = None,
         provider_checkout_url: Optional[str] = None,
+        marathon_id: Optional[int] = None,
     ) -> Optional[int]:
         """Создаёт запись о платеже."""
         try:
@@ -32,13 +33,13 @@ class PaymentsMixin:
                     INSERT INTO payments
                     (user_id, amount, currency, payment_type, subscription_id,
                      payment_provider, provider_payment_id, status, user_telegram_data, order_id,
-                     provider_checkout_url)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', $8, $9, $10)
+                     provider_checkout_url, marathon_id)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', $8, $9, $10, $11)
                     RETURNING id
                     """,
                     user_id, amount, currency, payment_type, subscription_id,
                     provider, provider_payment_id, user_telegram_data, order_id,
-                    provider_checkout_url,
+                    provider_checkout_url, marathon_id,
                 )
                 logger.info(f"✅ Payment record created: id={payment_id}, user_id={user_id}, amount={amount}")
                 return payment_id

@@ -416,6 +416,7 @@ class DonationPaymentFeature(BaseFeature):
     ) -> None:
         await callback.answer("⏳ Создаю платеж...")
         mode = (await state.get_data()).get("donation_mode", "one_time")
+        marathon_id = (await state.get_data()).get("marathon_id")
         user = callback.from_user
         try:
             text, keyboard = await self._build_payment(
@@ -424,6 +425,7 @@ class DonationPaymentFeature(BaseFeature):
                 currency=currency,
                 amount=amount,
                 mode=mode,
+                marathon_id=int(marathon_id) if marathon_id else None,
             )
             await callback.message.edit_text(
                 text,
@@ -454,6 +456,7 @@ class DonationPaymentFeature(BaseFeature):
         amount: int,
     ) -> None:
         mode = (await state.get_data()).get("donation_mode", "one_time")
+        marathon_id = (await state.get_data()).get("marathon_id")
         user = message.from_user
         try:
             text, keyboard = await self._build_payment(
@@ -462,6 +465,7 @@ class DonationPaymentFeature(BaseFeature):
                 currency=currency,
                 amount=amount,
                 mode=mode,
+                marathon_id=int(marathon_id) if marathon_id else None,
             )
             await message.answer(
                 text,
@@ -492,6 +496,7 @@ class DonationPaymentFeature(BaseFeature):
         currency: str,
         amount: int,
         mode: str,
+        marathon_id: Optional[int] = None,
     ) -> tuple[str, InlineKeyboardMarkup]:
         cur = currency.upper()
         is_monthly = mode == "monthly" and self._recurring_enabled()
@@ -511,6 +516,7 @@ class DonationPaymentFeature(BaseFeature):
                 "currency": cur,
                 "title": title,
             }
+            marathon_id = None
         else:
             service, provider = resolve_donation_payment_service(
                 cur,
@@ -519,6 +525,8 @@ class DonationPaymentFeature(BaseFeature):
             )
             payment_type = "one_time"
             description = f"Donation {amount} {cur}"
+            if marathon_id:
+                description = f"Marathon donation {amount} {cur}"
             create_kwargs: dict = {}
             if provider == "bzb":
                 create_kwargs["currency"] = cur
@@ -546,6 +554,7 @@ class DonationPaymentFeature(BaseFeature):
             currency=cur,
             order_id=None,
             provider_checkout_url=confirmation_url,
+            marathon_id=marathon_id,
         )
         if not row_id:
             raise RuntimeError("create_payment failed")
@@ -567,11 +576,12 @@ class DonationPaymentFeature(BaseFeature):
                 "Для оплаты перейдите по ссылке ниже:"
             )
         logger.info(
-            "💰 donation payment row=%s provider=%s type=%s user=%s",
+            "💰 donation payment row=%s provider=%s type=%s user=%s marathon=%s",
             row_id,
             provider,
             payment_type,
             user_id,
+            marathon_id,
         )
         return text, keyboard
 
@@ -702,6 +712,26 @@ class DonationPaymentFeature(BaseFeature):
 
     async def _back_to_currency(self, callback: CallbackQuery, state: FSMContext) -> None:
         data = await state.get_data()
+        marathon_id = data.get("marathon_id")
+        if marathon_id:
+            marathon = await self.user_storage.get_donation_marathon(int(marathon_id))
+            if marathon and marathon.get("status") == "active":
+                from bot.features.donation_marathon import DonationMarathonFeature
+                from bot.services.donation_marathon_progress import marathon_progress_html
+
+                raised = await self.user_storage.get_marathon_raised_amount(int(marathon_id))
+                donors = await self.user_storage.get_marathon_donors_count(int(marathon_id))
+                text = marathon_progress_html(marathon, raised=raised, donors=donors)
+                # Reuse keyboard builder via temporary feature helper
+                feat = DonationMarathonFeature(self.user_storage, bot=self.bot)
+                await callback.message.edit_text(
+                    text,
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=feat._pay_methods_keyboard(marathon),
+                )
+                await callback.answer()
+                return
+
         mode = data.get("donation_mode", "one_time")
         include_crypto = mode != "monthly"
         uid = callback.from_user.id if callback.from_user else 0

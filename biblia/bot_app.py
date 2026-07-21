@@ -5,6 +5,7 @@ from typing import Optional
 
 from bot.base_app import TelegramBotApp
 from bot.features.daily_admin_report import DailyAdminReportFeature
+from bot.features.donation_marathon import DonationMarathonFeature
 from bot.features.donation_payment import DonationPaymentFeature
 from bot.features.frequent_questions import FrequentQuestionsFeature
 from bot.features.mailing import MailingFeature
@@ -54,6 +55,11 @@ class BotApplication(TelegramBotApp):
             bzb_service=self.bzb_service,
             bot=self.bot,
         )
+        marathon_feature = DonationMarathonFeature(
+            user_storage=self.user_storage,
+            bot=self.bot,
+        )
+        marathon_feature.bind_payment_feature(payment_feature)
         mailing_feature = MailingFeature(
             user_storage=self.user_storage,
             bot=self.bot,
@@ -94,6 +100,7 @@ class BotApplication(TelegramBotApp):
             support_feature,
             referral_feature,
             payment_feature,
+            marathon_feature,
             mailing_feature,
             scheduled_mailing,
             scripture_mailing,
