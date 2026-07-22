@@ -267,7 +267,7 @@ class PaymentChecker:
             marathon_thank: Optional[str] = None
             marathon_row = None
             try:
-                if payment_row and payment_row.get("marathon_id"):
+                if payment_row and payment_row.get("order_id") is None:
                     marathon_row, marathon_thank = await attribute_payment_to_marathon(
                         self.user_storage,
                         payment_row,

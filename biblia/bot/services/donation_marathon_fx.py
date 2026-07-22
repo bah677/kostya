@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from typing import Any, Dict, Optional
 
 
@@ -24,6 +24,28 @@ def _norm_currency(code: str) -> str:
     if cur in ("USDT", "USDTTRC20", "USDT_TRC20"):
         return "USDT"
     return cur
+
+
+def payment_event_time(payment: Dict[str, Any]) -> Optional[datetime]:
+    for key in ("completed_at", "updated_at", "created_at"):
+        val = payment.get(key)
+        if isinstance(val, datetime):
+            return val
+    return None
+
+
+def payment_in_marathon_window(payment: Dict[str, Any], marathon: Dict[str, Any]) -> bool:
+    """Платёж попадает в период марафона (started_at … closed_at или сейчас)."""
+    pt = payment_event_time(payment)
+    if pt is None:
+        return True
+    started = marathon.get("started_at") or marathon.get("created_at")
+    ended = marathon.get("closed_at")
+    if isinstance(started, datetime) and pt < started:
+        return False
+    if isinstance(ended, datetime) and pt > ended:
+        return False
+    return True
 
 
 def _effective_pay_currency(currency: str) -> str:

@@ -11,6 +11,9 @@ from bot.payments.payment_conversion import compute_payment_rub_from_row
 from bot.payments.standalone_donation_notify import (
     notify_admins_standalone_donation_success,
 )
+from bot.services.donation_marathon_attr import attribute_payment_to_marathon
+from bot.utils.admin_channel import send_admin_html_message
+from bot.services.donation_marathon_progress import format_money
 
 logger = logging.getLogger(__name__)
 
@@ -217,11 +220,33 @@ class SubscriptionChecker:
             kind="subscription_renewal",
         )
 
+        marathon_thank = None
         try:
+            _, marathon_thank = await attribute_payment_to_marathon(
+                self.user_storage,
+                payment_row,
+                rub_amount=rub_amount,
+                currency_converter=self.currency_converter,
+            )
+        except Exception as mar_e:
+            logger.error(
+                "❌ Марафон attribution renewal payment_id=%s: %s",
+                row_id,
+                mar_e,
+                exc_info=True,
+            )
+
+        try:
+            if marathon_thank:
+                thank_text = marathon_thank
+            else:
+                thank_text = (
+                    "🙏 <b>Спасибо за ежемесячную поддержку!</b>\n\n"
+                    "Списание прошло успешно. Пусть ваше пожертвование вернётся сторицей."
+                )
             await self.bot.send_message(
                 user_id,
-                "🙏 <b>Спасибо за ежемесячную поддержку!</b>\n\n"
-                "Списание прошло успешно. Пусть ваше пожертвование вернётся сторицей.",
+                thank_text,
                 parse_mode="HTML",
             )
         except Exception as e:

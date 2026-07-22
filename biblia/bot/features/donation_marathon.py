@@ -6,6 +6,7 @@ import logging
 import os
 from typing import Any, Dict, List, Optional
 
+import html
 from aiogram import Dispatcher, F
 from aiogram.enums import ChatType, ParseMode
 from aiogram.filters import Command, StateFilter
@@ -25,6 +26,8 @@ from bot.services.donation_marathon_progress import (
     format_money,
     marathon_progress_html,
 )
+from bot.services.donation_marathon_attr import backfill_marathon_contributions
+from bot.payments.currency_converter import CurrencyConverterService
 from bot.utils.admin_channel import send_admin_html_message
 from config import config
 
@@ -84,6 +87,11 @@ class DonationMarathonFeature(BaseFeature):
             F.chat.type == ChatType.PRIVATE,
             Command("marathon_crypto"),
         )
+        dp.message.register(
+            self.cmd_marathon_backfill,
+            F.chat.type == ChatType.PRIVATE,
+            Command("marathon_backfill"),
+        )
 
         dp.message.register(
             self._admin_name,
@@ -140,7 +148,8 @@ class DonationMarathonFeature(BaseFeature):
                 "Сейчас марафон не запущен.\n"
                 "Создать: /marathon_start\n"
                 "Остановить: /marathon_stop\n"
-                "Крипта вручную: /marathon_crypto"
+                "Крипта вручную: /marathon_crypto\n"
+                "Ретроспектива: /marathon_backfill 1"
             )
             return
         text = await self._status_html(m)
@@ -190,6 +199,48 @@ class DonationMarathonFeature(BaseFeature):
             f"⏹ Марафон <b>{active['name']}</b> остановлен админом "
             f"(собрано {format_money(raised, active['goal_currency'])}).",
         )
+
+    async def cmd_marathon_backfill(self, message: Message, state: FSMContext) -> None:
+        if not await self._ensure_admin(message):
+            return
+        await state.clear()
+        parts = (message.text or "").split()
+        marathon_id = 1
+        if len(parts) >= 2:
+            try:
+                marathon_id = int(parts[1])
+            except ValueError:
+                await message.answer("Использование: /marathon_backfill [id]\nПример: /marathon_backfill 1")
+                return
+
+        wait = await message.answer(f"⏳ Бэкфилл марафона #{marathon_id}…")
+        try:
+            converter = CurrencyConverterService()
+            stats = await backfill_marathon_contributions(
+                self.user_storage,
+                marathon_id,
+                currency_converter=converter,
+                dry_run=False,
+            )
+            goal_cur = (
+                (await self.user_storage.get_donation_marathon(marathon_id)) or {}
+            ).get("goal_currency", "USD")
+            lines = [
+                f"✅ <b>Бэкфилл марафона #{marathon_id}</b>",
+                f"«{html.escape(str(stats.get('marathon_name') or ''))}»",
+                f"• Найдено платежей: {stats.get('payments_found')}",
+                f"• Добавлено: {stats.get('added')}",
+                f"• Пропущено: {stats.get('skipped')}",
+                f"• Ошибок: {stats.get('errors')}",
+                f"• Собрано сейчас: <b>{format_money(float(stats.get('raised_after') or 0), goal_cur)}</b>",
+                f"• Участников: {stats.get('donors_after')}",
+            ]
+            if stats.get("auto_closed"):
+                lines.append("🎉 Марафон автоматически завершён по цели.")
+            await wait.edit_text("\n".join(lines), parse_mode=ParseMode.HTML)
+        except Exception as e:
+            logger.exception("marathon_backfill failed: %s", e)
+            await wait.edit_text(f"❌ Ошибка бэкфилла: {html.escape(str(e)[:200])}")
 
     async def cmd_marathon_crypto(self, message: Message, state: FSMContext) -> None:
         if not await self._ensure_admin(message):

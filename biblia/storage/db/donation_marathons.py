@@ -199,6 +199,54 @@ class DonationMarathonsMixin:
             logger.error("❌ add_marathon_contribution: %s", e)
             return None
 
+    async def get_marathon_contribution_by_payment_id(
+        self, payment_id: int
+    ) -> Optional[Dict[str, Any]]:
+        try:
+            async with self.get_connection() as conn:
+                row = await conn.fetchrow(
+                    """
+                    SELECT * FROM donation_marathon_contributions
+                     WHERE payment_id = $1
+                    """,
+                    payment_id,
+                )
+                return dict(row) if row else None
+        except Exception as e:
+            logger.error("❌ get_marathon_contribution_by_payment_id: %s", e)
+            return None
+
+    async def list_standalone_payments_for_marathon_backfill(
+        self, marathon: Dict[str, Any]
+    ) -> List[Dict[str, Any]]:
+        """Успешные донаты (order_id IS NULL) в периоде марафона без записи в contributions."""
+        started = marathon.get("started_at") or marathon.get("created_at")
+        ended = marathon.get("closed_at")
+        try:
+            async with self.get_connection() as conn:
+                rows = await conn.fetch(
+                    """
+                    SELECT p.*
+                      FROM payments p
+                     WHERE p.status = 'succeeded'
+                       AND p.order_id IS NULL
+                       AND COALESCE(p.completed_at, p.updated_at, p.created_at) >= $1
+                       AND ($2::timestamptz IS NULL
+                            OR COALESCE(p.completed_at, p.updated_at, p.created_at) <= $2)
+                       AND NOT EXISTS (
+                             SELECT 1 FROM donation_marathon_contributions c
+                              WHERE c.payment_id = p.id
+                           )
+                     ORDER BY COALESCE(p.completed_at, p.updated_at, p.created_at) ASC
+                    """,
+                    started,
+                    ended,
+                )
+                return [dict(r) for r in rows]
+        except Exception as e:
+            logger.error("❌ list_standalone_payments_for_marathon_backfill: %s", e)
+            return []
+
     async def list_user_ids_with_min_user_questions(self, min_questions: int) -> List[int]:
         """Активные пользователи с ≥ N сообщений role=user (вопросы боту)."""
         try:
