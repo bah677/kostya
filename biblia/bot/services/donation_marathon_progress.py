@@ -53,6 +53,21 @@ def marathon_progress_line(
     )
 
 
+async def marathon_admin_notify_block(user_storage) -> str:
+    """Блок прогресса активного марафона для админ-уведомлений о платежах."""
+    marathon = await user_storage.get_active_donation_marathon()
+    if not marathon:
+        return ""
+    mid = int(marathon["id"])
+    raised = await user_storage.get_marathon_raised_amount(mid)
+    donors = await user_storage.get_marathon_donors_count(mid)
+    goal = float(marathon.get("goal_amount") or 0)
+    cur = str(marathon.get("goal_currency") or "USD")
+    name = html.escape(str(marathon.get("name") or "Марафон"))
+    line = marathon_progress_line(raised=raised, goal=goal, currency=cur, donors=donors)
+    return f"\n\n🎙️ <b>Марафон «{name}»</b>\n{line}"
+
+
 def marathon_progress_html(
     marathon: Dict[str, Any],
     *,

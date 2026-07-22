@@ -12,8 +12,6 @@ from bot.payments.standalone_donation_notify import (
     notify_admins_standalone_donation_success,
 )
 from bot.services.donation_marathon_attr import attribute_payment_to_marathon
-from bot.utils.admin_channel import send_admin_html_message
-from bot.services.donation_marathon_progress import format_money
 
 logger = logging.getLogger(__name__)
 
@@ -212,13 +210,6 @@ class SubscriptionChecker:
                 if payment_row.get("amount_rub") is not None
                 else None
             )
-        await notify_admins_standalone_donation_success(
-            self.bot,
-            self.user_storage,
-            payment_row,
-            rub_amount=rub_amount,
-            kind="subscription_renewal",
-        )
 
         marathon_thank = None
         try:
@@ -235,6 +226,14 @@ class SubscriptionChecker:
                 mar_e,
                 exc_info=True,
             )
+
+        await notify_admins_standalone_donation_success(
+            self.bot,
+            self.user_storage,
+            payment_row,
+            rub_amount=rub_amount,
+            kind="subscription_renewal",
+        )
 
         try:
             if marathon_thank:

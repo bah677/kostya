@@ -242,6 +242,24 @@ class PaymentChecker:
                 )
                 payment_row = await self.user_storage.get_payment(payment_id)
 
+            marathon_thank: Optional[str] = None
+            marathon_row = None
+            try:
+                if payment_row and payment_row.get("order_id") is None:
+                    marathon_row, marathon_thank = await attribute_payment_to_marathon(
+                        self.user_storage,
+                        payment_row,
+                        rub_amount=rub_amount,
+                        currency_converter=getattr(self, "currency_converter", None),
+                    )
+            except Exception as mar_e:
+                logger.error(
+                    "❌ Марафон attribution payment_id=%s: %s",
+                    payment_id,
+                    mar_e,
+                    exc_info=True,
+                )
+
             try:
                 if payment_row:
                     if rub_amount is None and payment_row.get("amount_rub") is not None:
@@ -264,34 +282,25 @@ class PaymentChecker:
                     exc_info=True,
                 )
 
-            marathon_thank: Optional[str] = None
-            marathon_row = None
             try:
-                if payment_row and payment_row.get("order_id") is None:
-                    marathon_row, marathon_thank = await attribute_payment_to_marathon(
-                        self.user_storage,
-                        payment_row,
-                        rub_amount=rub_amount,
-                        currency_converter=getattr(self, "currency_converter", None),
+                if (
+                    marathon_row
+                    and marathon_row.get("status") == "completed"
+                    and marathon_row.get("close_reason") == "goal_reached"
+                ):
+                    raised = await self.user_storage.get_marathon_raised_amount(
+                        int(marathon_row["id"])
                     )
-                    if (
-                        marathon_row
-                        and marathon_row.get("status") == "completed"
-                        and marathon_row.get("close_reason") == "goal_reached"
-                    ):
-                        raised = await self.user_storage.get_marathon_raised_amount(
-                            int(marathon_row["id"])
-                        )
-                        await send_admin_html_message(
-                            self.bot,
-                            f"🎉 Марафон <b>{marathon_row['name']}</b> завершён по цели! "
-                            f"Собрано {format_money(raised, marathon_row['goal_currency'])}.",
-                        )
-            except Exception as mar_e:
+                    await send_admin_html_message(
+                        self.bot,
+                        f"🎉 Марафон <b>{marathon_row['name']}</b> завершён по цели! "
+                        f"Собрано {format_money(raised, marathon_row['goal_currency'])}.",
+                    )
+            except Exception as mar_close_e:
                 logger.error(
-                    "❌ Марафон attribution payment_id=%s: %s",
+                    "❌ Марафон close notify payment_id=%s: %s",
                     payment_id,
-                    mar_e,
+                    mar_close_e,
                     exc_info=True,
                 )
 

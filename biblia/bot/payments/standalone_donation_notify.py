@@ -10,6 +10,7 @@ from typing import Any, Dict, Optional
 from aiogram import Bot
 
 from bot.utils.admin_channel import send_admin_html_message
+from bot.services.donation_marathon_progress import marathon_admin_notify_block
 from config import config
 
 logger = logging.getLogger(__name__)
@@ -111,6 +112,9 @@ async def notify_admins_standalone_donation_success(
         f"💬 <b>Ответов ассистента в истории:</b> "
         f"{html_module.escape(str(assistant_n or '0'))}\n"
     )
+    marathon_block = await marathon_admin_notify_block(user_storage)
+    if marathon_block:
+        notification_text += marathon_block
 
     admin_thread_id = getattr(config, "PAYMENT_THREAD_ID", None) or 0
     ok = await send_admin_html_message(
