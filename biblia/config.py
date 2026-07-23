@@ -106,11 +106,11 @@ def _parse_speechkit_speed(raw: Optional[str]) -> float:
 
 def _parse_voicebox_atempo(raw: Optional[str]) -> float:
     if raw is None or not str(raw).strip():
-        return 0.97
+        return 0.92
     try:
         v = float(str(raw).strip().replace(",", "."))
     except ValueError:
-        return 0.97
+        return 0.92
     return max(0.5, min(1.2, v))
 
 
@@ -200,7 +200,7 @@ class AppConfig:
         "not monotone and not robotic. Soft unhurried pace. "
         "The final word амИнь: stress on capital И (a-MÍN), clear and solemn."
     )
-    VOICEBOX_ATEMPO: float = 0.97
+    VOICEBOX_ATEMPO: float = 0.92
 
     LOG_LEVEL: str = "INFO"
     MAX_WORKERS: int = 5
