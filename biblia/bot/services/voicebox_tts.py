@@ -20,8 +20,20 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_INSTRUCT = (
     "Speak slowly and calmly in a soft prayerful tone. "
-    "Make clear, unhurried pauses between sentences. Do not rush."
+    "Make clear, unhurried pauses between sentences. Do not rush. "
+    "In the text, a CAPITAL Cyrillic vowel marks word stress — "
+    "pronounce that syllable stressed (example: амИнь → stress on И). "
+    "The final word амИнь must be clear and solemn."
 )
+
+# Ударение через заглавную гласную: амИнь (а-мИнь).
+_AMEN_STRESSED = "амИнь"
+_AMEN_FLEX_RE = re.compile(
+    r"(?iu)\bа[\u0300\u0301\u0341]?м[\u0300\u0301\u0341]?и[\u0300\u0301\u0341]?"
+    r"н[\u0300\u0301\u0341]?ь\b"
+)
+_STRESS_VOWELS_UP = frozenset("АЕЁИОУЫЭЮЯ")
+
 
 
 class VoiceboxError(RuntimeError):
@@ -141,26 +153,55 @@ class VoiceboxPrayerTTS:
 
 
 def format_prayer_for_tts(text: str) -> str:
-    """Нормализовать текст молитвы под паузы: предложение → пустая строка."""
+    """Нормализовать паузы, регистр (ударение = заглавная гласная) и амИнь."""
     t = (text or "").strip()
     t = re.sub(r"^```(?:\w+)?\s*", "", t)
     t = re.sub(r"\s*```$", "", t)
     t = t.strip().strip('"').strip("«»")
     t = re.sub(r"\+(?=[аАеЕёЁиИоОуУыЫэЭюЮяЯ])", "", t)
+    # Юникод-ударения не используем.
+    t = re.sub(r"[\u0300\u0301\u0341]", "", t)
 
     # Уже с пустыми строками между предложениями — слегка подчистить.
     if "\n\n" in t:
         parts = [p.strip() for p in re.split(r"\n\s*\n", t) if p.strip()]
-        return "\n\n".join(parts)
+        t = "\n\n".join(parts)
+    else:
+        flat = re.sub(r"[ \t]+", " ", t)
+        flat = re.sub(r"\n+", " ", flat).strip()
+        parts = re.split(r"(?<=[.!?…])\s+", flat)
+        parts = [p.strip() for p in parts if p.strip()]
+        t = "\n\n".join(parts) if len(parts) > 1 else flat
 
-    # Одна строка / строки без пауз — режем по концу предложения.
-    flat = re.sub(r"[ \t]+", " ", t)
-    flat = re.sub(r"\n+", " ", flat).strip()
-    parts = re.split(r"(?<=[.!?…])\s+", flat)
-    parts = [p.strip() for p in parts if p.strip()]
-    if len(parts) <= 1:
-        return flat
-    return "\n\n".join(parts)
+    t = normalize_stress_casing(t)
+    return ensure_amen_stress(t)
+
+
+def normalize_stress_casing(text: str) -> str:
+    """Строчные везде; заглавная гласная = ударение только внутри слова (не с начала)."""
+
+    def _norm_word(word: str) -> str:
+        if len(word) > 1 and word.isupper():
+            return word.lower()
+        out: list[str] = []
+        for i, ch in enumerate(word):
+            if not ch.isalpha():
+                out.append(ch)
+                continue
+            up = ch.upper()
+            # Ударение: заглавная гласная не в первой позиции (амИнь, менЯ, отЕц).
+            if i > 0 and ch.isupper() and up in _STRESS_VOWELS_UP:
+                out.append(up)
+            else:
+                out.append(ch.lower())
+        return "".join(out)
+
+    return re.sub(r"[А-Яа-яЁё]+", lambda m: _norm_word(m.group(0)), text or "")
+
+
+def ensure_amen_stress(text: str) -> str:
+    """Любое «аминь»/«Аминь» → «амИнь» (ударение заглавной И)."""
+    return _AMEN_FLEX_RE.sub(_AMEN_STRESSED, text or "")
 
 
 def _wav_bytes_to_ogg_opus(wav_bytes: bytes, atempo: float) -> Optional[bytes]:

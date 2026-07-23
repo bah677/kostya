@@ -197,7 +197,10 @@ class AppConfig:
     VOICEBOX_LANGUAGE: str = "ru"
     VOICEBOX_INSTRUCT: str = (
         "Speak slowly and calmly in a soft prayerful tone. "
-        "Make clear, unhurried pauses between sentences. Do not rush."
+        "Make clear, unhurried pauses between sentences. Do not rush. "
+        "In the text, a CAPITAL Cyrillic vowel marks word stress — "
+        "pronounce that syllable stressed (example: амИнь → stress on И). "
+        "The final word амИнь must be clear and solemn."
     )
     VOICEBOX_ATEMPO: float = 0.92
 
@@ -308,7 +311,10 @@ def load_app_config() -> AppConfig:
             os.getenv("VOICEBOX_INSTRUCT")
             or (
                 "Speak slowly and calmly in a soft prayerful tone. "
-                "Make clear, unhurried pauses between sentences. Do not rush."
+                "Make clear, unhurried pauses between sentences. Do not rush. "
+                "In the text, a CAPITAL Cyrillic vowel marks word stress — "
+                "pronounce that syllable stressed (example: амИнь → stress on И). "
+                "The final word амИнь must be clear and solemn."
             )
         ).strip(),
         VOICEBOX_ATEMPO=_parse_voicebox_atempo(os.getenv("VOICEBOX_ATEMPO")),
