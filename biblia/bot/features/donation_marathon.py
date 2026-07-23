@@ -435,8 +435,10 @@ class DonationMarathonFeature(BaseFeature):
     async def _on_thanks_mailing(self, callback: CallbackQuery, data: str) -> None:
         uid = callback.from_user.id if callback.from_user else 0
         super_id = int(getattr(config, "SUPER_ADMIN_ID", 0) or 0)
-        if super_id <= 0 or uid != super_id:
-            await callback.answer("Только SUPER_ADMIN_ID", show_alert=True)
+        is_super = super_id > 0 and uid == super_id
+        is_admin = await is_telegram_admin(self.user_storage, uid)
+        if not (is_super or is_admin):
+            await callback.answer("Нет доступа", show_alert=True)
             return
         try:
             cid = int(data.rsplit("_", 1)[-1])
@@ -458,9 +460,10 @@ class DonationMarathonFeature(BaseFeature):
             ok = await approve_thanks_campaign(mstore, cid)
             if ok:
                 await callback.message.edit_reply_markup(reply_markup=None)
+                aud_n = await mstore.get_audience_count(cid)
                 await callback.message.answer(
-                    f"✅ Рассылка <code>{cid}</code> поставлена в очередь "
-                    f"(scheduled_at = сейчас).",
+                    f"✅ Рассылка <code>{cid}</code> в очереди: "
+                    f"уйдёт <b>{aud_n}</b> участникам (воркер подхватит в течение ~1 мин).",
                     parse_mode=ParseMode.HTML,
                 )
                 await callback.answer("Запущена")
