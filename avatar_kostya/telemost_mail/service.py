@@ -385,6 +385,8 @@ class TelemostMailService:
         meta["telemost_imap_uid"] = str(row.get("imap_uid") or "")
         extra = row.get("extra_metadata") or {}
         if isinstance(extra, dict):
+            if extra.get("meeting_id"):
+                meta["meeting_id"] = str(extra["meeting_id"])[:64]
             if extra.get("meeting_date"):
                 meta["date"] = str(extra["meeting_date"])[:32]
             meeting_url = (extra.get("meeting_url") or "").strip()
@@ -516,13 +518,22 @@ class TelemostMailService:
             chunks = int(row.get("chunks_count") or 0)
             return None, (
                 f"№<code>{html_escape(mid)}</code> уже в RAG "
-                f"({chunks} chunks). Для аудио-нарезки: /audio_cut"
+                f"({chunks} chunks). Сначала откатите: "
+                f"<code>/telemost_unload {html_escape(mid)}</code>"
             )
         pid = uuid.UUID(str(row["id"]))
         if status in ("ignored", "error"):
             await self._storage.reset_telemost_mail_pending_for_reopen(pid)
             row = await self._storage.get_telemost_mail_pending(pid) or row
         return self.note_from_pending_row(row, force_reload=True), ""
+
+    async def rollback_rag_by_meeting_id(self, meeting_id: str) -> dict[str, Any]:
+        """Откат чанков Chroma + кэша импорта + статус pending → можно снова /telemost_load."""
+        from telemost_mail.rag_rollback import rollback_telemost_meeting
+
+        return await rollback_telemost_meeting(
+            self._storage, self._index, meeting_id
+        )
 
     async def _offer_pending_mail(
         self,

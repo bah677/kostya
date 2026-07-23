@@ -51,6 +51,24 @@ class RagImportCacheMixin:
             STATUS_SKIPPED,
         )
 
+    async def rag_import_cache_delete(
+        self, import_type: str, cache_key: str
+    ) -> bool:
+        try:
+            async with self.get_connection() as conn:
+                tag = await conn.execute(
+                    """
+                    DELETE FROM rag_import_cache
+                     WHERE import_type = $1 AND cache_key = $2
+                    """,
+                    (import_type or "").strip(),
+                    (cache_key or "").strip(),
+                )
+                return tag.endswith("1")
+        except Exception as e:
+            logger.error("rag_import_cache_delete: %s", e)
+            return False
+
     async def rag_import_cache_upsert(
         self,
         *,

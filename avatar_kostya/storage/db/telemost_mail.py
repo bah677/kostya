@@ -246,6 +246,28 @@ class TelemostMailMixin:
             logger.error("reset_telemost_mail_pending_for_reopen: %s", e)
             return False
 
+    async def reset_telemost_mail_pending_for_reindex(
+        self, pending_id: uuid.UUID
+    ) -> bool:
+        """После отката RAG: indexed/ignored/error → pending (можно снова загрузить)."""
+        try:
+            async with self.get_connection() as conn:
+                r = await conn.execute(
+                    """
+                    UPDATE telemost_mail_pending SET
+                        status = 'pending',
+                        chunks_count = 0,
+                        error_message = '',
+                        resolved_at = NULL
+                    WHERE id = $1 AND status IN ('indexed', 'ignored', 'error', 'pending')
+                    """,
+                    pending_id,
+                )
+                return r.endswith("1")
+        except Exception as e:
+            logger.error("reset_telemost_mail_pending_for_reindex: %s", e)
+            return False
+
     async def upsert_telemost_recording(
         self,
         *,

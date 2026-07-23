@@ -92,6 +92,14 @@ class TelemostMailFeature(BaseFeature):
         dispatcher.message.register(
             self.cmd_telemost_load, PRIVATE_CHAT, Command("telemost_load")
         )
+        dispatcher.message.register(
+            self.cmd_telemost_unload,
+            Command("telemost_unload"),
+            F.chat.type.in_({ChatType.GROUP, ChatType.SUPERGROUP}),
+        )
+        dispatcher.message.register(
+            self.cmd_telemost_unload, PRIVATE_CHAT, Command("telemost_unload")
+        )
         dispatcher.callback_query.register(
             self.on_callback,
             F.data.startswith(CB_PREFIX),
@@ -440,6 +448,72 @@ class TelemostMailFeature(BaseFeature):
             parse_mode=ParseMode.HTML,
         )
         await self._notify_pending(bot, note)
+
+    async def cmd_telemost_unload(self, message: Message) -> None:
+        """Откат RAG по № встречи — затем можно снова /telemost_load."""
+        uid = message.from_user.id if message.from_user else 0
+        if not await self._is_admin(uid):
+            await message.answer("Команда только для администратора.")
+            return
+        if message.chat.type != ChatType.PRIVATE and not is_rag_admin_message(
+            message.chat.id, message.message_thread_id
+        ):
+            admin_chat, admin_topic = rag_admin_chat_topic()
+            await message.reply(
+                "Команда только в админ-ветке RAG "
+                f"(чат <code>{admin_chat}</code>, топик <code>{admin_topic}</code>).",
+                parse_mode=ParseMode.HTML,
+            )
+            return
+
+        raw = (message.text or "").split(maxsplit=1)
+        args = (raw[1] if len(raw) > 1 else "").strip()
+        if not args:
+            await message.answer(
+                "Откат загрузки в RAG по номеру встречи Телемоста.\n"
+                "Формат: <code>/telemost_unload 7418536026</code>\n"
+                "Несколько: <code>/telemost_unload 7418536026 6502784473</code>\n\n"
+                "После отката: <code>/telemost_load №</code> — снова карточка «загрузить».",
+                parse_mode=ParseMode.HTML,
+            )
+            return
+
+        meeting_ids = []
+        for part in re.split(r"[\s,;]+", args):
+            mid = re.sub(r"[^\d]", "", part)
+            if mid:
+                meeting_ids.append(mid)
+        meeting_ids = list(dict.fromkeys(meeting_ids))
+        if not meeting_ids:
+            await message.answer("Не вижу номеров встреч.")
+            return
+
+        svc = self._service()
+        if svc is None or not svc.enabled:
+            await message.answer("Сервис Телемост → RAG недоступен.")
+            return
+
+        lines = ["🗑 <b>Откат RAG</b>"]
+        for mid in meeting_ids:
+            res = await svc.rollback_rag_by_meeting_id(mid)
+            if not res.get("ok"):
+                lines.append(
+                    f"• №<code>{html_escape(mid)}</code>: "
+                    f"{html_escape(str(res.get('error') or 'ошибка'))}"
+                )
+                continue
+            lines.append(
+                f"• №<code>{html_escape(mid)}</code>: "
+                f"чанков −{int(res.get('chunks_deleted') or 0)}, "
+                f"кэш={'да' if res.get('cache_deleted') else 'нет'}, "
+                f"pending={'сброшен' if res.get('pending_reset') else '—'}"
+            )
+            if res.get("error"):
+                lines.append(f"  <i>{html_escape(str(res['error']))}</i>")
+        lines.append(
+            "\nДальше: <code>/telemost_load №</code> для повторной загрузки."
+        )
+        await message.answer("\n".join(lines), parse_mode=ParseMode.HTML)
 
     async def cmd_telemost_status(self, message: Message) -> None:
         uid = message.from_user.id if message.from_user else 0
