@@ -286,6 +286,14 @@ class AppConfig:
     RAG_SOURCE_VISIBILITY_CHAT_ID: int = 0
     RAG_SOURCE_VISIBILITY_TOPIC_ID: int = 0
 
+    # Voicebox (GPU TTS / voice clone) — API с бот-сервера, UI не нужен.
+    VOICEBOX_ENABLED: bool = False
+    VOICEBOX_BASE_URL: str = ""
+    VOICEBOX_DEFAULT_PROFILE_ID: str = ""
+    VOICEBOX_ENGINE: str = "qwen"
+    VOICEBOX_MODEL_SIZE: str = "1.7B"
+    VOICEBOX_LANGUAGE: str = "ru"
+
     @property
     def club_mail_database_url(self) -> str:
         if not (self.CLUB_DB_NAME and self.CLUB_DB_USER and self.CLUB_DB_PASSWORD):
@@ -783,6 +791,17 @@ def load_app_config() -> AppConfig:
         RAG_SOURCE_VISIBILITY_TOPIC_ID=int(
             os.getenv("RAG_SOURCE_VISIBILITY_TOPIC_ID", "0") or 0
         ),
+        VOICEBOX_ENABLED=_env_flag_true("VOICEBOX_ENABLED", default=False),
+        VOICEBOX_BASE_URL=(os.getenv("VOICEBOX_BASE_URL") or "").strip().rstrip("/"),
+        VOICEBOX_DEFAULT_PROFILE_ID=(
+            os.getenv("VOICEBOX_DEFAULT_PROFILE_ID") or ""
+        ).strip(),
+        VOICEBOX_ENGINE=(os.getenv("VOICEBOX_ENGINE") or "qwen").strip() or "qwen",
+        VOICEBOX_MODEL_SIZE=(
+            os.getenv("VOICEBOX_MODEL_SIZE") or "1.7B"
+        ).strip()
+        or "1.7B",
+        VOICEBOX_LANGUAGE=(os.getenv("VOICEBOX_LANGUAGE") or "ru").strip() or "ru",
     )
 
 

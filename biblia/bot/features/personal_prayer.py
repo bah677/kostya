@@ -1,11 +1,10 @@
-"""Команда /prayer: анкета → молитва (DeepSeek) → голосовое (Yandex SpeechKit)."""
+"""Команда /prayer: анкета → молитва (DeepSeek) → голосовое (Voicebox / SpeechKit)."""
 
 from __future__ import annotations
 
 import html
 import logging
-import re
-from typing import List, Optional
+from typing import List, Optional, Protocol
 
 from aiogram import Bot, Dispatcher
 from aiogram.enums import ParseMode
@@ -14,6 +13,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import BufferedInputFile, Message
 
 from bot.features.base import BaseFeature
+from bot.services.voicebox_tts import VoiceboxPrayerTTS, format_prayer_for_tts
 from bot.services.yandex_speechkit import YandexSpeechKitTTS
 from bot.states import PrayerStates
 from bot.utils.chat_actions import record_voice_chat_action
@@ -26,8 +26,8 @@ _PRAYER_QUESTIONS: tuple[str, ...] = (
     "Что сейчас больше всего на душе? Опишите коротко, своими словами.",
     "Какая молитва вам нужна: о помощи и утешении, благодарности, покаянии, "
     "мире в семье — или о чём-то другом?",
-    "К кому обратиться: к Господу Иисусу Христу, Пресвятой Троице, Божией Матери? "
-    "(можно ответить «как получится»)",
+    "К кому обратиться: к Господу Иисусу Христу, к Богу Отцу, "
+    "или как вам привычно? (можно ответить «как получится»)",
 )
 
 _CANCEL_WORDS = frozenset(
@@ -35,14 +35,16 @@ _CANCEL_WORDS = frozenset(
 )
 
 
+class _TTS(Protocol):
+    @property
+    def configured(self) -> bool: ...
+
+    async def synthesize_ogg_opus(self, text: str) -> bytes: ...
+
+
 def _strip_prayer_text(raw: str) -> str:
-    t = (raw or "").strip()
-    t = re.sub(r"^```(?:\w+)?\s*", "", t)
-    t = re.sub(r"\s*```$", "", t)
-    t = t.strip().strip('"').strip("«»")
-    # На случай, если модель всё же вернула TTS-разметку SpeechKit (+ перед гласной).
-    t = re.sub(r"\+(?=[аАеЕёЁиИоОуУыЫэЭюЮяЯ])", "", t)
-    return t
+    """Очистить ответ LLM и нормализовать паузы для озвучки."""
+    return format_prayer_for_tts(raw)
 
 
 class PersonalPrayerFeature(BaseFeature):
@@ -53,22 +55,36 @@ class PersonalPrayerFeature(BaseFeature):
         self.user_storage = user_storage
         self.bot: Optional[Bot] = None
         self.agents_client: Optional[AgentsClient] = None
-        self.tts = YandexSpeechKitTTS()
+        self.voicebox = VoiceboxPrayerTTS()
+        self.speechkit = YandexSpeechKitTTS()
+
+    @property
+    def tts(self) -> _TTS:
+        if self.voicebox.configured:
+            return self.voicebox
+        return self.speechkit
 
     def set_bot(self, app) -> None:
         self.bot = app.bot if app is not None else None
 
     async def initialize(self) -> None:
         self.agents_client = AgentsClient(self.user_storage)
-        if self.tts.configured:
+        if self.voicebox.configured:
             logger.info(
-                "[%s] SpeechKit готов (voice=%s)",
+                "[%s] Voicebox TTS готов (profile=%s atempo=%s)",
                 self.name,
-                self.tts.voice,
+                self.voicebox.profile_id[:8],
+                self.voicebox.atempo,
+            )
+        elif self.speechkit.configured:
+            logger.info(
+                "[%s] SpeechKit готов (voice=%s) — Voicebox выключен",
+                self.name,
+                self.speechkit.voice,
             )
         else:
             logger.warning(
-                "[%s] YANDEX_SPEECHKIT_API_KEY не задан — только текст молитвы",
+                "[%s] TTS не настроен (Voicebox/SpeechKit) — только текст молитвы",
                 self.name,
             )
 
@@ -86,8 +102,8 @@ class PersonalPrayerFeature(BaseFeature):
 
         await message.answer(
             "<b>🙏 Персональная молитва</b>\n\n"
-            "Я задам три коротких вопроса, затем составлю молитву по Писанию "
-            "и православной традиции и озвучу её голосом.\n\n"
+            "Я задам три коротких вопроса, затем составлю спокойную молитву "
+            "на современном языке — и озвучу её голосом.\n\n"
             f"<b>1.</b> {_PRAYER_QUESTIONS[0]}\n\n"
             "<i>Чтобы прервать — напишите «отмена» или снова /prayer</i>",
             parse_mode=ParseMode.HTML,
@@ -195,12 +211,21 @@ class PersonalPrayerFeature(BaseFeature):
         )
 
         ogg: Optional[bytes] = None
-        if self.tts.configured:
-            logger.info("[%s] TTS start uid=%s", self.name, uid)
+        tts = self.tts
+        if tts.configured:
+            engine = "voicebox" if tts is self.voicebox else "speechkit"
+            logger.info("[%s] TTS start uid=%s engine=%s", self.name, uid, engine)
             try:
-                ogg = await self.tts.synthesize_ogg_opus(prayer_text)
+                ogg = await tts.synthesize_ogg_opus(prayer_text)
             except Exception as e:
-                logger.error("[%s] TTS failed uid=%s: %s", self.name, uid, e)
+                logger.error("[%s] TTS failed uid=%s engine=%s: %s", self.name, uid, engine, e)
+                # Fallback: Voicebox упал → попробовать SpeechKit, если он есть.
+                if tts is self.voicebox and self.speechkit.configured:
+                    logger.info("[%s] TTS fallback SpeechKit uid=%s", self.name, uid)
+                    try:
+                        ogg = await self.speechkit.synthesize_ogg_opus(prayer_text)
+                    except Exception as e2:
+                        logger.error("[%s] SpeechKit fallback failed uid=%s: %s", self.name, uid, e2)
             else:
                 logger.info(
                     "[%s] TTS done uid=%s bytes=%s",
@@ -209,7 +234,7 @@ class PersonalPrayerFeature(BaseFeature):
                     len(ogg) if ogg else 0,
                 )
         else:
-            logger.warning("[%s] TTS skipped — SpeechKit not configured uid=%s", self.name, uid)
+            logger.warning("[%s] TTS skipped — not configured uid=%s", self.name, uid)
 
         return prayer_text, ogg
 
@@ -235,7 +260,7 @@ class PersonalPrayerFeature(BaseFeature):
         )
         if not self.tts.configured:
             await message.answer(
-                "<i>Голосовое временно недоступно (не настроен SpeechKit).</i>",
+                "<i>Голосовое временно недоступно (не настроен TTS).</i>",
                 parse_mode=ParseMode.HTML,
             )
         elif not ogg:

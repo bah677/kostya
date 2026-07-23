@@ -18,6 +18,7 @@ from bot.features.scripture_messaging import ScriptureMessagingFeature
 from bot.features.shorts_mail_wizard import ShortsMailWizardFeature
 from bot.features.caption_editor_feature import CaptionEditorFeature
 from bot.features.support import SupportFeature
+from bot.features.voicebox_admin import VoiceboxAdminFeature
 from bot.handlers.messages import MessageHandlers
 
 from command_handlers import AppCommandHandlers
@@ -67,6 +68,7 @@ class BotApplication(TelegramBotApp):
         yandex_disk_sync = YandexDiskSyncFeature()
         telemost_mail = TelemostMailFeature()
         rag_source_visibility = RagSourceVisibilityFeature()
+        voicebox_admin = VoiceboxAdminFeature()
 
         features = [
             rag_backfill,
@@ -85,6 +87,7 @@ class BotApplication(TelegramBotApp):
             referral_feature,
             payment_feature,
             media_id_helper,
+            voicebox_admin,
         ]
         for feature in features:
             self.feature_manager.register(feature)

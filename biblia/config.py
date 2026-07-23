@@ -104,6 +104,16 @@ def _parse_speechkit_speed(raw: Optional[str]) -> float:
     return max(0.5, min(2.0, v))
 
 
+def _parse_voicebox_atempo(raw: Optional[str]) -> float:
+    if raw is None or not str(raw).strip():
+        return 0.92
+    try:
+        v = float(str(raw).strip().replace(",", "."))
+    except ValueError:
+        return 0.92
+    return max(0.5, min(1.2, v))
+
+
 def _parse_gift_link_validity_days(raw: Optional[str]) -> int:
     if raw is None or not str(raw).strip():
         return 30
@@ -177,6 +187,19 @@ class AppConfig:
     YANDEX_SPEECHKIT_VOICE: str = "zahar"
     YANDEX_SPEECHKIT_SPEED: float = 0.9
     YANDEX_SPEECHKIT_EMOTION: str = "neutral"
+
+    # Voicebox (GPU clone) — приоритетный TTS для /prayer при VOICEBOX_ENABLED=1.
+    VOICEBOX_ENABLED: bool = False
+    VOICEBOX_BASE_URL: str = ""
+    VOICEBOX_PROFILE_ID: str = ""
+    VOICEBOX_ENGINE: str = "qwen"
+    VOICEBOX_MODEL_SIZE: str = "1.7B"
+    VOICEBOX_LANGUAGE: str = "ru"
+    VOICEBOX_INSTRUCT: str = (
+        "Speak slowly and calmly in a soft prayerful tone. "
+        "Make clear, unhurried pauses between sentences. Do not rush."
+    )
+    VOICEBOX_ATEMPO: float = 0.92
 
     LOG_LEVEL: str = "INFO"
     MAX_WORKERS: int = 5
@@ -272,6 +295,23 @@ def load_app_config() -> AppConfig:
         YANDEX_SPEECHKIT_VOICE=(os.getenv("YANDEX_SPEECHKIT_VOICE") or "zahar").strip().lower(),
         YANDEX_SPEECHKIT_SPEED=_parse_speechkit_speed(os.getenv("YANDEX_SPEECHKIT_SPEED")),
         YANDEX_SPEECHKIT_EMOTION=(os.getenv("YANDEX_SPEECHKIT_EMOTION") or "neutral").strip(),
+        VOICEBOX_ENABLED=_parse_bool_env(os.getenv("VOICEBOX_ENABLED"), False),
+        VOICEBOX_BASE_URL=(os.getenv("VOICEBOX_BASE_URL") or "").strip().rstrip("/"),
+        VOICEBOX_PROFILE_ID=(os.getenv("VOICEBOX_PROFILE_ID") or "").strip(),
+        VOICEBOX_ENGINE=(os.getenv("VOICEBOX_ENGINE") or "qwen").strip() or "qwen",
+        VOICEBOX_MODEL_SIZE=(
+            os.getenv("VOICEBOX_MODEL_SIZE") or "1.7B"
+        ).strip()
+        or "1.7B",
+        VOICEBOX_LANGUAGE=(os.getenv("VOICEBOX_LANGUAGE") or "ru").strip() or "ru",
+        VOICEBOX_INSTRUCT=(
+            os.getenv("VOICEBOX_INSTRUCT")
+            or (
+                "Speak slowly and calmly in a soft prayerful tone. "
+                "Make clear, unhurried pauses between sentences. Do not rush."
+            )
+        ).strip(),
+        VOICEBOX_ATEMPO=_parse_voicebox_atempo(os.getenv("VOICEBOX_ATEMPO")),
         LOG_LEVEL=os.getenv("LOG_LEVEL", "INFO"),
         MEDIA_INBOUND_ARCHIVE_DIR=media_raw,
     )
