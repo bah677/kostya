@@ -31,6 +31,8 @@ from config import config
 logger = logging.getLogger(__name__)
 
 CB_PICK = "vb:pick:"
+CB_ADD = "vb:add:"
+CB_ADD_MORE = "vb:more:"
 CB_CANCEL = "vb:cancel"
 CB_TX_OK = "vb:tx:ok"
 CB_TX_EDIT = "vb:tx:edit"
@@ -80,6 +82,9 @@ class VoiceboxAdminFeature(BaseFeature):
             self.cmd_voice_sample, PRIVATE_CHAT, Command("voice_sample")
         )
         dispatcher.message.register(
+            self.cmd_voice_add_sample, PRIVATE_CHAT, Command("voice_add_sample")
+        )
+        dispatcher.message.register(
             self.cmd_voice_test, PRIVATE_CHAT, Command("voice_test")
         )
         dispatcher.message.register(
@@ -127,6 +132,16 @@ class VoiceboxAdminFeature(BaseFeature):
             self.on_pick_profile,
             CALLBACK_PRIVATE_CHAT,
             F.data.startswith(CB_PICK),
+        )
+        dispatcher.callback_query.register(
+            self.on_pick_add_profile,
+            CALLBACK_PRIVATE_CHAT,
+            F.data.startswith(CB_ADD),
+        )
+        dispatcher.callback_query.register(
+            self.on_add_more,
+            CALLBACK_PRIVATE_CHAT,
+            F.data.startswith(CB_ADD_MORE),
         )
         dispatcher.callback_query.register(
             self.on_tx_ok,
@@ -236,7 +251,7 @@ class VoiceboxAdminFeature(BaseFeature):
                 parse_mode=ParseMode.HTML,
             )
             return False
-        await state.update_data(profile_name=name)
+        await state.update_data(profile_name=name, sample_mode="create")
         await state.set_state(VoiceSampleStates.waiting_audio)
         await message.answer(
             f"Модель: <b>{_esc(name)}</b>\n\n"
@@ -244,6 +259,146 @@ class VoiceboxAdminFeature(BaseFeature):
             parse_mode=ParseMode.HTML,
         )
         return True
+
+    async def cmd_voice_add_sample(
+        self, message: Message, state: FSMContext, command: CommandObject
+    ) -> None:
+        """Добавить sample к уже существующей модели."""
+        if not await self._guard(message):
+            return
+        await self._clear_sample_tmp(state)
+        await state.clear()
+        try:
+            profiles = await self._client.list_profiles()
+        except Exception as e:
+            logger.exception("voice_add_sample list: %s", e)
+            await message.answer(f"Не удалось получить модели: {e}")
+            return
+        if not profiles:
+            await message.answer("Моделей нет. Сначала /voice_sample")
+            return
+
+        arg = (command.args or "").strip()
+        if arg:
+            by_id = next((p for p in profiles if p.get("id") == arg), None)
+            by_name = next((p for p in profiles if (p.get("name") or "") == arg), None)
+            chosen = by_id or by_name
+            if not chosen:
+                await message.answer(
+                    "Модель не найдена. Список: /voice_models\n"
+                    "Или /voice_add_sample без аргументов — выбрать кнопкой."
+                )
+                return
+            await self._start_add_sample_for_profile(
+                message, state, chosen["id"], chosen.get("name") or chosen["id"]
+            )
+            return
+
+        if len(profiles) == 1:
+            p = profiles[0]
+            await self._start_add_sample_for_profile(
+                message, state, p["id"], p.get("name") or p["id"]
+            )
+            return
+
+        rows = []
+        for p in profiles[:20]:
+            label = f"{p.get('name') or '?'} ({p.get('sample_count', 0)} smp)"
+            rows.append(
+                [
+                    InlineKeyboardButton(
+                        text=label[:64],
+                        callback_data=f"{CB_ADD}{p['id']}",
+                    )
+                ]
+            )
+        rows.append([InlineKeyboardButton(text="Отмена", callback_data=CB_CANCEL)])
+        await message.answer(
+            "Выберите модель, в которую добавить sample:",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
+        )
+
+    async def _start_add_sample_for_profile(
+        self,
+        message: Message,
+        state: FSMContext,
+        profile_id: str,
+        profile_name: str,
+    ) -> None:
+        await state.update_data(
+            sample_mode="add",
+            profile_id=profile_id,
+            profile_name=profile_name,
+        )
+        await state.set_state(VoiceSampleStates.waiting_audio)
+        await message.answer(
+            f"Добавление sample в <b>{_esc(profile_name)}</b>\n"
+            f"<code>{profile_id}</code>\n\n"
+            f"Пришлите голосовое/аудио (обрежем до {int(_SAMPLE_MAX_SEC)} сек).\n"
+            "Можно повторить 2–3 раза через /voice_add_sample.\n"
+            "/cancel — отмена",
+            parse_mode=ParseMode.HTML,
+        )
+
+    async def on_pick_add_profile(
+        self, callback: CallbackQuery, state: FSMContext
+    ) -> None:
+        uid = callback.from_user.id if callback.from_user else 0
+        if not await self._is_admin(uid):
+            await callback.answer("Только админ", show_alert=True)
+            return
+        if not self._enabled():
+            await callback.answer("Voicebox выключен", show_alert=True)
+            return
+        pid = (callback.data or "")[len(CB_ADD) :]
+        if not pid:
+            await callback.answer("Нет id", show_alert=True)
+            return
+        try:
+            profiles = await self._client.list_profiles()
+        except Exception as e:
+            await callback.answer(str(e)[:180], show_alert=True)
+            return
+        profile = next((p for p in profiles if p.get("id") == pid), None)
+        if not profile:
+            await callback.answer("Модель не найдена", show_alert=True)
+            return
+        await callback.answer()
+        if callback.message:
+            await callback.message.edit_reply_markup(reply_markup=None)
+            await self._start_add_sample_for_profile(
+                callback.message,
+                state,
+                pid,
+                profile.get("name") or pid,
+            )
+
+    async def on_add_more(self, callback: CallbackQuery, state: FSMContext) -> None:
+        uid = callback.from_user.id if callback.from_user else 0
+        if not await self._is_admin(uid):
+            await callback.answer("Только админ", show_alert=True)
+            return
+        pid = (callback.data or "")[len(CB_ADD_MORE) :]
+        if not pid:
+            await callback.answer("Нет id", show_alert=True)
+            return
+        try:
+            profiles = await self._client.list_profiles()
+        except Exception as e:
+            await callback.answer(str(e)[:180], show_alert=True)
+            return
+        profile = next((p for p in profiles if p.get("id") == pid), None)
+        if not profile:
+            await callback.answer("Модель не найдена", show_alert=True)
+            return
+        await callback.answer()
+        if callback.message:
+            await self._start_add_sample_for_profile(
+                callback.message,
+                state,
+                pid,
+                profile.get("name") or pid,
+            )
 
     async def cmd_voice_sample(
         self, message: Message, state: FSMContext, command: CommandObject
@@ -409,7 +564,7 @@ class VoiceboxAdminFeature(BaseFeature):
         await callback.answer()
         if callback.message:
             await callback.message.edit_reply_markup(reply_markup=None)
-            await self._create_profile_with_sample(callback.message, state, text)
+            await self._finalize_sample(callback.message, state, text)
 
     async def on_tx_edit(self, callback: CallbackQuery, state: FSMContext) -> None:
         uid = callback.from_user.id if callback.from_user else 0
@@ -436,7 +591,7 @@ class VoiceboxAdminFeature(BaseFeature):
                 "/cancel — отмена."
             )
             return
-        await self._create_profile_with_sample(message, state, text)
+        await self._finalize_sample(message, state, text)
 
     async def on_transcript_edit_text(
         self, message: Message, state: FSMContext
@@ -445,9 +600,9 @@ class VoiceboxAdminFeature(BaseFeature):
         if not text or text.startswith("/"):
             await message.answer("Нужен текст расшифровки. /cancel — отмена.")
             return
-        await self._create_profile_with_sample(message, state, text)
+        await self._finalize_sample(message, state, text)
 
-    async def _create_profile_with_sample(
+    async def _finalize_sample(
         self, message: Message, state: FSMContext, reference_text: str
     ) -> None:
         text = reference_text.strip()
@@ -455,35 +610,60 @@ class VoiceboxAdminFeature(BaseFeature):
             await message.answer("Текст слишком длинный (макс. 1000 символов).")
             return
         data = await state.get_data()
+        mode = (data.get("sample_mode") or "create").strip()
         name = (data.get("profile_name") or "").strip()
+        profile_id = (data.get("profile_id") or "").strip()
         audio_path = data.get("audio_path")
         audio_dir = data.get("audio_dir")
         filename = data.get("audio_filename") or "sample_clip.ogg"
-        if not name or not audio_path or not Path(audio_path).is_file():
+        if not audio_path or not Path(audio_path).is_file():
             await self._clear_sample_tmp(state)
             await state.clear()
-            await message.answer("Сессия сброшена. Начните снова: /voice_sample")
+            await message.answer(
+                "Сессия сброшена. Начните снова: /voice_sample или /voice_add_sample"
+            )
+            return
+        if mode == "add" and not profile_id:
+            await self._clear_sample_tmp(state)
+            await state.clear()
+            await message.answer("Нет id модели. /voice_add_sample")
+            return
+        if mode != "add" and not name:
+            await self._clear_sample_tmp(state)
+            await state.clear()
+            await message.answer("Сессия сброшена. /voice_sample")
             return
 
-        status = await message.answer("Создаю профиль и загружаю sample…")
+        status = await message.answer(
+            "Загружаю sample в существующую модель…"
+            if mode == "add"
+            else "Создаю профиль и загружаю sample…"
+        )
         try:
             audio_bytes = Path(audio_path).read_bytes()
-            profile = await self._client.create_profile(
-                name,
-                language=config.VOICEBOX_LANGUAGE or "ru",
-                default_engine=config.VOICEBOX_ENGINE or "qwen",
-            )
-            pid = profile["id"]
-            sample = await self._client.add_sample(
-                pid, audio_bytes, filename, text
-            )
+            if mode == "add":
+                pid = profile_id
+                sample = await self._client.add_sample(
+                    pid, audio_bytes, filename, text
+                )
+            else:
+                profile = await self._client.create_profile(
+                    name,
+                    language=config.VOICEBOX_LANGUAGE or "ru",
+                    default_engine=config.VOICEBOX_ENGINE or "qwen",
+                )
+                pid = profile["id"]
+                sample = await self._client.add_sample(
+                    pid, audio_bytes, filename, text
+                )
+                name = profile.get("name") or name
         except VoiceboxError as e:
             await self._clear_sample_tmp(state)
             await state.clear()
             await status.edit_text(f"Ошибка Voicebox: {e}")
             return
         except Exception as e:
-            logger.exception("voice_sample create: %s", e)
+            logger.exception("voice_sample finalize: %s", e)
             await self._clear_sample_tmp(state)
             await state.clear()
             await status.edit_text(f"Ошибка: {e}")
@@ -491,13 +671,30 @@ class VoiceboxAdminFeature(BaseFeature):
 
         await self._clear_sample_tmp(state)
         await state.clear()
+        more_kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="➕ Ещё sample в эту модель",
+                        callback_data=f"{CB_ADD_MORE}{pid}",
+                    )
+                ]
+            ]
+        )
+        title = (
+            f"✅ Sample добавлен в <b>{_esc(name)}</b>"
+            if mode == "add"
+            else f"✅ Модель <b>{_esc(name)}</b> создана"
+        )
         await status.edit_text(
-            f"✅ Модель <b>{_esc(name)}</b> создана.\n"
+            f"{title}.\n"
             f"id: <code>{pid}</code>\n"
             f"sample: <code>{sample.get('id')}</code>\n\n"
             f"Текст sample:\n<i>{_esc(text)}</i>\n\n"
-            f"Проверка: <code>/voice_test</code>",
+            f"Проверка: <code>/voice_test</code>\n"
+            f"Ещё sample: кнопка ниже или <code>/voice_add_sample</code>",
             parse_mode=ParseMode.HTML,
+            reply_markup=more_kb,
         )
 
     async def cmd_voice_test(

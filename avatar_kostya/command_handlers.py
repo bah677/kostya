@@ -111,6 +111,7 @@ _HELP_TEXT = (
     "<b>Voicebox (клон голоса)</b>\n"
     "<code>/voice_sample</code> [имя] — создать модель: sample ≤30с + "
     "подтверждение транскрипта\n"
+    "<code>/voice_add_sample</code> [имя|id] — добавить sample в существующую модель\n"
     "<code>/voice_test</code> [текст] — озвучить текст → голосовое TG\n"
     "<code>/voice_models</code> — список моделей"
 )

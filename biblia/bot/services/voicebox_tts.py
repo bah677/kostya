@@ -19,10 +19,9 @@ from config import config
 logger = logging.getLogger(__name__)
 
 _DEFAULT_INSTRUCT = (
-    "Speak slowly and calmly in a soft prayerful tone. "
-    "Make clear, unhurried pauses between sentences. Do not rush. "
-    "The final word амИнь must be pronounced with stress on the capital И "
-    "(second syllable: a-MÍN), clearly and solemnly, never flat or rushed."
+    "Warm natural prayerful speech, gentle rhythm, slight emotional variation, "
+    "not monotone and not robotic. Soft unhurried pace. "
+    "The final word амИнь: stress on capital И (a-MÍN), clear and solemn."
 )
 
 # Ударение через заглавную гласную: амИнь (а-мИнь).
@@ -151,7 +150,7 @@ class VoiceboxPrayerTTS:
 
 
 def format_prayer_for_tts(text: str) -> str:
-    """Нормализовать текст молитвы под паузы и ударение «амИнь»."""
+    """Нормализовать текст: мягкие паузы (абзацы по 2 предложения) + амИнь."""
     t = (text or "").strip()
     t = re.sub(r"^```(?:\w+)?\s*", "", t)
     t = re.sub(r"\s*```$", "", t)
@@ -159,18 +158,34 @@ def format_prayer_for_tts(text: str) -> str:
     t = re.sub(r"\+(?=[аАеЕёЁиИоОуУыЫэЭюЮяЯ])", "", t)
     t = re.sub(r"[\u0300\u0301\u0341]", "", t)
 
-    # Уже с пустыми строками между предложениями — слегка подчистить.
+    # Собрать предложения из абзацев / одной строки.
     if "\n\n" in t:
-        parts = [p.strip() for p in re.split(r"\n\s*\n", t) if p.strip()]
-        t = "\n\n".join(parts)
+        raw_parts = [p.strip() for p in re.split(r"\n\s*\n", t) if p.strip()]
     else:
         flat = re.sub(r"[ \t]+", " ", t)
         flat = re.sub(r"\n+", " ", flat).strip()
-        parts = re.split(r"(?<=[.!?…])\s+", flat)
-        parts = [p.strip() for p in parts if p.strip()]
-        t = "\n\n".join(parts) if len(parts) > 1 else flat
+        raw_parts = [flat] if flat else []
 
-    return ensure_amen_stress(t)
+    sentences: list[str] = []
+    for part in raw_parts:
+        bits = re.split(r"(?<=[.!?…])\s+", part)
+        sentences.extend(b.strip() for b in bits if b.strip())
+
+    amen = None
+    if sentences and _AMEN_FLEX_RE.search(sentences[-1]):
+        amen = ensure_amen_stress(sentences[-1])
+        sentences = sentences[:-1]
+
+    # По 2 предложения в абзаце — естественнее, чем пауза после каждого.
+    paras: list[str] = []
+    for i in range(0, len(sentences), 2):
+        chunk = " ".join(sentences[i : i + 2]).strip()
+        if chunk:
+            paras.append(chunk)
+    out = "\n\n".join(paras)
+    if amen:
+        out = f"{out}\n\n{amen}".strip() if out else amen
+    return ensure_amen_stress(out) if out else ""
 
 
 def ensure_amen_stress(text: str) -> str:
@@ -197,11 +212,11 @@ def _wav_bytes_to_ogg_opus(wav_bytes: bytes, atempo: float) -> Optional[bytes]:
             "-c:a",
             "libopus",
             "-b:a",
-            "64k",
+            "96k",
             "-vbr",
             "on",
             "-application",
-            "voip",
+            "audio",
             str(ogg_path),
         ]
         try:

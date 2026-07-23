@@ -106,11 +106,11 @@ def _parse_speechkit_speed(raw: Optional[str]) -> float:
 
 def _parse_voicebox_atempo(raw: Optional[str]) -> float:
     if raw is None or not str(raw).strip():
-        return 0.92
+        return 0.97
     try:
         v = float(str(raw).strip().replace(",", "."))
     except ValueError:
-        return 0.92
+        return 0.97
     return max(0.5, min(1.2, v))
 
 
@@ -196,12 +196,11 @@ class AppConfig:
     VOICEBOX_MODEL_SIZE: str = "1.7B"
     VOICEBOX_LANGUAGE: str = "ru"
     VOICEBOX_INSTRUCT: str = (
-        "Speak slowly and calmly in a soft prayerful tone. "
-        "Make clear, unhurried pauses between sentences. Do not rush. "
-        "The final word амИнь must be pronounced with stress on the capital И "
-        "(second syllable: a-MÍN), clearly and solemnly, never flat or rushed."
+        "Warm natural prayerful speech, gentle rhythm, slight emotional variation, "
+        "not monotone and not robotic. Soft unhurried pace. "
+        "The final word амИнь: stress on capital И (a-MÍN), clear and solemn."
     )
-    VOICEBOX_ATEMPO: float = 0.92
+    VOICEBOX_ATEMPO: float = 0.97
 
     LOG_LEVEL: str = "INFO"
     MAX_WORKERS: int = 5
@@ -309,10 +308,9 @@ def load_app_config() -> AppConfig:
         VOICEBOX_INSTRUCT=(
             os.getenv("VOICEBOX_INSTRUCT")
             or (
-                "Speak slowly and calmly in a soft prayerful tone. "
-                "Make clear, unhurried pauses between sentences. Do not rush. "
-                "The final word амИнь must be pronounced with stress on the capital И "
-                "(second syllable: a-MÍN), clearly and solemnly, never flat or rushed."
+                "Warm natural prayerful speech, gentle rhythm, slight emotional variation, "
+                "not monotone and not robotic. Soft unhurried pace. "
+                "The final word амИнь: stress on capital И (a-MÍN), clear and solemn."
             )
         ).strip(),
         VOICEBOX_ATEMPO=_parse_voicebox_atempo(os.getenv("VOICEBOX_ATEMPO")),
