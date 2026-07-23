@@ -28,6 +28,8 @@ from openai_client.prayer_prompt import (
 logger = logging.getLogger(__name__)
 
 _MAX_CLARIFY = 2
+_TG_CAPTION_MAX = 1024
+_TG_MESSAGE_MAX = 4096
 _CANCEL_WORDS = frozenset(
     {"отмена", "отменить", "стоп", "cancel", "/cancel"}
 )
@@ -325,23 +327,37 @@ class PersonalPrayerFeature(BaseFeature):
         prayer_text: str,
         ogg: Optional[bytes],
     ) -> None:
-        safe = html.escape(prayer_text)
+        body = (prayer_text or "").strip()
         if ogg and bot:
             logger.info(
                 "[%s] sending voice uid=%s",
                 self.name,
                 message.from_user.id if message.from_user else 0,
             )
+            caption, rest = _split_caption(body, _TG_CAPTION_MAX)
             await bot.send_voice(
                 message.chat.id,
                 BufferedInputFile(ogg, filename="prayer.ogg"),
+                caption=caption or None,
             )
+            await _send_text_chunks(message, rest)
             return
 
-        await message.answer(
-            f"<b>🙏 Ваша молитва</b>\n\n{safe}",
-            parse_mode=ParseMode.HTML,
-        )
+        header = "<b>🙏 Ваша молитва</b>\n\n"
+        safe = html.escape(body)
+        # Заголовок + текст; при переполнении — остаток обычными сообщениями.
+        full = header + safe
+        if len(full) <= _TG_MESSAGE_MAX:
+            await message.answer(full, parse_mode=ParseMode.HTML)
+        else:
+            # Первый кусок без HTML-разрыва посередине тега: шлём plain.
+            first, rest = _split_caption(body, _TG_MESSAGE_MAX - len("🙏 Ваша молитва\n\n"))
+            await message.answer(
+                f"<b>🙏 Ваша молитва</b>\n\n{html.escape(first)}",
+                parse_mode=ParseMode.HTML,
+            )
+            await _send_text_chunks(message, rest)
+
         if not self.tts.configured:
             await message.answer(
                 "<i>Голосовое временно недоступно (не настроен TTS).</i>",
@@ -367,3 +383,28 @@ class PersonalPrayerFeature(BaseFeature):
         if not raw:
             return None
         return _strip_prayer_text(raw)
+
+
+def _split_caption(text: str, limit: int) -> tuple[str, str]:
+    """Разделить текст на caption (≤ limit) и хвост."""
+    t = text or ""
+    if len(t) <= limit:
+        return t, ""
+    window = t[:limit]
+    cut = window.rfind("\n\n")
+    if cut < limit // 3:
+        cut = window.rfind("\n")
+    if cut < limit // 3:
+        cut = window.rfind(" ")
+    if cut < limit // 3:
+        cut = limit
+    return t[:cut].rstrip(), t[cut:].lstrip()
+
+
+async def _send_text_chunks(message: Message, text: str) -> None:
+    rest = (text or "").strip()
+    while rest:
+        chunk, rest = _split_caption(rest, _TG_MESSAGE_MAX)
+        if not chunk:
+            break
+        await message.answer(chunk)
