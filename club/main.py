@@ -90,11 +90,29 @@ def _archive_active_log(active_path: Path, archive_prefix: str) -> None:
     active_path.rename(archived)
 
 
+def _prune_log_archives(keep_days: int = 30) -> None:
+    """Удаляет архивы в log/arc старше keep_days."""
+    import time
+
+    if not LOG_ARC_DIR.is_dir():
+        return
+    cutoff = time.time() - keep_days * 86400
+    for p in LOG_ARC_DIR.iterdir():
+        if not p.is_file():
+            continue
+        try:
+            if p.stat().st_mtime < cutoff:
+                p.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
 def _prepare_logs_on_startup() -> None:
     """bot-errors.log — новый файл на каждый запуск; bot.log — только если >10k строк."""
     if _log_file_has_more_than(ACTIVE_LOG_PATH, BOT_LOG_LINE_ROTATE_AFTER):
         _archive_active_log(ACTIVE_LOG_PATH, "bot")
     _archive_active_log(ACTIVE_ERROR_LOG_PATH, "bot-errors")
+    _prune_log_archives(30)
 
 
 _prepare_logs_on_startup()

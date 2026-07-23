@@ -3,21 +3,21 @@
 # Восстановить каталог log/ на проде из снимка club_code_*.tgz (тот же формат, что создаёт deploy_prod.sh).
 #
 # Использование:
-#   ./scripts/restore_club_log_from_snapshot.sh /home/appuser/old_bots/club_deploy_snapshots/club_code_20260508_234817.tgz
+#   ./scripts/restore_club_log_from_snapshot.sh /home/appuser/backups/club/code/club_code_20260508_234817.tgz
 #
 # Последний снимок в каталоге по умолчанию:
 #   ./scripts/restore_club_log_from_snapshot.sh --latest
 #
 # Переменные (опционально):
 #   CLUB_PROD_ROOT=/home/appuser/club
-#   CLUB_CODE_SNAPSHOTS_DIR=/home/appuser/old_bots/club_deploy_snapshots
+#   CLUB_CODE_SNAPSHOTS_DIR=/home/appuser/backups/club/code
 #   SKIP_CONFIRM=1   — без запроса y/N
 #   DEPLOY_RUN_USER=appuser — chown после распаковки (если запуск от root)
 #
 set -euo pipefail
 
 CLUB_PROD_ROOT="${CLUB_PROD_ROOT:-/home/appuser/club}"
-CLUB_CODE_SNAPSHOTS_DIR="${CLUB_CODE_SNAPSHOTS_DIR:-/home/appuser/old_bots/club_deploy_snapshots}"
+CLUB_CODE_SNAPSHOTS_DIR="${CLUB_CODE_SNAPSHOTS_DIR:-/home/appuser/backups/club/code}"
 SKIP_CONFIRM="${SKIP_CONFIRM:-0}"
 
 die() { echo "ERROR: $*" >&2; exit 1; }

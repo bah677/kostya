@@ -285,6 +285,16 @@ async def _run_audio_pipeline(
             )
             return
 
+        from telemost_mail.source_cleanup import (
+            release_source,
+            retain_source,
+            rmtree_workdir,
+        )
+
+        retain_source(audio_path)
+        _audio_retained = True
+        work_dir = None
+
         count = int(getattr(config, "TELEMOST_AUDIO_CLIPS_COUNT", 5) or 5)
         max_dur = int(getattr(config, "TELEMOST_AUDIO_CLIPS_MAX_DURATION_SEC", 120) or 120)
         philosophy = getattr(config, "TELEMOST_SHORTS_PHILOSOPHY_HINT", "") or ""
@@ -403,6 +413,10 @@ async def _run_audio_pipeline(
             parse_mode=ParseMode.HTML,
             message_thread_id=topic_id,
         )
+        # клипы уже в TG; workdir чистим. Исходный audio — через release_source
+        # (refcount с full_voice).
+        if sent > 0 and work_dir is not None:
+            rmtree_workdir(work_dir, label="telemost_audio_workdir")
     except Exception as e:
         logger.exception("telemost_audio pipeline pending=%s: %s", pid, e)
         if bot and chat_id:
@@ -416,4 +430,11 @@ async def _run_audio_pipeline(
             except Exception:
                 pass
     finally:
+        if locals().get("_audio_retained") and locals().get("audio_path"):
+            try:
+                from telemost_mail.source_cleanup import release_source
+
+                release_source(audio_path, label="telemost_audio", delete=True)
+            except Exception:
+                pass
         _active_audio.discard(active_key)

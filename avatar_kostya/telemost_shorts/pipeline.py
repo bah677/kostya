@@ -355,6 +355,17 @@ async def _run_shorts_pipeline(
             parse_mode=ParseMode.HTML,
             message_thread_id=topic_id,
         )
+        # исходное видео больше не нужно — освобождаем диск
+        if sent > 0:
+            from telemost_mail.source_cleanup import rmtree_workdir, unlink_source_media
+
+            unlink_source_media(video_path, label="telemost_video")
+            rmtree_workdir(work_dir, label="telemost_shorts_workdir")
+            if storage is not None and meeting_id:
+                try:
+                    await storage.set_telemost_recording_local_path(meeting_id, "")
+                except Exception as ce:
+                    logger.warning("clear video_local_path: %s", ce)
     except Exception as e:
         logger.exception("telemost_shorts pipeline pending=%s: %s", pid, e)
         if bot and chat_id:

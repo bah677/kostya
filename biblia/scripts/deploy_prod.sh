@@ -8,10 +8,10 @@
 #
 # Шаги:
 #   1) supervisorctl stop bots:biblia_bot
-#   2) tar-снимок прод-кода в /home/appuser/old_bots/biblia_deploy_snapshots/
-#      (без data/, log/, venv/, .pyc, __pycache__)
+#   2) tar-снимок прод-кода в /home/appuser/backups/biblia/code/
+#      (без data/, log/, venv/, .pyc, __pycache__; хранение 7 дней)
 #   3) pg_dump БД biblia_bot в custom-формате в
-#      /home/appuser/old_bots/biblia_db_dumps/biblia_db_<TS>.dump
+#      /home/appuser/backups/biblia/db/biblia_db_<TS>.dump
 #   4) rsync dev → prod, ЗЕРКАЛО (--delete) кроме data/, log/, venv/, .env
 #   5) pip install -r requirements.txt в /home/appuser/biblia/venv
 #      (если есть; обновлять/создавать venv этот скрипт сам не будет)
@@ -31,7 +31,7 @@
 #
 # Откат при сбое (если бот не поднялся):
 #   sudo supervisorctl stop bots:biblia_bot
-#   cd /home/appuser/biblia && sudo tar -xzf /home/appuser/old_bots/biblia_deploy_snapshots/biblia_code_<TS>.tgz
+#   cd /home/appuser/biblia && sudo tar -xzf /home/appuser/backups/biblia/code/biblia_code_<TS>.tgz
 #   sudo supervisorctl start bots:biblia_bot
 #
 # Переменные окружения (можно переопределить):
@@ -54,8 +54,8 @@ APP_USER=${APP_USER:-appuser}
 SKIP_GIT_PUSH=${SKIP_GIT_PUSH:-0}
 GIT_REMOTE_URL=${GIT_REMOTE_URL:-git@github.com:bah677/kostya.git}
 
-CODE_SNAPS=/home/appuser/old_bots/biblia_deploy_snapshots
-DB_DUMPS=/home/appuser/old_bots/biblia_db_dumps
+CODE_SNAPS=${BIBLIA_CODE_SNAPSHOTS_DIR:-/home/appuser/backups/biblia/code}
+DB_DUMPS=${BIBLIA_DB_DUMPS_DIR:-/home/appuser/backups/biblia/db}
 PROD_VENV="$DST/venv"
 
 TS=$(date +%Y%m%d_%H%M%S)
@@ -140,6 +140,16 @@ sudo -u postgres pg_dump \
   --file="$DB_ARCHIVE" \
   "$DB_NAME"
 echo "    $DB_ARCHIVE"
+
+# ---------- 3.0 retention: бэкапы 7д, data 7д, log/arc 30д ----------
+RETENTION_SH=/home/appuser/dev/kostya/scripts/disk_retention.sh
+if [[ -x "$RETENTION_SH" ]]; then
+  echo "==> disk retention (backups/data 7d, logs 30d)"
+  BACKUP_DAYS=7 DATA_DAYS=7 LOG_ARC_DAYS=30 \
+    "$RETENTION_SH" deploy --apply || true
+else
+  echo "    (skip retention: $RETENTION_SH missing)"
+fi
 
 # ---------- 3.1. список новых миграций ДО rsync ----------
 mapfile -t DEV_MIGRATIONS < <(cd "$SRC" && \

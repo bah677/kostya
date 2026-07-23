@@ -243,73 +243,88 @@ async def _run_full_voice_pipeline(
             )
             return
 
-        work_root = Path(
-            getattr(config, "TELEMOST_AUDIO_WORK_DIR", "data/telemost_audio_clips")
+        from telemost_mail.source_cleanup import (
+            release_source,
+            retain_source,
+            rmtree_workdir,
         )
-        work_dir = work_root / f"full_{pid[:8]}"
-        voice_path = await render_full_voice_ogg(
-            audio_path,
-            work_dir=work_dir,
-            stem=f"{recording_kind}_{meeting_id or pid[:8]}",
-        )
-        if not voice_path:
-            logger.error("telemost_full_voice: ffmpeg failed pending=%s", pid)
-            return
 
-        philosophy = getattr(config, "TELEMOST_SHORTS_PHILOSOPHY_HINT", "") or ""
-        title_plain, desc_plain, caption = await build_full_voice_caption_parts(
-            meeting_title=str(title),
-            summary=summary,
-            transcript_excerpt=transcript[:12000],
-            recording_kind=recording_kind,
-            philosophy_hint=philosophy,
-        )
-        if _FULL_VOICE_TO_SHORTS_TOPIC:
-            prefix = f"📻 Полная запись · {kind_label}\n\n"
-            if caption and not caption.startswith("📻"):
-                caption = prefix + caption
-            elif not caption:
-                caption = prefix.strip()
-            if len(caption) > 1024:
-                caption = caption[:1021].rstrip() + "…"
-
-        sent = await bot.send_voice(
-            chat_id,
-            FSInputFile(str(voice_path)),
-            caption=caption,
-            parse_mode=ParseMode.HTML,
-            message_thread_id=topic_id,
-        )
+        retain_source(audio_path)
+        _audio_retained = True
+        work_dir = None
         try:
-            await storage.create_caption_edit_session(
-                entity_type="full_voice",
-                chat_id=int(chat_id),
-                root_message_id=int(sent.message_id),
-                caption_html=caption,
-                title=title_plain,
-                description=desc_plain,
-                media_kind="voice",
-                topic_id=int(topic_id or 0),
-                pending_id=pending_id,
-                meeting_id=str(meeting_id or ""),
-                context={
-                    "meeting_title": str(title),
-                    "recording_kind": recording_kind,
-                    "kind_label": kind_label,
-                    "transcript_excerpt": transcript[:8000],
-                    "summary": summary[:1500],
-                },
+            work_root = Path(
+                getattr(config, "TELEMOST_AUDIO_WORK_DIR", "data/telemost_audio_clips")
             )
-        except Exception as e:
-            logger.warning("full_voice caption session: %s", e)
-        logger.info(
-            "telemost_full_voice sent kind=%s chat=%s topic=%s pending=%s dest=%s",
-            recording_kind,
-            chat_id,
-            topic_id,
-            pid,
-            "shorts_topic" if _FULL_VOICE_TO_SHORTS_TOPIC else "club_topic",
-        )
+            work_dir = work_root / f"full_{pid[:8]}"
+            voice_path = await render_full_voice_ogg(
+                audio_path,
+                work_dir=work_dir,
+                stem=f"{recording_kind}_{meeting_id or pid[:8]}",
+            )
+            if not voice_path:
+                logger.error("telemost_full_voice: ffmpeg failed pending=%s", pid)
+                return
+
+            philosophy = getattr(config, "TELEMOST_SHORTS_PHILOSOPHY_HINT", "") or ""
+            title_plain, desc_plain, caption = await build_full_voice_caption_parts(
+                meeting_title=str(title),
+                summary=summary,
+                transcript_excerpt=transcript[:12000],
+                recording_kind=recording_kind,
+                philosophy_hint=philosophy,
+            )
+            if _FULL_VOICE_TO_SHORTS_TOPIC:
+                prefix = f"📻 Полная запись · {kind_label}\n\n"
+                if caption and not caption.startswith("📻"):
+                    caption = prefix + caption
+                elif not caption:
+                    caption = prefix.strip()
+                if len(caption) > 1024:
+                    caption = caption[:1021].rstrip() + "…"
+
+            sent = await bot.send_voice(
+                chat_id,
+                FSInputFile(str(voice_path)),
+                caption=caption,
+                parse_mode=ParseMode.HTML,
+                message_thread_id=topic_id,
+            )
+            try:
+                await storage.create_caption_edit_session(
+                    entity_type="full_voice",
+                    chat_id=int(chat_id),
+                    root_message_id=int(sent.message_id),
+                    caption_html=caption,
+                    title=title_plain,
+                    description=desc_plain,
+                    media_kind="voice",
+                    topic_id=int(topic_id or 0),
+                    pending_id=pending_id,
+                    meeting_id=str(meeting_id or ""),
+                    context={
+                        "meeting_title": str(title),
+                        "recording_kind": recording_kind,
+                        "kind_label": kind_label,
+                        "transcript_excerpt": transcript[:8000],
+                        "summary": summary[:1500],
+                    },
+                )
+            except Exception as e:
+                logger.warning("full_voice caption session: %s", e)
+            logger.info(
+                "telemost_full_voice sent kind=%s chat=%s topic=%s pending=%s dest=%s",
+                recording_kind,
+                chat_id,
+                topic_id,
+                pid,
+                "shorts_topic" if _FULL_VOICE_TO_SHORTS_TOPIC else "club_topic",
+            )
+            if work_dir is not None:
+                rmtree_workdir(work_dir, label="telemost_full_voice_workdir")
+        finally:
+            if _audio_retained:
+                release_source(audio_path, label="telemost_audio", delete=True)
 
     except Exception as e:
         logger.exception("telemost_full_voice pending=%s: %s", pid, e)

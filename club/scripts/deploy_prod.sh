@@ -35,8 +35,8 @@ if [[ "${SKIP_SUDO_REEXEC:-0}" != "1" && "$(id -u)" -ne 0 ]]; then
 fi
 
 CLUB_DEV_ROOT="${CLUB_DEV_ROOT:-/home/appuser/dev/kostya/club}"
-CLUB_CODE_SNAPSHOTS_DIR="${CLUB_CODE_SNAPSHOTS_DIR:-/home/appuser/old_bots/club_deploy_snapshots}"
-CLUB_DB_DUMPS_DIR="${CLUB_DB_DUMPS_DIR:-/home/appuser/old_bots/club_db_dumps}"
+CLUB_CODE_SNAPSHOTS_DIR="${CLUB_CODE_SNAPSHOTS_DIR:-/home/appuser/backups/club/code}"
+CLUB_DB_DUMPS_DIR="${CLUB_DB_DUMPS_DIR:-/home/appuser/backups/club/db}"
 TWIN_TEXTS_ROOT="${TWIN_TEXTS_ROOT:-${CLUB_DEV_ROOT}/twin_texts}"
 DEPLOY_TARGETS="${DEPLOY_TARGETS:-club}"
 
@@ -101,7 +101,7 @@ chown_to_run_user_if_root() {
 
 pick_writable_dump_dir() {
   local preferred="${CLUB_DB_DUMPS_DIR}"
-  local fallback="/home/${RUN_USER}/old_bots/club_db_dumps"
+  local fallback="/home/${RUN_USER}/backups/club/db"
   if [[ "$(id -u)" -eq 0 ]]; then
     mkdir -p "${preferred}"
     echo "${preferred}"
@@ -318,6 +318,13 @@ deploy_target() {
     unset PGPASSWORD
     chown_to_run_user_if_root "${dump_file}"
     echo "    $(du -h "${dump_file}" | cut -f1)"
+    # retention: бэкапы 7д, data 7д, log/arc 30д
+    RETENTION_SH=/home/appuser/dev/kostya/scripts/disk_retention.sh
+    if [[ -x "$RETENTION_SH" ]]; then
+      echo "==> disk retention (backups/data 7d, logs 30d)"
+      BACKUP_DAYS=7 DATA_DAYS=7 LOG_ARC_DAYS=30 \
+        "$RETENTION_SH" deploy --apply || true
+    fi
   else
     echo "==> [4/7] SKIP_PGDUMP=1"
   fi
