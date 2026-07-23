@@ -51,6 +51,7 @@ class AdminMailingStates(StatesGroup):
     audience = State()
     audience_first_n = State()
     audience_questions_ge = State()
+    audience_marathon_ids = State()
     custom_ids = State()
     exclude_campaigns = State()
     confirm = State()
@@ -158,6 +159,12 @@ def _aud_kb() -> InlineKeyboardMarkup:
                 InlineKeyboardButton(
                     text=aml_txt.BTN_AUD_QUESTIONS_GE,
                     callback_data=cb(a="aud", v="questions_ge").pack(),
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=aml_txt.BTN_AUD_MARATHON,
+                    callback_data=cb(a="aud", v="marathon").pack(),
                 )
             ],
             [
@@ -588,6 +595,33 @@ def register_admin_mailing_handlers(
         F.text,
     )
 
+    async def recv_marathon_ids(message: Message, state: FSMContext) -> None:
+        if message.from_user is None or not await uid_ok(message.from_user.id):
+            return
+        raw = (message.text or "").replace(" ", "")
+        mids: List[int] = []
+        for chunk in raw.split(","):
+            if not chunk:
+                continue
+            try:
+                mids.append(int(chunk))
+            except ValueError:
+                await message.reply(aml_txt.ERR_MARATHON_IDS)
+                return
+        mids = sorted({x for x in mids if x > 0})
+        if not mids:
+            await message.reply(aml_txt.ERR_MARATHON_IDS)
+            return
+        await state.update_data(aud_segment="marathon", aud_marathon_ids=mids)
+        await _goto_exclude_step(message.chat.id, state, bot)
+
+    dp.message.register(
+        recv_marathon_ids,
+        *admin_chat_filters,
+        AdminMailingStates.audience_marathon_ids,
+        F.text,
+    )
+
     async def recv_exclude_campaigns(message: Message, state: FSMContext) -> None:
         if message.from_user is None or not await uid_ok(message.from_user.id):
             return
@@ -671,6 +705,9 @@ def register_admin_mailing_handlers(
         elif seg == "questions_ge":
             n = int(data.get("aud_questions_ge") or 0)
             base = await user_storage.list_user_ids_with_min_user_questions(n)
+        elif seg == "marathon":
+            mids = [int(x) for x in (data.get("aud_marathon_ids") or [])]
+            base = await user_storage.list_marathon_participant_user_ids(mids)
         else:
             raise ValueError(f"unknown aud_segment: {seg}")
 
@@ -736,6 +773,7 @@ def register_admin_mailing_handlers(
             custom_user_ids=data.get("custom_user_ids"),
             aud_first_n=data.get("aud_first_n"),
             aud_questions_ge=data.get("aud_questions_ge"),
+            aud_marathon_ids=data.get("aud_marathon_ids"),
             exclude_campaign_ids=data.get("exclude_campaign_ids") or None,
             excluded_users_count=len(data.get("exclude_user_ids") or []),
             exclude_challenge_users=bool(data.get("exclude_challenge_users")),
@@ -958,6 +996,20 @@ def register_admin_mailing_handlers(
                 await state.set_state(AdminMailingStates.audience_questions_ge)
                 await query.message.edit_text(
                     aml_txt.PROMPT_QUESTIONS_GE_HTML,
+                    parse_mode=ParseMode.HTML,
+                )
+            elif v == "marathon":
+                recent = await user_storage.list_recent_marathons(limit=20)
+                lines = []
+                for m in recent:
+                    lines.append(
+                        f"• <code>{m['id']}</code> — {m.get('name') or '—'} "
+                        f"({m.get('status') or '—'})"
+                    )
+                listing = "\n".join(lines) or "<i>Марафонов пока нет</i>"
+                await state.set_state(AdminMailingStates.audience_marathon_ids)
+                await query.message.edit_text(
+                    f"{aml_txt.PROMPT_MARATHON_IDS_HTML}\n\n{listing}",
                     parse_mode=ParseMode.HTML,
                 )
             elif v == "all":

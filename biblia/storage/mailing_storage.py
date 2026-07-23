@@ -102,6 +102,27 @@ class MailingStorage:
             logger.error(f"❌ Failed to get campaign {campaign_id}: {e}")
             return None
 
+    async def update_campaign_scheduled_at(
+        self, campaign_id: int, scheduled_at
+    ) -> bool:
+        """Сдвигает ``scheduled_at`` (например, approve черновика → now)."""
+        try:
+            async with self.db.get_connection() as conn:
+                await conn.execute(
+                    """
+                    UPDATE mailing_campaigns
+                       SET scheduled_at = $2,
+                           updated_at = NOW()
+                     WHERE id = $1
+                    """,
+                    campaign_id,
+                    scheduled_at,
+                )
+                return True
+        except Exception as e:
+            logger.error("❌ Failed to update campaign scheduled_at %s: %s", campaign_id, e)
+            return False
+
     async def update_campaign_status(
         self,
         campaign_id: int,

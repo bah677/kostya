@@ -136,6 +136,30 @@ class DonationMarathonsMixin:
             logger.error("❌ get_marathon_donors_count: %s", e)
             return 0
 
+    async def get_marathon_stats(self, marathon_id: int) -> Dict[str, Any]:
+        try:
+            async with self.get_connection() as conn:
+                row = await conn.fetchrow(
+                    """
+                    SELECT
+                        COUNT(*)::int AS contributions_count,
+                        COUNT(DISTINCT user_id)::int AS donors_count,
+                        COALESCE(SUM(amount_goal), 0)::numeric AS raised_amount,
+                        COALESCE(AVG(amount_goal), 0)::numeric AS avg_amount,
+                        COALESCE(MAX(amount_goal), 0)::numeric AS max_amount,
+                        COALESCE(MIN(amount_goal), 0)::numeric AS min_amount,
+                        MIN(created_at) AS first_contribution_at,
+                        MAX(created_at) AS last_contribution_at
+                    FROM donation_marathon_contributions
+                    WHERE marathon_id = $1
+                    """,
+                    marathon_id,
+                )
+                return dict(row) if row else {}
+        except Exception as e:
+            logger.error("❌ get_marathon_stats: %s", e)
+            return {}
+
     async def add_marathon_contribution(
         self,
         *,
@@ -215,6 +239,47 @@ class DonationMarathonsMixin:
         except Exception as e:
             logger.error("❌ get_marathon_contribution_by_payment_id: %s", e)
             return None
+
+    async def list_recent_marathons(self, limit: int = 20) -> List[Dict[str, Any]]:
+        try:
+            async with self.get_connection() as conn:
+                rows = await conn.fetch(
+                    """
+                    SELECT *
+                    FROM donation_marathons
+                    ORDER BY COALESCE(closed_at, started_at, created_at) DESC, id DESC
+                    LIMIT $1
+                    """,
+                    limit,
+                )
+                return [dict(r) for r in rows]
+        except Exception as e:
+            logger.error("❌ list_recent_marathons: %s", e)
+            return []
+
+    async def list_marathon_participant_user_ids(
+        self, marathon_ids: List[int]
+    ) -> List[int]:
+        ids = sorted({int(x) for x in marathon_ids if int(x) > 0})
+        if not ids:
+            return []
+        try:
+            async with self.get_connection() as conn:
+                rows = await conn.fetch(
+                    """
+                    SELECT DISTINCT c.user_id
+                    FROM donation_marathon_contributions c
+                    JOIN users u ON u.user_id = c.user_id
+                    WHERE c.marathon_id = ANY($1::bigint[])
+                      AND u.is_active = TRUE
+                    ORDER BY c.user_id ASC
+                    """,
+                    ids,
+                )
+                return [int(r["user_id"]) for r in rows]
+        except Exception as e:
+            logger.error("❌ list_marathon_participant_user_ids: %s", e)
+            return []
 
     async def list_standalone_payments_for_marathon_backfill(
         self, marathon: Dict[str, Any]

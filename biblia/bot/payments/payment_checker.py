@@ -11,8 +11,7 @@ from bot.payments.standalone_donation_notify import (
     send_donation_club_promo_message,
 )
 from bot.services.donation_marathon_attr import attribute_payment_to_marathon
-from bot.utils.admin_channel import send_admin_html_message
-from bot.services.donation_marathon_progress import format_money
+from bot.services.donation_marathon_close import handle_marathon_closed
 
 logger = logging.getLogger(__name__)
 
@@ -288,13 +287,10 @@ class PaymentChecker:
                     and marathon_row.get("status") == "completed"
                     and marathon_row.get("close_reason") == "goal_reached"
                 ):
-                    raised = await self.user_storage.get_marathon_raised_amount(
-                        int(marathon_row["id"])
-                    )
-                    await send_admin_html_message(
+                    await handle_marathon_closed(
                         self.bot,
-                        f"🎉 Марафон <b>{marathon_row['name']}</b> завершён по цели! "
-                        f"Собрано {format_money(raised, marathon_row['goal_currency'])}.",
+                        self.user_storage,
+                        int(marathon_row["id"]),
                     )
             except Exception as mar_close_e:
                 logger.error(

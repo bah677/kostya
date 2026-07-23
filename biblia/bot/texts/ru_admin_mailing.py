@@ -20,6 +20,7 @@ BTN_AUD_DONORS_2PLUS = "5️⃣ Кто делал 2+ доната"
 BTN_AUD_CHALLENGE_IN = "6️⃣ В челлендже"
 BTN_AUD_CHALLENGE_NOT_IN = "7️⃣ Не в челлендже"
 BTN_AUD_QUESTIONS_GE = "8️⃣ Кто задал N+ вопросов боту"
+BTN_AUD_MARATHON = "9️⃣ Участники марафона"
 BTN_EXCLUDE_CHALLENGE = "🚫 Исключить в челлендже"
 BTN_MEDIA_DONE = "✅ Готово"
 BTN_CONFIRM_CREATE = "✅ Создать кампанию"
@@ -67,6 +68,11 @@ PROMPT_QUESTIONS_GE_HTML = (
     "Сколько <b>минимум вопросов</b> пользователь должен был задать боту?\n"
     "Например <code>100</code> — все, у кого ≥ 100 сообщений пользователя в диалоге."
 )
+PROMPT_MARATHON_IDS_HTML = (
+    "Выберите марафон(ы): последние 20 показаны ниже.\n"
+    "Введите <code>id</code> через запятую. Участники из нескольких марафонов объединяются без дублей."
+)
+ERR_MARATHON_IDS = "❌ Нужны целые id марафонов через запятую."
 ERR_FIRST_N = "❌ Введите целое число больше 0."
 ERR_QUESTIONS_GE = "❌ Введите целое число больше 0."
 PROMPT_EXCLUDE_CAMPAIGNS_HTML = (
@@ -232,6 +238,7 @@ def segment_label(
     *,
     first_n: Optional[int] = None,
     questions_ge: Optional[int] = None,
+    marathon_ids: Optional[List[int]] = None,
 ) -> str:
     if segment == "all":
         return "все активные"
@@ -251,6 +258,11 @@ def segment_label(
         return f"задали боту ≥ {questions_ge} вопросов (активные)"
     if segment == "questions_ge":
         return "задали боту N+ вопросов"
+    if segment == "marathon":
+        if marathon_ids:
+            ids = ", ".join(str(x) for x in marathon_ids)
+            return f"участники марафонов {ids}"
+        return "участники выбранных марафонов"
     return str(segment)
 
 
@@ -276,6 +288,7 @@ def confirm_blob_html(
     custom_user_ids: Optional[List[int]] = None,
     aud_first_n: Optional[int] = None,
     aud_questions_ge: Optional[int] = None,
+    aud_marathon_ids: Optional[List[int]] = None,
     exclude_campaign_ids: Optional[List[int]] = None,
     excluded_users_count: Optional[int] = None,
     exclude_challenge_users: bool = False,
@@ -297,7 +310,7 @@ def confirm_blob_html(
         f"• Медиа: {_media_summary(attachments)}",
         f"• Кнопки: {_button_summary(buttons)}",
         f"• Кнопка Донат/Клуб: {_donation_club_button_summary(add_donation_club_button)}",
-        f"• Аудитория: {html.escape(segment_label(segment, first_n=aud_first_n, questions_ge=aud_questions_ge))}",
+        f"• Аудитория: {html.escape(segment_label(segment, first_n=aud_first_n, questions_ge=aud_questions_ge, marathon_ids=aud_marathon_ids))}",
         f"• Получателей (итого): {recipient_hint}",
     ]
     if exclude_campaign_ids:

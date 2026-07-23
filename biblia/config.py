@@ -157,6 +157,7 @@ class AppConfig:
 
     ADMIN_CHANNEL_ID: Optional[str] = None
     PAYMENT_THREAD_ID: int = 0
+    SUPER_ADMIN_ID: int = 0
     SUPPORT_THREAD_ID: int = 0
     BIBLIA_REPORT_THREAD_ID: int = 0
     MEDIA_ID_TOPIC_ID: int = 0
@@ -253,6 +254,7 @@ def load_app_config() -> AppConfig:
         DB_PASSWORD=os.getenv("DB_PASSWORD", ""),
         ADMIN_CHANNEL_ID=os.getenv("ADMIN_CHANNEL_ID"),
         PAYMENT_THREAD_ID=int(os.getenv("PAYMENT_THREAD_ID", "0")),
+        SUPER_ADMIN_ID=int(os.getenv("SUPER_ADMIN_ID", "0") or "0"),
         SUPPORT_THREAD_ID=int(os.getenv("SUPPORT_THREAD_ID", "0")),
         BIBLIA_REPORT_THREAD_ID=int(os.getenv("BIBLIA_REPORT_THREAD_ID", "0") or "0"),
         MEDIA_ID_TOPIC_ID=int(os.getenv("MEDIA_ID_TOPIC_ID", "0")),

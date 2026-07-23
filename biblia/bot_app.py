@@ -55,9 +55,11 @@ class BotApplication(TelegramBotApp):
             bzb_service=self.bzb_service,
             bot=self.bot,
         )
+        mailing_html_agents = AgentsClient(self.user_storage)
         marathon_feature = DonationMarathonFeature(
             user_storage=self.user_storage,
             bot=self.bot,
+            agents_client=mailing_html_agents,
         )
         marathon_feature.bind_payment_feature(payment_feature)
         mailing_feature = MailingFeature(
@@ -65,7 +67,6 @@ class BotApplication(TelegramBotApp):
             bot=self.bot,
             feature_manager=self.feature_manager,
         )
-        mailing_html_agents = AgentsClient(self.user_storage)
         scheduled_mailing = ScheduledMailingFeature(
             user_storage=self.user_storage,
             bot=self.bot,

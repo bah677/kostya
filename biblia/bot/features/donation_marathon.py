@@ -27,11 +27,28 @@ from bot.services.donation_marathon_progress import (
     marathon_progress_html,
 )
 from bot.services.donation_marathon_attr import backfill_marathon_contributions
+from bot.services.donation_marathon_close import (
+    approve_thanks_campaign,
+    cancel_thanks_campaign,
+    handle_marathon_closed,
+)
 from bot.payments.currency_converter import CurrencyConverterService
 from bot.utils.admin_channel import send_admin_html_message
 from config import config
+from storage.mailing_storage import MailingStorage
 
 logger = logging.getLogger(__name__)
+
+
+def _payment_thread_id() -> Optional[int]:
+    tid = getattr(config, "PAYMENT_THREAD_ID", None) or 0
+    return tid if tid > 0 else None
+
+
+async def _notify_payment_topic(bot, text: str) -> bool:
+    """Старт/стоп марафона — в топик оплат, не в корень группы."""
+    return await send_admin_html_message(bot, text, thread_id=_payment_thread_id())
+
 
 _CB_OPEN = "marathon_open"
 _CB_PAY_RUB = "marathon_pay_rub"
@@ -41,6 +58,8 @@ _CB_ACCEPT_TOGGLE = "marathon_acc_"  # marathon_acc_rub / usd / crypto
 _CB_ACCEPT_DONE = "marathon_acc_done"
 _CB_CONFIRM_YES = "marathon_confirm_yes"
 _CB_CONFIRM_NO = "marathon_confirm_no"
+_CB_THANKS_OK = "marathon_thanks_ok_"
+_CB_THANKS_NO = "marathon_thanks_no_"
 
 
 class MarathonAdminStates(StatesGroup):
@@ -58,10 +77,11 @@ class MarathonAdminStates(StatesGroup):
 class DonationMarathonFeature(BaseFeature):
     name = "donation_marathon"
 
-    def __init__(self, user_storage, bot=None) -> None:
+    def __init__(self, user_storage, bot=None, agents_client=None) -> None:
         super().__init__()
         self.user_storage = user_storage
         self.bot = bot
+        self.agents_client = agents_client
 
     def set_bot(self, telegram_app) -> None:
         self.bot = telegram_app.bot if telegram_app else self.bot
@@ -194,10 +214,12 @@ class DonationMarathonFeature(BaseFeature):
             f"Собрано: {format_money(raised, active['goal_currency'])} "
             f"из {format_money(float(active['goal_amount']), active['goal_currency'])}."
         )
-        await send_admin_html_message(
+        await handle_marathon_closed(
             self.bot,
-            f"⏹ Марафон <b>{active['name']}</b> остановлен админом "
-            f"(собрано {format_money(raised, active['goal_currency'])}).",
+            self.user_storage,
+            int(active["id"]),
+            agents_client=self.agents_client,
+            create_thanks=False,
         )
 
     async def cmd_marathon_backfill(self, message: Message, state: FSMContext) -> None:
@@ -238,6 +260,13 @@ class DonationMarathonFeature(BaseFeature):
             if stats.get("auto_closed"):
                 lines.append("🎉 Марафон автоматически завершён по цели.")
             await wait.edit_text("\n".join(lines), parse_mode=ParseMode.HTML)
+            if stats.get("auto_closed"):
+                await handle_marathon_closed(
+                    self.bot,
+                    self.user_storage,
+                    marathon_id,
+                    agents_client=self.agents_client,
+                )
         except Exception as e:
             logger.exception("marathon_backfill failed: %s", e)
             await wait.edit_text(f"❌ Ошибка бэкфилла: {html.escape(str(e)[:200])}")
@@ -383,6 +412,9 @@ class DonationMarathonFeature(BaseFeature):
 
     async def on_callback(self, callback: CallbackQuery, state: FSMContext) -> None:
         data = callback.data or ""
+        if data.startswith(_CB_THANKS_OK) or data.startswith(_CB_THANKS_NO):
+            await self._on_thanks_mailing(callback, data)
+            return
         if data in ("marathon_goal_rub", "marathon_goal_usd", "marathon_goal_eur"):
             await self._on_goal_currency(callback, state, data)
             return
@@ -399,6 +431,50 @@ class DonationMarathonFeature(BaseFeature):
             await self._user_pay_method(callback, state, data)
             return
         await callback.answer()
+
+    async def _on_thanks_mailing(self, callback: CallbackQuery, data: str) -> None:
+        uid = callback.from_user.id if callback.from_user else 0
+        super_id = int(getattr(config, "SUPER_ADMIN_ID", 0) or 0)
+        if super_id <= 0 or uid != super_id:
+            await callback.answer("Только SUPER_ADMIN_ID", show_alert=True)
+            return
+        try:
+            cid = int(data.rsplit("_", 1)[-1])
+        except ValueError:
+            await callback.answer("Некорректный id", show_alert=True)
+            return
+        mstore = MailingStorage(self.user_storage.db)
+        camp = await mstore.get_campaign(cid)
+        if not camp:
+            await callback.answer("Кампания не найдена", show_alert=True)
+            return
+        if not str(camp.get("name") or "").startswith("Марафон #"):
+            await callback.answer("Это не авто-благодарность", show_alert=True)
+            return
+        if data.startswith(_CB_THANKS_OK):
+            if str(camp.get("status") or "") != "planned":
+                await callback.answer(f"Статус: {camp.get('status')}", show_alert=True)
+                return
+            ok = await approve_thanks_campaign(mstore, cid)
+            if ok:
+                await callback.message.edit_reply_markup(reply_markup=None)
+                await callback.message.answer(
+                    f"✅ Рассылка <code>{cid}</code> поставлена в очередь "
+                    f"(scheduled_at = сейчас).",
+                    parse_mode=ParseMode.HTML,
+                )
+                await callback.answer("Запущена")
+            else:
+                await callback.answer("Не удалось запустить", show_alert=True)
+            return
+        if str(camp.get("status") or "") == "planned":
+            await cancel_thanks_campaign(mstore, cid)
+        await callback.message.edit_reply_markup(reply_markup=None)
+        await callback.message.answer(
+            f"❌ Кампания <code>{cid}</code> отменена.",
+            parse_mode=ParseMode.HTML,
+        )
+        await callback.answer("Отменена")
 
     async def _on_goal_currency(
         self, callback: CallbackQuery, state: FSMContext, data: str
@@ -494,7 +570,7 @@ class DonationMarathonFeature(BaseFeature):
             "Под каждым ответом бота — синяя кнопка с названием."
         )
         await callback.answer("Запущен")
-        await send_admin_html_message(
+        await _notify_payment_topic(
             self.bot,
             f"🎙️ Марафон <b>{row['name']}</b> запущен. "
             f"Цель: {format_money(float(row['goal_amount']), row['goal_currency'])}.",
@@ -724,10 +800,10 @@ class DonationMarathonFeature(BaseFeature):
                 raised,
                 goal,
             )
-            if self.bot:
-                await send_admin_html_message(
-                    self.bot,
-                    f"🎉 Марафон <b>{marathon['name']}</b> завершён по цели! "
-                    f"Собрано {format_money(raised, marathon['goal_currency'])}.",
-                )
+            await handle_marathon_closed(
+                self.bot,
+                self.user_storage,
+                marathon_id,
+                agents_client=self.agents_client,
+            )
         return ok
