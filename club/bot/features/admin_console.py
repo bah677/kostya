@@ -22,7 +22,11 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
-from bot.admin_guard import is_telegram_admin
+from bot.admin_guard import (
+    is_admin_or_super,
+    is_super_admin_user_id,
+    is_telegram_admin,
+)
 from bot.features.base import BaseFeature, FeatureManager
 from bot.services.admin_gift_license import execute_admin_gift
 from bot.services.mailing_campaign_funnel import (
@@ -73,7 +77,14 @@ from bot.services.followup_leads_report import (
     collect_followup_leads_report,
     format_followup_leads_html,
 )
-from bot.services.bot_help import build_admin_console_help_html, resolve_help_tier
+from bot.services.admin_panel import (
+    CB_HOME,
+    CB_PREFIX,
+    build_admin_panel_group,
+    build_admin_panel_home,
+    parse_admin_panel_group_cb,
+)
+from bot.services.bot_help import resolve_help_tier
 from bot.services.report_cli import (
     ReportRunOptions,
     format_report_options_hint,
@@ -147,10 +158,19 @@ class AdminConsoleFeature(BaseFeature):
             F.data.startswith(f"{_ADMIN_CLEAR_CB}:"),
         )
 
+        # /adm всегда в личке (молчание для не-админов); кнопки панели
+        dp.message.register(self._cmd_admin, admin_private, Command("admin"))
+        dp.message.register(self._cmd_adm, admin_private, Command("adm"))
+        dp.callback_query.register(
+            self._cb_admin_panel,
+            F.data.startswith(f"{CB_PREFIX}:"),
+        )
+
         gid = config.resolved_admin_group_id()
         if not gid:
             logger.warning(
-                "[%s] Пропуск регистрации: задайте ADMIN_GROUP_ID или числовой ADMIN_CHANNEL_ID",
+                "[%s] Админ-группа не задана: кроме /adm остальные админ-команды "
+                "нужны ADMIN_GROUP_ID / числовой ADMIN_CHANNEL_ID",
                 self.name,
             )
             return
@@ -158,9 +178,7 @@ class AdminConsoleFeature(BaseFeature):
         admin_chat = F.chat.id == gid
 
         dp.message.register(self._cmd_admin, admin_chat, Command("admin"))
-        dp.message.register(self._cmd_admin, admin_private, Command("admin"))
         dp.message.register(self._cmd_adm, admin_chat, Command("adm"))
-        dp.message.register(self._cmd_adm, admin_private, Command("adm"))
         dp.message.register(self._cmd_admins, admin_chat, Command("admins"))
         dp.message.register(self._cmd_admins, admin_private, Command("admins"))
         dp.message.register(self._cmd_admin_add, admin_chat, Command("admin_add"))
@@ -435,8 +453,7 @@ class AdminConsoleFeature(BaseFeature):
             logger.exception("[%s] Ошибка при отправке отчёта по расписанию: %s", self.name, e)
 
     def _is_super_admin_user_id(self, uid: int) -> bool:
-        sid = int(getattr(config, "SUPER_ADMIN_ID", 0) or 0)
-        return bool(sid) and uid == sid
+        return is_super_admin_user_id(uid)
 
     async def _ensure_console_admin(self, message: Message, *, allow_private: bool = False) -> bool:
         if message.chat.type != ChatType.SUPERGROUP and not (
@@ -456,20 +473,57 @@ class AdminConsoleFeature(BaseFeature):
             return False
         return True
 
+    async def _ensure_adm_silent(self, message: Message) -> bool:
+        """Для /adm: отвечаем только админу/суперадмину, иначе молчим."""
+        if message.from_user is None or message.from_user.is_bot:
+            return False
+        if message.chat.type not in (ChatType.PRIVATE, ChatType.SUPERGROUP):
+            return False
+        return await is_admin_or_super(self.user_storage, message.from_user.id)
+
     async def _cmd_admin(self, message: Message) -> None:
-        if not await self._ensure_console_admin(message, allow_private=True):
+        if not await self._ensure_adm_silent(message):
             return
         if message.from_user is None:
             return
         tier = await resolve_help_tier(self.user_storage, message.from_user.id)
-        text = build_admin_console_help_html(
+        text, kb = build_admin_panel_home(
             tier,
             report_hint=format_report_options_hint(),
         )
-        await message.answer(text, parse_mode=ParseMode.HTML)
+        await message.answer(text, parse_mode=ParseMode.HTML, reply_markup=kb)
 
     async def _cmd_adm(self, message: Message) -> None:
         await self._cmd_admin(message)
+
+    async def _cb_admin_panel(self, query: CallbackQuery) -> None:
+        if query.from_user is None or query.message is None:
+            await query.answer()
+            return
+        if not await is_admin_or_super(self.user_storage, query.from_user.id):
+            await query.answer("⛔", show_alert=True)
+            return
+        tier = await resolve_help_tier(self.user_storage, query.from_user.id)
+        data = query.data or ""
+        try:
+            if data == CB_HOME:
+                text, kb = build_admin_panel_home(
+                    tier,
+                    report_hint=format_report_options_hint(),
+                )
+            else:
+                group_key = parse_admin_panel_group_cb(data)
+                if not group_key:
+                    await query.answer()
+                    return
+                text, kb = build_admin_panel_group(tier, group_key)
+            await query.message.edit_text(
+                text, parse_mode=ParseMode.HTML, reply_markup=kb
+            )
+            await query.answer()
+        except Exception as e:
+            logger.warning("[%s] admin panel edit failed: %s", self.name, e)
+            await query.answer()
 
     async def _ensure_super_admin(self, message: Message) -> bool:
         """Управление таблицей admins — только user_id из SUPER_ADMIN_ID (без строки в БД)."""

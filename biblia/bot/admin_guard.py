@@ -25,5 +25,20 @@ async def is_telegram_admin(user_storage: UserStorage, telegram_user_id: int) ->
     return ok
 
 
+def is_super_admin_user_id(telegram_user_id: int) -> bool:
+    from config import config
+
+    sid = int(getattr(config, "SUPER_ADMIN_ID", 0) or 0)
+    return bool(sid) and telegram_user_id == sid
+
+
+async def is_admin_or_super(
+    user_storage: UserStorage, telegram_user_id: int
+) -> bool:
+    if is_super_admin_user_id(telegram_user_id):
+        return True
+    return await is_telegram_admin(user_storage, telegram_user_id)
+
+
 def invalidate_admin_cache(telegram_user_id: int) -> None:
     _CACHE.pop(telegram_user_id, None)

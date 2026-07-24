@@ -10,6 +10,7 @@ from bot.features.donation_payment import DonationPaymentFeature
 from bot.features.frequent_questions import FrequentQuestionsFeature
 from bot.features.mailing import MailingFeature
 from bot.features.media_id_helper import MediaIdHelperFeature
+from bot.features.admin_panel import AdminPanelFeature
 from bot.features.personal_prayer import PersonalPrayerFeature
 from bot.features.scripture_challenge import ScriptureChallengeFeature
 from bot.features.scripture_challenge_scheduler import ScriptureChallengeSchedulerFeature
@@ -95,6 +96,7 @@ class BotApplication(TelegramBotApp):
             feature_manager=self.feature_manager,
         )
         daily_report = DailyAdminReportFeature(user_storage=self.user_storage)
+        admin_panel = AdminPanelFeature(user_storage=self.user_storage)
 
         features = [
             messaging_feature,
@@ -111,6 +113,7 @@ class BotApplication(TelegramBotApp):
             scripture_challenge_scheduler,
             media_id_helper,
             daily_report,
+            admin_panel,
         ]
         for feature in features:
             self.feature_manager.register(feature)
