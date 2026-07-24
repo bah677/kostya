@@ -1058,4 +1058,68 @@ def register_admin_mailing_handlers(
 
     dp.callback_query.register(aml_callback, AMLCallback.filter())
 
+    # Черновик рассылки из скрипта: превью в личку → OK → scheduled_at=now
+    _CB_MDRAFT_OK = "mdraft_ok_"
+    _CB_MDRAFT_NO = "mdraft_no_"
+
+    async def mdraft_callback(query: CallbackQuery) -> None:
+        if query.message is None or query.from_user is None:
+            await query.answer()
+            return
+        from config import config as _cfg
+
+        super_id = int(getattr(_cfg, "SUPER_ADMIN_ID", 0) or 0)
+        if (
+            query.message.chat.type != ChatType.PRIVATE
+            or super_id <= 0
+            or query.from_user.id != super_id
+        ):
+            await query.answer("⛔ Только суперадмин", show_alert=True)
+            return
+        data = query.data or ""
+        try:
+            cid = int(data.rsplit("_", 1)[-1])
+        except ValueError:
+            await query.answer("Некорректный id", show_alert=True)
+            return
+        mstore = await ms()
+        camp = await mstore.get_campaign(cid)
+        if not camp:
+            await query.answer("Кампания не найдена", show_alert=True)
+            return
+        if data.startswith(_CB_MDRAFT_OK):
+            if str(camp.get("status") or "") != "planned":
+                await query.answer(f"Статус: {camp.get('status')}", show_alert=True)
+                return
+            from datetime import timezone as _tz
+
+            ok = await mstore.update_campaign_scheduled_at(
+                cid, datetime.now(_tz.utc)
+            )
+            if ok:
+                await query.message.edit_reply_markup(reply_markup=None)
+                aud_n = await mstore.get_audience_count(cid)
+                await query.message.answer(
+                    f"✅ Рассылка <code>{cid}</code> в очереди: "
+                    f"уйдёт <b>{aud_n}</b> получателям (воркер ~1 мин).",
+                    parse_mode=ParseMode.HTML,
+                )
+                await query.answer("Запущена")
+            else:
+                await query.answer("Не удалось запустить", show_alert=True)
+            return
+        if str(camp.get("status") or "") == "planned":
+            await mstore.update_campaign_status(cid, "cancelled")
+        await query.message.edit_reply_markup(reply_markup=None)
+        await query.message.answer(
+            f"❌ Кампания <code>{cid}</code> отменена.",
+            parse_mode=ParseMode.HTML,
+        )
+        await query.answer("Отменена")
+
+    dp.callback_query.register(
+        mdraft_callback,
+        F.data.startswith(_CB_MDRAFT_OK) | F.data.startswith(_CB_MDRAFT_NO),
+    )
+
     logger.info("[admin_mailing] /new_mailing и aml:* callbacks зарегистрированы")
