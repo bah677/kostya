@@ -29,7 +29,15 @@ def test_admin_panel_home_has_group_buttons():
     assert "Админ-панель" in text
     flat = [b.callback_data for row in kb.inline_keyboard for b in row]
     assert any(c and c.startswith("apnl:g:") for c in flat)
+    assert "apnl:g:users" in flat
     assert not any(c == "apnl:g:access" for c in flat)
+
+
+def test_admin_panel_users_group():
+    text, _ = build_admin_panel_group("admin", "users")
+    assert "/start" in text
+    assert "/payment" in text
+    assert "/subs" in text
 
 
 def test_admin_panel_group_funnels():
@@ -42,3 +50,4 @@ def test_superadmin_panel_has_access_group():
     _, kb = build_admin_panel_home("superadmin")
     flat = [b.callback_data for row in kb.inline_keyboard for b in row]
     assert "apnl:g:access" in flat
+    assert "apnl:g:users" in flat

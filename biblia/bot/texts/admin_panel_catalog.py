@@ -1,18 +1,20 @@
-"""Каталог админ-команд для /adm (библия)."""
+"""Полный каталог команд библии для /adm (ревизия по register Command)."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Dict, List, Literal, Tuple
 
-HelpTier = Literal["admin", "superadmin"]
+HelpTier = Literal["user", "admin", "superadmin"]
 
 TIER_LABELS = {
+    "user": "Пользователь",
     "admin": "Админ",
     "superadmin": "Супер-админ",
 }
 
 ADMIN_GROUP_ORDER: Tuple[str, ...] = (
+    "users",
     "reports",
     "mailings",
     "marathon",
@@ -21,6 +23,7 @@ ADMIN_GROUP_ORDER: Tuple[str, ...] = (
 )
 
 ADMIN_GROUP_TITLES: Dict[str, str] = {
+    "users": "👤 Для пользователей",
     "reports": "📊 Отчёты",
     "mailings": "📨 Рассылки",
     "marathon": "🕯 Марафон донатов",
@@ -42,19 +45,80 @@ class AdminEntry:
     group: str
 
 
+# Все команды из command_handlers + features (Command(...))
 ADMIN_CATALOG: Tuple[AdminEntry, ...] = (
+    # —— пользователи ——
+    AdminEntry("/start", "Приветствие и онбординг", "user", "users"),
     AdminEntry(
-        "/adm, /admin",
-        "Админ-панель: разделы с командами",
-        "admin",
-        "tools",
+        "/support",
+        "Обращение в поддержку (тикет)",
+        "user",
+        "users",
     ),
     AdminEntry(
+        "/payment, /donat",
+        "Меню поддержки проекта (донаты)",
+        "user",
+        "users",
+    ),
+    AdminEntry(
+        "/affiliate",
+        "Персональная реферальная ссылка и кратко о бонусах",
+        "user",
+        "users",
+    ),
+    AdminEntry(
+        "/refstats, /refs, /myrefs",
+        "Статистика по своей реферальной ссылке",
+        "user",
+        "users",
+    ),
+    AdminEntry("/feedback", "Отзыв / обратная связь", "user", "users"),
+    AdminEntry(
+        "/prayer, /molitva",
+        "Персональная молитва",
+        "user",
+        "users",
+    ),
+    AdminEntry(
+        "/challenge, /chellenge",
+        "Скрипчурный челлендж",
+        "user",
+        "users",
+    ),
+    AdminEntry(
+        "/challenge_cancel",
+        "Отменить участие в челлендже",
+        "user",
+        "users",
+    ),
+    AdminEntry(
+        "/more",
+        "Частые вопросы / готовые запросы",
+        "user",
+        "users",
+    ),
+    AdminEntry(
+        "—",
+        "Обычные сообщения в личке — диалог по Писанию (не команда)",
+        "user",
+        "users",
+    ),
+    # —— отчёты (админ) ——
+    AdminEntry(
         "/report",
-        "Суточный отчёт в личку",
+        "Суточный админ-отчёт в личку",
         "admin",
         "reports",
     ),
+    AdminEntry(
+        "/refstats USER_ID",
+        "Статистика рефералов другого пользователя: "
+        "<code>/refstats 123</code> или <code>/refstats ref_123</code> (только админ)",
+        "admin",
+        "reports",
+    ),
+    # —— рассылки ——
     AdminEntry(
         "/new_mailing",
         "Мастер рассылки (только личка): медиа, /done, /cancel",
@@ -74,6 +138,7 @@ ADMIN_CATALOG: Tuple[AdminEntry, ...] = (
         "admin",
         "mailings",
     ),
+    # —— марафон ——
     AdminEntry(
         "/marathon",
         "Статус активного марафона донатов",
@@ -104,6 +169,14 @@ ADMIN_CATALOG: Tuple[AdminEntry, ...] = (
         "admin",
         "marathon",
     ),
+    # —— инструменты ——
+    AdminEntry(
+        "/adm, /admin",
+        "Админ-панель: разделы с командами",
+        "admin",
+        "tools",
+    ),
+    # —— подсказки ——
     AdminEntry(
         "reply в топике поддержки",
         "Ответ на пост с номером тикета → ответ пользователю",
@@ -113,10 +186,14 @@ ADMIN_CATALOG: Tuple[AdminEntry, ...] = (
 )
 
 
+def _tier_rank(tier: HelpTier) -> int:
+    order = ("user", "admin", "superadmin")
+    return order.index(tier)
+
+
 def entries_for_tier(viewer_tier: HelpTier) -> List[AdminEntry]:
-    if viewer_tier == "superadmin":
-        return list(ADMIN_CATALOG)
-    return [e for e in ADMIN_CATALOG if e.tier == "admin"]
+    max_rank = _tier_rank(viewer_tier)
+    return [e for e in ADMIN_CATALOG if _tier_rank(e.tier) <= max_rank]
 
 
 def groups_for_tier(viewer_tier: HelpTier) -> List[str]:

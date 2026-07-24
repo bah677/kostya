@@ -42,14 +42,13 @@ def _entries_for_viewer(viewer_tier: HelpTier) -> List[HelpEntry]:
     return [e for e in HELP_CATALOG if _tier_rank(e.tier) <= max_rank]
 
 
-def _admin_entries(viewer_tier: HelpTier) -> List[HelpEntry]:
-    visible = _entries_for_viewer(viewer_tier)
-    return [e for e in visible if e.group and e.tier in ("admin", "superadmin")]
+def _panel_entries(viewer_tier: HelpTier) -> List[HelpEntry]:
+    """Все записи с group — для кнопок /adm (включая «Для пользователей»)."""
+    return [e for e in _entries_for_viewer(viewer_tier) if e.group]
 
 
 def _groups_for_viewer(viewer_tier: HelpTier) -> List[str]:
-    entries = _admin_entries(viewer_tier)
-    present = {e.group for e in entries if e.group}
+    present = {e.group for e in _panel_entries(viewer_tier) if e.group}
     if viewer_tier != "superadmin":
         present.discard("access")
     return [g for g in ADMIN_GROUP_ORDER if g in present]
@@ -77,7 +76,7 @@ def build_admin_panel_home(
         "<b>🛠 Админ-панель (club)</b>",
         f"<i>Уровень: {html_mod.escape(TIER_LABELS[viewer_tier])}</i>",
         "",
-        "Выберите раздел — внутри список команд.",
+        "Выберите раздел — внутри полный список команд.",
     ]
     if report_hint:
         parts.extend(["", report_hint])
@@ -104,15 +103,7 @@ def build_admin_panel_group(
     group_key: str,
 ) -> Tuple[str, InlineKeyboardMarkup]:
     title = ADMIN_GROUP_TITLES.get(group_key, group_key)
-    entries = [
-        e
-        for e in _admin_entries(viewer_tier)
-        if e.group == group_key
-        and (
-            e.tier != "superadmin"
-            or _tier_rank(viewer_tier) >= _tier_rank("superadmin")
-        )
-    ]
+    entries = [e for e in _panel_entries(viewer_tier) if e.group == group_key]
     if group_key == "access" and viewer_tier != "superadmin":
         entries = []
 
@@ -141,7 +132,7 @@ def build_admin_console_help_html(
         parts.extend(["", report_hint])
     for key in _groups_for_viewer(viewer_tier):
         title = ADMIN_GROUP_TITLES.get(key, key)
-        entries = [e for e in _admin_entries(viewer_tier) if e.group == key]
+        entries = [e for e in _panel_entries(viewer_tier) if e.group == key]
         if not entries:
             continue
         parts.extend(["", f"<b>{html_mod.escape(title)}</b>", _format_entries(entries)])

@@ -36,9 +36,12 @@ def parse_admin_panel_group_cb(data: str) -> Optional[str]:
 def _format_entries(entries: List[AdminEntry]) -> str:
     lines: List[str] = []
     for e in entries:
-        lines.append(
-            f"• <code>{html_mod.escape(e.command)}</code> — {e.description}"
-        )
+        if e.command == "—":
+            lines.append(f"• <i>{e.description}</i>")
+        else:
+            lines.append(
+                f"• <code>{html_mod.escape(e.command)}</code> — {e.description}"
+            )
     return "\n".join(lines)
 
 
@@ -50,7 +53,7 @@ def build_admin_panel_home(
         "<b>🛠 Админ-панель (библия)</b>",
         f"<i>Уровень: {html_mod.escape(TIER_LABELS[viewer_tier])}</i>",
         "",
-        "Выберите раздел — внутри список команд.",
+        "Выберите раздел — внутри полный список команд.",
         "",
         f"<i>{html_mod.escape(HELP_FOOTER)}</i>",
     ]

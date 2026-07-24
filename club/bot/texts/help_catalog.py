@@ -1,4 +1,4 @@
-"""Каталог команд для /help и /adm (группы админ-панели)."""
+"""Каталог команд для /help и /adm (полная ревизия по register Command)."""
 
 from __future__ import annotations
 
@@ -35,7 +35,7 @@ HELP_FOOTER_USER = (
 
 HELP_FOOTER_ADMIN = (
     "Админ-команды работают в личке с ботом и в админ-супергруппе "
-    "(кроме /new_mailing — только личка)."
+    "(кроме /new_mailing и /new_promo — только личка)."
 )
 
 
@@ -44,35 +44,37 @@ class HelpEntry:
     command: str
     description: str
     tier: HelpTier
-    # Ключ группы для /adm (только admin/superadmin); None = только /help
+    # Ключ группы для /adm; у user обычно "users"
     group: Optional[str] = None
 
 
 HELP_CATALOG: Tuple[HelpEntry, ...] = (
-    HelpEntry("/start", "Начало работы с ботом, онбординг", "user"),
-    HelpEntry("/payment", "Тарифы и оплата подписки", "user"),
-    HelpEntry("/subs", "Статус подписки и продление", "user"),
-    HelpEntry("/club", "Доступ в группу клуба (в личке и в группе клуба)", "user"),
-    HelpEntry("/support", "Обращение в поддержку (тикет)", "user"),
-    HelpEntry("/feedback", "Отзыв о боте / клубе", "user"),
-    HelpEntry("/affiliate", "Партнёрская (реферальная) ссылка", "user"),
-    HelpEntry("/benefit", "Бонусы и материалы по акциям", "user"),
-    HelpEntry("/help", "Список команд по вашему уровню доступа", "user"),
-    HelpEntry("/menu", "Меню возможностей бота (инлайн-кнопки)", "user"),
+    # —— пользователи ——
+    HelpEntry("/start", "Начало работы с ботом, онбординг", "user", "users"),
+    HelpEntry("/help", "Список команд по вашему уровню доступа", "user", "users"),
+    HelpEntry("/menu", "Меню возможностей бота (инлайн-кнопки)", "user", "users"),
+    HelpEntry("/payment", "Тарифы и оплата подписки", "user", "users"),
+    HelpEntry("/subs", "Статус подписки и продление", "user", "users"),
+    HelpEntry(
+        "/club",
+        "Доступ в группу клуба (в личке и в группе клуба)",
+        "user",
+        "users",
+    ),
+    HelpEntry("/support", "Обращение в поддержку (тикет)", "user", "users"),
+    HelpEntry("/feedback", "Отзыв о боте / клубе", "user", "users"),
+    HelpEntry("/affiliate", "Партнёрская (реферальная) ссылка", "user", "users"),
+    HelpEntry("/benefit", "Бонусы и материалы по акциям", "user", "users"),
     HelpEntry(
         "—",
         "Обычные сообщения в личке — диалог с ИИ-ассистентом (не команда)",
         "user",
+        "users",
     ),
-    HelpEntry(
-        "/admin, /adm",
-        "Админ-панель: разделы с командами",
-        "admin",
-        "tools",
-    ),
+    # —— отчёты ——
     HelpEntry(
         "/report",
-        "Отчёт в личку; <code>metrics</code> — без DeepSeek; <code>--no-v2</code> — только legacy; <code>legacy</code> / <code>v2</code> — варианты",
+        "Отчёт в личку; <code>metrics</code> — без DeepSeek; <code>--no-v2</code> — только legacy; <code>legacy</code> / <code>v2</code> / <code>biblia_club</code>",
         "admin",
         "reports",
     ),
@@ -102,19 +104,20 @@ HELP_CATALOG: Tuple[HelpEntry, ...] = (
     ),
     HelpEntry(
         "/excluded",
-        "Отвалившиеся (просрочка): профиль оплат по тарифам и комбинациям (7–90 дн. или всё время) → в личку",
+        "Отвалившиеся (просрочка): профиль оплат по тарифам (7–90 дн. или всё время) → в личку",
         "admin",
         "reports",
     ),
+    # —— воронки ——
     HelpEntry(
-        "/mailing_funnel",
-        "Воронка рассылок (ID из mailing_campaigns); алиас <code>/mail_funnel</code>",
+        "/mailing_funnel, /mail_funnel",
+        "Воронка рассылок (ID из mailing_campaigns)",
         "admin",
         "funnels",
     ),
     HelpEntry(
-        "/ref_funnel",
-        "Воронка ref-кампаний: каталог или KEY / <code>type:</code> / <code>search:</code>; алиас <code>/campaign_funnel</code>",
+        "/ref_funnel, /campaign_funnel",
+        "Воронка ref-кампаний: каталог или KEY / <code>type:</code> / <code>search:</code>",
         "admin",
         "funnels",
     ),
@@ -131,11 +134,12 @@ HELP_CATALOG: Tuple[HelpEntry, ...] = (
         "funnels",
     ),
     HelpEntry(
-        "/followup_leads",
-        "Лиды без лицензии: 3 цепочки ×2 + финалы; алиас <code>/dozhim_leads</code>",
+        "/followup_leads, /dozhim_leads",
+        "Лиды без лицензии: 3 цепочки ×2 + финалы",
         "admin",
         "funnels",
     ),
+    # —— рассылки ——
     HelpEntry(
         "/new_mailing",
         "Мастер рассылки (только личка): медиа загрузками, <code>/done</code>, <code>/cancel</code>",
@@ -156,8 +160,13 @@ HELP_CATALOG: Tuple[HelpEntry, ...] = (
         "mailings",
     ),
     HelpEntry("/code_id", "Получить file_id медиа для рассылок", "admin", "mailings"),
-    HelpEntry("—", "Новости и дайджест клубной группы", "admin", "outreach"),
-    HelpEntry("/digest_test", HELP_DIGEST_TEST_DESCRIPTION, "admin", "outreach"),
+    # —— outreach ——
+    HelpEntry(
+        "/digest_test, /club_digest_test",
+        HELP_DIGEST_TEST_DESCRIPTION,
+        "admin",
+        "outreach",
+    ),
     HelpEntry(
         "/scripture_pulse_test",
         HELP_SCRIPTURE_PULSE_TEST_DESCRIPTION,
@@ -177,20 +186,6 @@ HELP_CATALOG: Tuple[HelpEntry, ...] = (
         "outreach",
     ),
     HelpEntry(
-        "—",
-        "Рассылки в личку (пилот): дайджест и цитаты — <code>CLUB_OUTREACH_DM_ENABLED</code>; "
-        "в топик группы не публикуются, пока outreach DM включён",
-        "admin",
-        "outreach",
-    ),
-    HelpEntry(
-        "—",
-        "Автопубликация в топик группы: дайджест (<code>CLUB_DIGEST_ENABLED</code>) и "
-        "цитаты (<code>CLUB_SCRIPTURE_PULSE_ENABLED</code>) — только если outreach DM выключен",
-        "admin",
-        "outreach",
-    ),
-    HelpEntry(
         "/schedule",
         "Расписание: week (по умолч.), <code>today</code>, <code>raw</code>, <code>2weeks</code>",
         "admin",
@@ -198,9 +193,28 @@ HELP_CATALOG: Tuple[HelpEntry, ...] = (
     ),
     HelpEntry(
         "—",
-        "Топик «Расписание» в админ-группе: правки нативным текстом; вечерний дайджест 20:00 МСК",
+        "Рассылки в личку (пилот): дайджест и цитаты — <code>CLUB_OUTREACH_DM_ENABLED</code>",
         "admin",
         "outreach",
+    ),
+    HelpEntry(
+        "—",
+        "Автопубликация в топик группы: дайджест / цитаты — если outreach DM выключен",
+        "admin",
+        "outreach",
+    ),
+    HelpEntry(
+        "—",
+        "Топик «Расписание» в админ-группе: правки нативным текстом; дайджест 20:00 МСК",
+        "admin",
+        "outreach",
+    ),
+    # —— инструменты ——
+    HelpEntry(
+        "/admin, /adm",
+        "Админ-панель: разделы с командами",
+        "admin",
+        "tools",
     ),
     HelpEntry(
         "/gift",
@@ -209,11 +223,12 @@ HELP_CATALOG: Tuple[HelpEntry, ...] = (
         "tools",
     ),
     HelpEntry(
-        "/clear_my_chat",
-        "Удалить свою переписку с ботом в личке (алиас <code>/clear_dm</code>, с подтверждением)",
+        "/clear_my_chat, /clear_dm",
+        "Удалить свою переписку с ботом в личке (с подтверждением)",
         "admin",
         "tools",
     ),
+    # —— подсказки ——
     HelpEntry(
         "—",
         "Карта автоматических дожимов — <code>docs/FOLLOWUP_MAP.md</code>",
@@ -227,11 +242,18 @@ HELP_CATALOG: Tuple[HelpEntry, ...] = (
         "notes",
     ),
     HelpEntry(
-        "reply в топике продаж",
+        "reply в топике продаж / диалога",
         "Ответ на карточку с User ID → сообщение в личку пользователю",
         "admin",
         "notes",
     ),
+    HelpEntry(
+        "reply в форум-топике диалога",
+        "Ответ в персональном топике (DIALOG_FORUM) → в личку; ответы клубного агента помечены 🏠",
+        "admin",
+        "notes",
+    ),
+    # —— суперадмин ——
     HelpEntry(
         "/admins",
         "Список Telegram ID из таблицы admins",

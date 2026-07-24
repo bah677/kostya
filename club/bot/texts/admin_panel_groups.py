@@ -6,6 +6,7 @@ from typing import Dict, Tuple
 
 # Порядок кнопок на главном экране /adm
 ADMIN_GROUP_ORDER: Tuple[str, ...] = (
+    "users",
     "reports",
     "funnels",
     "mailings",
@@ -16,6 +17,7 @@ ADMIN_GROUP_ORDER: Tuple[str, ...] = (
 )
 
 ADMIN_GROUP_TITLES: Dict[str, str] = {
+    "users": "👤 Для пользователей",
     "reports": "📊 Отчёты",
     "funnels": "📈 Воронки и ключи",
     "mailings": "📨 Рассылки и промо",
