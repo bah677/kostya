@@ -734,7 +734,7 @@ class MessagesMixin:
                         u.username,
                         u.first_name,
                         SUM(t.total_tokens) as total_tokens,
-                        COUNT(t.id) as request_count
+                        COUNT(*) as request_count
                     FROM token_usage t
                     JOIN users u ON t.user_id = u.user_id
                     WHERE {self._TOKEN_USAGE_MSK_DAY_T} = $1::date
@@ -800,7 +800,7 @@ class MessagesMixin:
                         u.username,
                         u.first_name,
                         SUM(t.total_tokens) as total_tokens,
-                        COUNT(t.id) as request_count
+                        COUNT(*) as request_count
                     FROM token_usage t
                     JOIN users u ON t.user_id = u.user_id
                     WHERE t.created_date >= CURRENT_DATE - make_interval(days => $1)
