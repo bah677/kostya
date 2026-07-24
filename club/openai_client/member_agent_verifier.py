@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-CHAT_MODEL = "deepseek-chat"
+CHAT_MODEL = "deepseek-v4-flash"
 
 _TME_LINK_RE = re.compile(r"https://t\.me/[^\s\]<>\")']+", re.IGNORECASE)
 _BARE_TME_RE = re.compile(r"(?<![/\w])t\.me/[^\s\]<>\")']+", re.IGNORECASE)

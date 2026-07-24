@@ -44,7 +44,7 @@ async def test_build_llm_token_report_uses_msk_date():
                 {
                     "provider": "deepseek",
                     "request_kind": "club_outreach_policy",
-                    "model": "deepseek-chat",
+                    "model": "deepseek-v4-flash",
                     "total_tokens": 800,
                     "request_count": 8,
                 }

@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-CHAT_MODEL = "deepseek-chat"
+CHAT_MODEL = "deepseek-v4-flash"
 
 # Опрос с фиксированными вариантами — только шаблон, иначе ломаются кнопки.
 _CHURN_TEMPLATE_ONLY_SLUGS = frozenset({"churn_plus_18d"})

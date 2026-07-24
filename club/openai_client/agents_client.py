@@ -42,7 +42,7 @@ class DeepSeekTimeoutError(Exception):
 
 
 class AgentsClient:
-    CHAT_MODEL = "deepseek-chat"
+    CHAT_MODEL = "deepseek-v4-flash"
 
     def __init__(
         self,

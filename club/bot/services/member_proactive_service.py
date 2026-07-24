@@ -38,7 +38,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-CHAT_MODEL = "deepseek-chat"
+CHAT_MODEL = "deepseek-v4-flash"
 MSK = ZoneInfo("Europe/Moscow")
 
 

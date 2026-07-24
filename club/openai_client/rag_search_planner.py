@@ -540,7 +540,7 @@ async def retrieve_for_user_message(
     user_message: str,
     *,
     llm_client: "AsyncOpenAI",
-    llm_model: str = "deepseek-chat",
+    llm_model: str = "deepseek-v4-flash",
     history_tail: Optional[str] = None,
     settings: Optional[RagRetrievalSettings] = None,
     user_id: Optional[int] = None,

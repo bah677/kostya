@@ -15,7 +15,7 @@ from bot.texts.prompts.wish_title import WISH_TITLE_SYSTEM
 
 logger = logging.getLogger(__name__)
 
-CHAT_MODEL = "deepseek-chat"
+CHAT_MODEL = "deepseek-v4-flash"
 _MAX_LEN = 48
 
 

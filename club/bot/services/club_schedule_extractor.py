@@ -18,7 +18,7 @@ from bot.texts.prompts.club_schedule_extractor import SCHEDULE_EXTRACTOR_SYSTEM
 logger = logging.getLogger(__name__)
 
 MSK = ZoneInfo("Europe/Moscow")
-CHAT_MODEL = "deepseek-chat"
+CHAT_MODEL = "deepseek-v4-flash"
 
 _SCHEDULE_HINT = re.compile(
     r"расписан|эфир|молитв|подкаст|покаян|вопрос.?ответ|перенес|отмен|"

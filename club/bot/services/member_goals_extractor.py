@@ -17,7 +17,7 @@ from storage.db.llm_token_normalize import extract_token_counts_and_extras
 
 logger = logging.getLogger(__name__)
 
-CHAT_MODEL = "deepseek-chat"
+CHAT_MODEL = "deepseek-v4-flash"
 _JSON_FENCE_RE = re.compile(r"^```(?:json)?\s*|\s*```$", re.IGNORECASE | re.MULTILINE)
 
 

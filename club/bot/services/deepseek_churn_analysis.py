@@ -15,7 +15,7 @@ from bot.texts.prompts.churn_analysis import (
 logger = logging.getLogger(__name__)
 
 DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"
-DEFAULT_MODEL = "deepseek-chat"
+DEFAULT_MODEL = "deepseek-v4-flash"
 
 
 async def analyze_churn_with_deepseek(

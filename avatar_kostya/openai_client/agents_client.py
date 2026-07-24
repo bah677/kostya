@@ -63,7 +63,7 @@ def _format_context_tail(history: List[dict], *, max_turns: int = 8, max_chars_p
 
 
 class AgentsClient:
-    CHAT_MODEL = "deepseek-chat"
+    CHAT_MODEL = "deepseek-v4-flash"
 
     def __init__(self, user_storage, *, system_prompt_override: Optional[str] = None):
         self.user_storage = user_storage
