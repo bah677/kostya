@@ -8,11 +8,11 @@ import logging
 import re
 from typing import Any, List, Optional, Protocol
 
-from aiogram import Bot, Dispatcher
+from aiogram import Bot, Dispatcher, F
 from aiogram.enums import ParseMode
 from aiogram.filters import Command, CommandObject
 from aiogram.fsm.context import FSMContext
-from aiogram.types import BufferedInputFile, Message
+from aiogram.types import BufferedInputFile, CallbackQuery, Message
 
 from bot.features.base import BaseFeature
 from bot.services.voicebox_tts import VoiceboxPrayerTTS, format_prayer_for_tts
@@ -128,13 +128,30 @@ class PersonalPrayerFeature(BaseFeature):
 
     def register_handlers(self, dp: Dispatcher) -> None:
         dp.message.register(self.on_prayer_command, Command(commands=["prayer", "molitva"]))
-        logger.info("[%s] Команды /prayer /molitva", self.name)
+        dp.callback_query.register(
+            self.on_prayer_callback,
+            F.data.in_({"prayer_start", "molitva_start"}),
+        )
+        logger.info("[%s] Команды /prayer /molitva + callback prayer_start", self.name)
 
     async def on_prayer_command(
         self, message: Message, state: FSMContext, command: CommandObject
     ) -> None:
+        await self._start_prayer(message, state, args=(command.args or "").strip())
+
+    async def on_prayer_callback(
+        self, callback: CallbackQuery, state: FSMContext
+    ) -> None:
+        """Кнопка рассылки: callback_data=prayer_start → как /prayer."""
+        await callback.answer()
+        if not callback.message:
+            return
+        await self._start_prayer(callback.message, state, args="")
+
+    async def _start_prayer(
+        self, message: Message, state: FSMContext, *, args: str = ""
+    ) -> None:
         await state.clear()
-        args = (command.args or "").strip()
         await state.set_state(PrayerStates.collecting)
         await state.update_data(prayer_turns=[], clarify_count=0)
 

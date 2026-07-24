@@ -141,6 +141,7 @@ class MessageHandlers:
             ~F.data.startswith("preset_faq_"),
             ~F.data.startswith("more_button_"),
             ~F.data.startswith("challenge_"),
+            ~F.data.in_({"prayer_start", "molitva_start"}),
         )
         self.dp.edited_message.register(self._edited_message_handler)
         self.dp.message_reaction.register(self._reaction_handler)

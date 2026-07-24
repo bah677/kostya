@@ -133,10 +133,19 @@ class ScriptureChallengeFeature(BaseFeature):
             self.on_callback,
             F.data.startswith("challenge_"),
         )
-        logger.info("[%s] /challenge, /challenge_cancel", self.name)
+        logger.info(
+            "[%s] /challenge, /challenge_cancel + callback challenge_start",
+            self.name,
+        )
 
     async def on_challenge_command(self, message: Message, state: FSMContext) -> None:
-        user_id = message.from_user.id
+        if not message.from_user:
+            return
+        await self._start_challenge(message, state, user_id=message.from_user.id)
+
+    async def _start_challenge(
+        self, message: Message, state: FSMContext, *, user_id: int
+    ) -> None:
         active = await self.user_storage.get_user_active_scripture_challenge(user_id)
         if active:
             status = active.get("status")
@@ -182,6 +191,15 @@ class ScriptureChallengeFeature(BaseFeature):
     async def on_callback(self, callback: CallbackQuery, state: FSMContext) -> None:
         data = callback.data or ""
         await callback.answer()
+
+        # Кнопка рассылки → тот же старт, что /challenge
+        if data == "challenge_start":
+            if callback.message and callback.from_user:
+                await self._start_challenge(
+                    callback.message, state, user_id=callback.from_user.id
+                )
+            return
+
         if data == "challenge_cancel":
             await self.on_challenge_cancel_command(callback.message, state)
             return

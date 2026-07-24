@@ -108,7 +108,7 @@ MSG_CREATING = "⏳ Создаём кампанию…"
 PROMPT_BUTTON_STYLE_HTML = "Выберите <b>стиль кнопки</b>:"
 
 CUSTOM_IDS_EXAMPLE = "304631563, 367302291"
-CALLBACK_DATA_EXAMPLE = "payment_start"
+CALLBACK_DATA_EXAMPLE = "prayer_start"
 
 STYLE_LABELS = {
     "success": "зелёная",
@@ -151,6 +151,10 @@ def prompt_custom_user_ids_html() -> str:
 def prompt_callback_data_html() -> str:
     return (
         "Введите <code>callback_data</code>:\n"
+        "Известные значения:\n"
+        "• <code>payment_start</code> — донат\n"
+        "• <code>prayer_start</code> — персональная молитва (/prayer)\n"
+        "• <code>challenge_start</code> — челлендж чтения Писания (/challenge)\n"
         f"Пример: <code>{CALLBACK_DATA_EXAMPLE}</code>"
     )
 
