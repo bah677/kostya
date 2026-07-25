@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Пуш монорепозитория kostya (club + biblia + avatar_kostya) в GitHub.
+# Пуш монорепозитория kostya (club + biblia + avatar_kostya + agency) в GitHub.
 #
 # Вызывается из club/biblia deploy_prod.sh или вручную:
 #   ./scripts/git_push_deploy.sh
@@ -22,7 +22,7 @@ cd "${KOSTYA_ROOT}"
 command -v git >/dev/null || die "нужен git"
 
 # Safety: never commit secrets
-for envf in club/.env biblia/.env avatar_kostya/.env; do
+for envf in club/.env biblia/.env avatar_kostya/.env agency/.env; do
   if [[ -f "${envf}" ]] && ! git check-ignore -q "${envf}" 2>/dev/null; then
     if [[ -d .git ]]; then
       die "${envf} не в .gitignore — пуш отменён"
