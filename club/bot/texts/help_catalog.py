@@ -187,8 +187,8 @@ HELP_CATALOG: Tuple[HelpEntry, ...] = (
     ),
     HelpEntry(
         "—",
-        "Топик «общение»: ассистент с ephemeral (пилот) — "
-        "<code>CLUB_TOPIC_ASSIST_ENABLED</code> + thread/mirror в .env; когорта как outreach",
+        "Топик «общение»: батч-ассистент каждые N мин из БД "
+        "(<code>CLUB_TOPIC_ASSIST_*</code>, пилот/зеркало/ephemeral reply)",
         "admin",
         "outreach",
     ),

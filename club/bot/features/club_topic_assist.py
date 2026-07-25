@@ -1,23 +1,21 @@
-"""Ассистент в топике «общение»: ephemeral/public ответы + RAG + пилот + зеркало."""
+"""Батч-ассистент топика «общение»: cron → triage → RAG → reply (ephemeral/public)."""
 
 from __future__ import annotations
 
-import asyncio
 import logging
-from collections import defaultdict
-from datetime import datetime
-from typing import Dict, Optional, TYPE_CHECKING
-from zoneinfo import ZoneInfo
+from typing import Optional, TYPE_CHECKING
 
-from aiogram import Dispatcher, F
-from aiogram.enums import ChatType
-from aiogram.types import Message
+from aiogram import Dispatcher
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.interval import IntervalTrigger
 
 from bot.features.base import BaseFeature
-from bot.services.club_outreach_pilot import user_in_pilot_cohort
-from bot.services.club_topic_assist_context import TopicAssistContextBuffer
 from bot.services.club_topic_assist_mirror import TopicAssistMirror
-from bot.services.club_topic_assist_pipeline import compose_topic_answer
+from bot.services.club_topic_assist_pipeline import run_topic_assist_batch
+from bot.services.club_topic_assist_storage import (
+    delete_reply_reservation,
+    insert_reply,
+)
 from config import config
 
 if TYPE_CHECKING:
@@ -25,7 +23,6 @@ if TYPE_CHECKING:
     from rag.runtime import RagStack
 
 logger = logging.getLogger(__name__)
-MSK = ZoneInfo("Europe/Moscow")
 
 
 class ClubTopicAssistFeature(BaseFeature):
@@ -37,13 +34,9 @@ class ClubTopicAssistFeature(BaseFeature):
         self.bot = bot
         self._llm_client: Optional["AsyncOpenAI"] = None
         self._rag_stack: Optional["RagStack"] = None
-        self._ctx = TopicAssistContextBuffer(
-            maxlen=int(config.CLUB_TOPIC_ASSIST_CONTEXT_MSGS or 4)
-        )
         self._mirror = TopicAssistMirror(bot)
-        self._debounce_tasks: Dict[int, asyncio.Task] = {}
-        self._pending: Dict[int, Message] = {}
-        self._hourly: Dict[str, int] = defaultdict(int)
+        self._scheduler: Optional[AsyncIOScheduler] = None
+        self._running = False
 
     def set_llm_client(self, client: "AsyncOpenAI") -> None:
         self._llm_client = client
@@ -52,196 +45,237 @@ class ClubTopicAssistFeature(BaseFeature):
         self._rag_stack = rag_stack
 
     def register_handlers(self, dp: Dispatcher) -> None:
-        if not config.club_topic_assist_active:
+        # Батч-режим: онлайн-хендлеров нет, только cron в initialize.
+        if config.club_topic_assist_active:
+            logger.info(
+                "[%s] batch mode group=%s thread=%s every=%smin "
+                "lag=%s window=%s ctx_extra=%s pilot=%s mirror=%s",
+                self.name,
+                config.CLUB_GROUP_ID,
+                config.CLUB_TOPIC_ASSIST_THREAD_ID,
+                config.CLUB_TOPIC_ASSIST_BATCH_MINUTES,
+                config.CLUB_TOPIC_ASSIST_LAG_MINUTES,
+                config.CLUB_TOPIC_ASSIST_WINDOW_MINUTES,
+                config.CLUB_TOPIC_ASSIST_CONTEXT_EXTRA_MINUTES,
+                config.CLUB_TOPIC_ASSIST_PILOT_ONLY,
+                self._mirror.enabled,
+            )
+        else:
             logger.info(
                 "[%s] выкл. (ENABLED=%s thread=%s)",
                 self.name,
                 config.CLUB_TOPIC_ASSIST_ENABLED,
                 config.CLUB_TOPIC_ASSIST_THREAD_ID,
             )
-            return
-        gid = int(config.CLUB_GROUP_ID)
-        tid = int(config.CLUB_TOPIC_ASSIST_THREAD_ID)
-        dp.message.register(
-            self._on_topic_message,
-            F.chat.id == gid,
-            F.chat.type == ChatType.SUPERGROUP,
-            F.message_thread_id == tid,
-            F.text,
-        )
-        logger.info(
-            "[%s] listening group=%s thread=%s pilot_only=%s public=%s mirror=%s",
-            self.name,
-            gid,
-            tid,
-            config.CLUB_TOPIC_ASSIST_PILOT_ONLY,
-            config.CLUB_TOPIC_ASSIST_PUBLIC_ENABLED,
-            config.CLUB_TOPIC_ASSIST_MIRROR_ENABLED,
-        )
 
     async def initialize(self) -> None:
         await super().initialize()
-        if config.club_topic_assist_active and self._mirror.enabled:
+        if not config.club_topic_assist_active:
+            return
+        if self._mirror.enabled:
             try:
                 await self._mirror.ensure_topics()
             except Exception as e:
                 logger.warning("[%s] mirror ensure_topics: %s", self.name, e)
 
-    def _hourly_key(self, user_id: int) -> str:
-        return f"{user_id}:{datetime.now(MSK).strftime('%Y%m%d%H')}"
-
-    def _under_hourly_limit(self, user_id: int) -> bool:
-        lim = int(config.CLUB_TOPIC_ASSIST_HOURLY_LIMIT or 8)
-        return self._hourly[self._hourly_key(user_id)] < lim
-
-    def _bump_hourly(self, user_id: int) -> None:
-        self._hourly[self._hourly_key(user_id)] += 1
-
-    async def _on_topic_message(self, message: Message) -> None:
-        if not message.from_user or message.from_user.is_bot:
-            return
-        text = (message.text or "").strip()
-        if not text or text.startswith("/"):
-            return
-        uid = int(message.from_user.id)
-        self._ctx.set_maxlen(int(config.CLUB_TOPIC_ASSIST_CONTEXT_MSGS or 4))
-        self._ctx.push(message.chat.id, uid, text, message.message_id)
-
-        if config.CLUB_TOPIC_ASSIST_PILOT_ONLY:
-            if not await user_in_pilot_cohort(self.user_storage, uid):
-                return
-
-        if not self._under_hourly_limit(uid):
-            return
-
-        self._pending[uid] = message
-        old = self._debounce_tasks.get(uid)
-        if old and not old.done():
-            old.cancel()
-        delay = float(config.CLUB_TOPIC_ASSIST_DEBOUNCE_SEC or 3.0)
-        self._debounce_tasks[uid] = asyncio.create_task(
-            self._debounced_run(uid, delay),
-            name=f"cta_debounce_{uid}",
+        minutes = max(1, int(config.CLUB_TOPIC_ASSIST_BATCH_MINUTES or 5))
+        self._scheduler = AsyncIOScheduler(timezone="Europe/Moscow")
+        self._scheduler.add_job(
+            self._batch_tick,
+            IntervalTrigger(minutes=minutes),
+            id="club_topic_assist_batch",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
         )
+        self._scheduler.start()
+        logger.info("[%s] scheduler every %s min", self.name, minutes)
 
-    async def _debounced_run(self, user_id: int, delay: float) -> None:
-        try:
-            await asyncio.sleep(delay)
-        except asyncio.CancelledError:
+    async def teardown(self) -> None:
+        if self._scheduler:
+            try:
+                self._scheduler.shutdown(wait=False)
+            except Exception:
+                pass
+            self._scheduler = None
+
+    async def _batch_tick(self) -> None:
+        if self._running:
             return
-        message = self._pending.pop(user_id, None)
-        self._debounce_tasks.pop(user_id, None)
-        if message is None:
-            return
+        self._running = True
         try:
-            await self._process(message)
+            await self._run_batch()
         except Exception as e:
-            logger.exception("[%s] process failed uid=%s: %s", self.name, user_id, e)
+            logger.exception("[%s] batch failed: %s", self.name, e)
             if self._mirror.enabled:
                 await self._mirror.post(
                     case="error",
-                    user_id=user_id,
-                    user_name=message.from_user.full_name if message.from_user else "",
-                    context_tail=self._ctx.format_tail(message.chat.id, user_id),
-                    question=(message.text or "")[:500],
+                    user_id=0,
+                    user_name="batch",
+                    context_tail="",
+                    question="batch_tick",
                     answer=str(e)[:1500],
-                    classify_reason="exception",
+                    classify_reason="batch_exception",
                 )
+        finally:
+            self._running = False
 
-    async def _process(self, message: Message) -> None:
-        if not message.from_user:
-            return
-        uid = int(message.from_user.id)
-        question = (message.text or "").strip()
-        context_tail = self._ctx.format_tail(message.chat.id, uid)
+    async def _run_batch(self) -> None:
         api_key = (config.DEEPSEEK_API_KEY or "").strip()
         if not api_key:
             return
-
-        result = await compose_topic_answer(
+        answers = await run_topic_assist_batch(
             self.user_storage,
-            user_id=uid,
-            question=question,
-            context_tail=context_tail,
             api_key=api_key,
             llm_client=self._llm_client,
             rag_stack=self._rag_stack,
         )
-        if not result.classify.intervene or not result.answer:
+        if not answers:
             return
 
-        visibility = result.visibility
-        if visibility == "public" and not config.CLUB_TOPIC_ASSIST_PUBLIC_ENABLED:
-            visibility = "ephemeral"
+        chat_id = int(config.CLUB_GROUP_ID)
+        thread_id = int(config.CLUB_TOPIC_ASSIST_THREAD_ID)
+        pool = self.user_storage.pool
 
-        sent_ok = await self._send_answer(message, result.answer, visibility)
-        if not sent_ok:
-            return
-
-        self._bump_hourly(uid)
-        try:
-            await self.user_storage.log_interaction(
-                user_id=uid,
-                event_category="club_topic_assist",
-                event_type=f"answer_{visibility}",
-                data={
-                    "visibility": visibility,
-                    "rag_used": result.rag_used,
-                    "classify_reason": result.classify.reason,
-                    "thread_id": message.message_thread_id,
-                    "source_message_id": message.message_id,
-                },
-                source="club_topic_assist",
-                outcome="success",
+        for ba in answers:
+            item = ba.item
+            # резервируем слот дедупа до отправки (чтобы соседний тик не дублировал)
+            reserved = await insert_reply(
+                pool,
+                chat_id=chat_id,
+                thread_id=thread_id,
+                source_telegram_message_id=item.reply_to_message_id,
+                user_id=item.user_id,
+                visibility=item.visibility,
+                question_excerpt=item.question_summary
+                or f"msg:{item.reply_to_message_id}",
+                answer_text=ba.answer,
+                classify_reason=item.reason,
             )
-        except Exception as e:
-            logger.debug("log_interaction: %s", e)
+            if not reserved:
+                logger.info(
+                    "[%s] skip duplicate source_mid=%s",
+                    self.name,
+                    item.reply_to_message_id,
+                )
+                continue
 
-        if self._mirror.enabled:
-            await self._mirror.post(
-                case=visibility,
-                user_id=uid,
-                user_name=message.from_user.full_name or "",
-                context_tail=context_tail,
-                question=question,
-                answer=result.answer,
-                classify_reason=result.classify.reason,
-                extra=f"rag={result.rag_used}",
+            sent = await self._send_reply(
+                user_id=item.user_id,
+                reply_to_message_id=item.reply_to_message_id,
+                answer=ba.answer,
+                visibility=item.visibility,
             )
+            if not sent:
+                await delete_reply_reservation(
+                    pool,
+                    chat_id=chat_id,
+                    source_telegram_message_id=item.reply_to_message_id,
+                )
+                if self._mirror.enabled:
+                    await self._mirror.post(
+                        case="error",
+                        user_id=item.user_id,
+                        user_name=str(item.user_id),
+                        context_tail="",
+                        question=item.question_summary,
+                        answer=ba.answer,
+                        classify_reason=f"send_failed|{item.reason}",
+                    )
+                continue
 
-    async def _send_answer(
-        self, message: Message, answer: str, visibility: str
-    ) -> bool:
-        chat_id = message.chat.id
-        thread_id = message.message_thread_id
-        uid = message.from_user.id if message.from_user else 0
-        try:
-            if visibility == "ephemeral":
-                await self.bot.send_message(
-                    chat_id=chat_id,
-                    text=answer,
-                    message_thread_id=thread_id,
-                    receiver_user_id=uid,
-                    reply_to_message_id=message.message_id,
+            bot_mid, eph_mid = sent
+            # обновим ids отправки
+            try:
+                async with pool.acquire() as conn:
+                    await conn.execute(
+                        """
+                        UPDATE club_topic_assist_replies
+                        SET bot_telegram_message_id = $1,
+                            ephemeral_message_id = $2,
+                            answer_text = $3
+                        WHERE chat_id = $4
+                          AND source_telegram_message_id = $5
+                        """,
+                        bot_mid,
+                        eph_mid,
+                        ba.answer[:4000],
+                        chat_id,
+                        item.reply_to_message_id,
+                    )
+            except Exception as e:
+                logger.warning("[%s] update reply ids: %s", self.name, e)
+
+            try:
+                await self.user_storage.log_interaction(
+                    user_id=item.user_id,
+                    event_category="club_topic_assist",
+                    event_type=f"answer_{item.visibility}",
+                    data={
+                        "visibility": item.visibility,
+                        "rag_used": ba.rag_used,
+                        "classify_reason": item.reason,
+                        "thread_id": thread_id,
+                        "source_message_id": item.reply_to_message_id,
+                        "bot_message_id": bot_mid,
+                        "ephemeral_message_id": eph_mid,
+                        "mode": "batch",
+                    },
+                    source="club_topic_assist",
+                    outcome="success",
                 )
-            else:
-                await self.bot.send_message(
-                    chat_id=chat_id,
-                    text=answer,
-                    message_thread_id=thread_id,
-                    reply_to_message_id=message.message_id,
-                )
-            return True
-        except Exception as e:
-            logger.error("[%s] send failed: %s", self.name, e)
+            except Exception as e:
+                logger.debug("log_interaction: %s", e)
+
             if self._mirror.enabled:
                 await self._mirror.post(
-                    case="error",
-                    user_id=uid,
-                    user_name=message.from_user.full_name if message.from_user else "",
-                    context_tail="",
-                    question=(message.text or "")[:500],
-                    answer=answer[:1500],
-                    classify_reason=f"send_failed:{e}",
+                    case=item.visibility,
+                    user_id=item.user_id,
+                    user_name=str(item.user_id),
+                    context_tail=f"reply_to={item.reply_to_message_id}",
+                    question=item.question_summary or "",
+                    answer=ba.answer,
+                    classify_reason=item.reason,
+                    extra=f"rag={ba.rag_used} batch=1",
                 )
-            return False
+
+    async def _send_reply(
+        self,
+        *,
+        user_id: int,
+        reply_to_message_id: int,
+        answer: str,
+        visibility: str,
+    ) -> Optional[tuple]:
+        """Returns (bot_message_id|None, ephemeral_message_id|None) or None on failure."""
+        chat_id = int(config.CLUB_GROUP_ID)
+        thread_id = int(config.CLUB_TOPIC_ASSIST_THREAD_ID)
+        vis = visibility
+        if vis == "public" and not config.CLUB_TOPIC_ASSIST_PUBLIC_ENABLED:
+            vis = "ephemeral"
+        try:
+            kwargs = dict(
+                chat_id=chat_id,
+                text=answer,
+                message_thread_id=thread_id,
+                reply_to_message_id=reply_to_message_id,
+            )
+            if vis == "ephemeral":
+                kwargs["receiver_user_id"] = user_id
+            msg = await self.bot.send_message(**kwargs)
+            bot_mid = getattr(msg, "message_id", None) or None
+            eph_mid = getattr(msg, "ephemeral_message_id", None) or None
+            # у ephemeral обычный message_id может быть 0
+            if bot_mid == 0:
+                bot_mid = None
+            return (bot_mid, eph_mid)
+        except Exception as e:
+            logger.error(
+                "[%s] send reply_to=%s uid=%s vis=%s: %s",
+                self.name,
+                reply_to_message_id,
+                user_id,
+                vis,
+                e,
+            )
+            return None

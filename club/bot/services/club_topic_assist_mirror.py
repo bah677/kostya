@@ -58,9 +58,10 @@ class TopicAssistMirror:
 
     @property
     def enabled(self) -> bool:
+        # chat_id супергруппы Telegram всегда отрицательный (−100…)
         return bool(
             config.CLUB_TOPIC_ASSIST_MIRROR_ENABLED
-            and int(config.CLUB_TOPIC_ASSIST_MIRROR_GROUP_ID or 0) > 0
+            and int(config.CLUB_TOPIC_ASSIST_MIRROR_GROUP_ID or 0) != 0
         )
 
     async def ensure_topics(self) -> None:

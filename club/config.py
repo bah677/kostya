@@ -229,7 +229,7 @@ class Config:
     CLUB_OUTREACH_PILOT_LOOKBACK_DAYS: int = 30
     CLUB_OUTREACH_DAILY_LIMIT: int = 3
 
-    #: Ассистент в топике клубной группы (ephemeral Bot API 10.2 + RAG).
+    #: Ассистент в топике клубной группы (батч из БД + ephemeral Bot API 10.2 + RAG).
     CLUB_TOPIC_ASSIST_ENABLED: bool = False
     #: Только пилотная когорта (member_outreach_state.pilot_cohort).
     CLUB_TOPIC_ASSIST_PILOT_ONLY: bool = True
@@ -240,9 +240,16 @@ class Config:
     #: Зеркало ответов в отдельную форум-группу (контроль пилота).
     CLUB_TOPIC_ASSIST_MIRROR_ENABLED: bool = False
     CLUB_TOPIC_ASSIST_MIRROR_GROUP_ID: int = 0
-    CLUB_TOPIC_ASSIST_DEBOUNCE_SEC: float = 3.0
-    CLUB_TOPIC_ASSIST_CONTEXT_MSGS: int = 4
-    CLUB_TOPIC_ASSIST_HOURLY_LIMIT: int = 8
+    #: Интервал батча (минуты).
+    CLUB_TOPIC_ASSIST_BATCH_MINUTES: int = 5
+    #: Не трогать последние N минут (дать сообщениям дописаться в БД).
+    CLUB_TOPIC_ASSIST_LAG_MINUTES: int = 2
+    #: Ширина окна кандидатов на ответ (минуты), сразу перед lag.
+    CLUB_TOPIC_ASSIST_WINDOW_MINUTES: int = 12
+    #: Доп. минуты старше окна — только контекст для triage (не кандидаты).
+    CLUB_TOPIC_ASSIST_CONTEXT_EXTRA_MINUTES: int = 20
+    #: Макс. ответов за один батч.
+    CLUB_TOPIC_ASSIST_MAX_ANSWERS_PER_BATCH: int = 5
 
     def __post_init__(self):
         self._validate_required()
@@ -684,14 +691,20 @@ def load_config() -> Config:
         CLUB_TOPIC_ASSIST_MIRROR_GROUP_ID=int(
             os.getenv("CLUB_TOPIC_ASSIST_MIRROR_GROUP_ID", "0") or "0"
         ),
-        CLUB_TOPIC_ASSIST_DEBOUNCE_SEC=float(
-            os.getenv("CLUB_TOPIC_ASSIST_DEBOUNCE_SEC", "3") or "3"
+        CLUB_TOPIC_ASSIST_BATCH_MINUTES=_safe_int_env(
+            "CLUB_TOPIC_ASSIST_BATCH_MINUTES", 5, min_v=1, max_v=60
         ),
-        CLUB_TOPIC_ASSIST_CONTEXT_MSGS=_safe_int_env(
-            "CLUB_TOPIC_ASSIST_CONTEXT_MSGS", 4, min_v=1, max_v=10
+        CLUB_TOPIC_ASSIST_LAG_MINUTES=_safe_int_env(
+            "CLUB_TOPIC_ASSIST_LAG_MINUTES", 2, min_v=0, max_v=30
         ),
-        CLUB_TOPIC_ASSIST_HOURLY_LIMIT=_safe_int_env(
-            "CLUB_TOPIC_ASSIST_HOURLY_LIMIT", 8, min_v=1, max_v=50
+        CLUB_TOPIC_ASSIST_WINDOW_MINUTES=_safe_int_env(
+            "CLUB_TOPIC_ASSIST_WINDOW_MINUTES", 12, min_v=3, max_v=120
+        ),
+        CLUB_TOPIC_ASSIST_CONTEXT_EXTRA_MINUTES=_safe_int_env(
+            "CLUB_TOPIC_ASSIST_CONTEXT_EXTRA_MINUTES", 20, min_v=0, max_v=180
+        ),
+        CLUB_TOPIC_ASSIST_MAX_ANSWERS_PER_BATCH=_safe_int_env(
+            "CLUB_TOPIC_ASSIST_MAX_ANSWERS_PER_BATCH", 5, min_v=1, max_v=20
         ),
     )
 
