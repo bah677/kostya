@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from collectors.content_events import correlate_content_with_kpis
+from collectors.cta_metrics import collect_cta_metrics
 from collectors.dialogs import format_threads_blob, sample_dialog_threads, theme_keyword_stats
 from collectors.kpi import collect_with_history
 from collectors.rag_context import try_rag_snippet
@@ -21,6 +22,12 @@ from llm.panel import run_panel
 logger = logging.getLogger(__name__)
 
 AGENT_ID = "bible_bot_manager"
+
+
+def _fmt_opt(v) -> str:
+    if v is None:
+        return "н/д"
+    return str(v)
 
 
 def _delta(cur, prev) -> str:
@@ -53,11 +60,13 @@ def build_context_blob(
     threads_blob: str,
     themes: Dict[str, int],
     content_corr: Dict[str, Any],
+    cta: Optional[Dict[str, Any]] = None,
     rag_bits: str = "",
 ) -> str:
     day = kpi["day"]
     prev = kpi["prev_day"]
     avg7 = kpi["avg7"]
+    cta = cta or {}
     lines = [
         f"TARGET_DAY={day['day']}",
         "",
@@ -72,6 +81,16 @@ def build_context_blob(
         f"(prev {_delta(day['club_transitions'], prev['club_transitions'])}, "
         f"vs7d {_pct(day['club_transitions'], avg7.get('club_transitions'))})",
         f"  club_coverage={day.get('club_meta', {}).get('coverage_note', '')}",
+        "",
+        "CTA_ENGAGEMENT (biblia):",
+        f"  donation_button_shows_day={cta.get('donation_button_shows_day')}",
+        f"  donation_button_clicks_day={cta.get('donation_button_clicks_day')}",
+        f"  donation_proposals_day={cta.get('donation_proposals_day')}",
+        f"  donation_button_ctr_pct={cta.get('donation_button_ctr_pct')}",
+        f"  payment_start_events={cta.get('payment_start_events')} "
+        f"users={cta.get('payment_start_users')}",
+        f"  marathon_open_events={cta.get('marathon_open_events')}",
+        f"  note={cta.get('notes', '')}",
         "",
         "THEME_UNIQUE_USERS:",
         *(f"  {k}={v}" for k, v in themes.items()),
@@ -92,8 +111,10 @@ def build_context_blob(
         lines.append(f"  #{h['id']} from={h['from_agent_id']}: {h['subject']}")
     lines.append("")
     lines.append("OPEN_DATA_GAPS:")
+    if not gaps:
+        lines.append("  (none)")
     for g in gaps[:10]:
-        lines.append(f"  - {g['gap_key']}: {g['description'][:200]}")
+        lines.append(f"  - [{g.get('severity')}] {g['description'][:400]}")
     lines.append("")
     lines.append("CONTENT_CORRELATION:")
     lines.append(str(content_corr)[:2000])
@@ -107,10 +128,15 @@ def build_context_blob(
     return "\n".join(lines)
 
 
-def numeric_brief(kpi: Dict[str, Any], gaps: List[Dict[str, Any]]) -> str:
+def numeric_brief(
+    kpi: Dict[str, Any],
+    gaps: List[Dict[str, Any]],
+    cta: Optional[Dict[str, Any]] = None,
+) -> str:
     day = kpi["day"]
     prev = kpi["prev_day"]
     avg7 = kpi["avg7"]
+    cta = cta or {}
     lines = [
         f"Bible Bot Manager — {day['day']} (числа)",
         "",
@@ -123,15 +149,35 @@ def numeric_brief(kpi: Dict[str, Any], gaps: List[Dict[str, Any]]) -> str:
         f"({_delta(day['club_transitions'], prev['club_transitions'])} / "
         f"{_pct(day['club_transitions'], avg7.get('club_transitions'))})",
         "",
-        "Апрув рекомендаций: /agency_recs",
+        "CTA (донат/клуб):",
+        f"• клики «Поддержать» (payment_start): {cta.get('payment_start_events', 0)} "
+        f"событий / {cta.get('payment_start_users', 0)} уников",
+        f"• выборы суммы после старта оплаты: {cta.get('payment_amount_events', 0)}",
+        f"• marathon_open: {cta.get('marathon_open_events', 0)}",
+        f"• показов кнопки/день: "
+        + (
+            f"{cta.get('donation_button_shows_day')} (источник: {cta.get('delta_source')})"
+            if cta.get("donation_button_shows_day") is not None
+            else f"н/д, кумулятив {cta.get('cum_shows', '?')} "
+            f"(нет дневного лога показов; metric_snapshots в biblia пуст — "
+            f"со 2-го ночного прогона agency посчитает дельту)"
+        ),
+        f"• donation_button_click/день: "
+        + (
+            str(cta.get("donation_button_clicks_day"))
+            if cta.get("donation_button_clicks_day") is not None
+            else "н/д (смотри payment_start выше)"
+        ),
+        "",
+        "Апрув: /agency_recs · обсуждение: реплай на этот отчёт",
     ]
     if gaps:
         lines.append("")
-        lines.append("Пробелы данных:")
+        lines.append("Пробелы данных (понятным языком):")
         for g in gaps[:5]:
-            lines.append(f"• {g['gap_key']}")
+            desc = (g.get("description") or g.get("gap_key") or "").strip()
+            lines.append(f"• {desc[:280]}")
     return "\n".join(lines)
-
 
 async def maybe_measure_shipped(repo: AgencyRepo, kpi_today: Dict[str, Any], on: date) -> None:
     shipped = await repo.list_recommendations(
@@ -228,6 +274,7 @@ async def run_bible_bot_manager(
         )
         await maybe_measure_shipped(repo, kpi, target)
 
+        cta = await collect_cta_metrics(pools.biblia, repo, target)
         themes = await theme_keyword_stats(pools.biblia, target)
         threads = await sample_dialog_threads(
             pools.biblia, target, limit=cfg.DIALOG_SAMPLE_LIMIT
@@ -263,10 +310,11 @@ async def run_bible_bot_manager(
             threads_blob=threads_blob,
             themes=themes,
             content_corr=content_corr,
+            cta=cta,
             rag_bits=rag_bits,
         )
 
-        brief_md = numeric_brief(kpi, gaps)
+        brief_md = numeric_brief(kpi, gaps, cta)
         panel: Dict[str, Any] = {}
         actions: List[Dict[str, Any]] = []
 
@@ -276,7 +324,9 @@ async def run_bible_bot_manager(
                 f"Bible chatbot retention donations funnel to paid community. "
                 f"Stickiness={kpi['day']['stickiness']:.3f}, "
                 f"donations={kpi['day']['donations_rub']}, "
-                f"club_transitions={kpi['day']['club_transitions']}. "
+                f"club_transitions={kpi['day']['club_transitions']}, "
+                f"payment_starts={cta.get('payment_start_events')}, "
+                f"cta_shows={cta.get('donation_button_shows_day')}. "
                 f"Themes today: {themes}. Best practices 2025-2026."
             )
             panel = await run_panel(
@@ -289,13 +339,18 @@ async def run_bible_bot_manager(
             )
             final = panel.get("final") or {}
             if final.get("brief_md"):
-                # prepend KPI strip for reliability
-                brief_md = numeric_brief(kpi, gaps) + "\n\n" + final["brief_md"]
+                brief_md = numeric_brief(kpi, gaps, cta) + "\n\n" + final["brief_md"]
             actions = list(final.get("actions") or [])[:3]
             for gap in final.get("data_gaps") or []:
                 if isinstance(gap, str) and gap.strip():
+                    # LLM gaps as human text, not fake keys about missing CTA
+                    low = gap.strip().lower()
+                    if "cta" in low and (
+                        "нет" in low or "отсутств" in low or "не видим" in low
+                    ):
+                        continue
                     await repo.upsert_data_gap(
-                        gap_key=f"llm_{gap.strip()[:80]}",
+                        gap_key=f"llm_{gap.strip()[:60]}",
                         description=gap.strip()[:500],
                         on=target,
                         severity="low",
@@ -325,15 +380,24 @@ async def run_bible_bot_manager(
             status = "ok"
 
         for a in actions:
+            body = str(a.get("body") or "")
+            if a.get("kpi_impact"):
+                body = f"{body}\nВлияние на KPI: {a['kpi_impact']}".strip()
+            if a.get("how_to_verify"):
+                body = f"{body}\nКак проверить: {a['how_to_verify']}".strip()
             await repo.add_recommendation(
                 agent_id=AGENT_ID,
                 run_id=run_id,
                 created_on=target,
                 title=str(a.get("title") or "action")[:300],
-                body=str(a.get("body") or ""),
+                body=body,
                 evidence=str(a.get("evidence") or ""),
                 target_system=str(a.get("target_system") or "biblia"),
                 priority=int(a.get("priority") or 2),
+                meta={
+                    "kpi_impact": a.get("kpi_impact"),
+                    "how_to_verify": a.get("how_to_verify"),
+                },
             )
 
         await draft_pr_stub(cfg, repo, run_id=run_id, actions=actions)
@@ -344,7 +408,7 @@ async def run_bible_bot_manager(
             kind="brief_md",
             title=f"brief_{target.isoformat()}",
             body_text=brief_md,
-            body_json={"kpi": kpi["day"], "actions": actions},
+            body_json={"kpi": kpi["day"], "cta": cta, "actions": actions},
         )
 
         # persist brief file
@@ -355,12 +419,19 @@ async def run_bible_bot_manager(
         )
 
         if bot is not None:
-            await send_brief(bot, cfg, brief_md)
+            await send_brief(
+                bot, cfg, brief_md, repo=repo, run_id=run_id, agent_id=AGENT_ID
+            )
 
         await repo.finish_run(
             run_id,
             status=status,
-            meta={"actions": len(actions), "threads": len(threads), "skip_llm": skip_llm},
+            meta={
+                "actions": len(actions),
+                "threads": len(threads),
+                "skip_llm": skip_llm,
+                "cta": cta,
+            },
         )
         return {"run_id": run_id, "status": status, "brief": brief_md, "day": target.isoformat()}
     except Exception as e:

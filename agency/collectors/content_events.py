@@ -72,13 +72,19 @@ async def correlate_content_with_kpis(
         ),
     }
     if not events:
+        # не пугаем как «баг KPI» — это опциональный слой соцсетей
         await repo.upsert_data_gap(
             gap_key="content_events_empty",
             description=(
-                "Нет content_events для корреляции пост→KPI. "
-                "Добавляйте вручную или импортируйте из RAG/каналов."
+                "Где: agency.content_events (таблица агентства, не biblia/club). "
+                "Что: нет записей о постах Кости в соцсетях около этого дня. "
+                "Зачем: без этого нельзя связать конкретный пост с DAU/донаты/переходами. "
+                "На 3 основных KPI не влияет. "
+                "Что сделать: /content_add позже или импорт из RAG; пока агент работает без этого."
             ),
             severity="low",
             on=day,
         )
+    else:
+        await repo.close_data_gap("content_events_empty")
     return summary

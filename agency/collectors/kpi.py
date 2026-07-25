@@ -230,14 +230,21 @@ async def collect_club_transitions(
         await repo.upsert_data_gap(
             gap_key="kpi3_untyped_start_payloads",
             description=(
-                "Часть переходов (benefit3 / promo_* без channel_type) "
-                "не входит в канонический KPI3."
+                f"Где: club.attribution_touches за {day}. "
+                f"Что: {benefit3} start с touch_key=benefit3 и {promo_like} promo_* "
+                f"без channel_type — они НЕ входят в KPI «Библия Бот». "
+                f"Зачем важно: занижает переходы из библии. "
+                f"Что сделать: разметить ref_keys.type / channel_type = «Библия Бот» "
+                f"или писать source при старте."
             ),
             severity="medium",
             on=day,
             meta=payload,
         )
-    # если атрибуция давно не пишется — критичный пробел
+    else:
+        await repo.close_data_gap("kpi3_untyped_start_payloads")
+
+    # attribution stale — only if really stale (>7d)
     if last_touch_at is not None:
         from datetime import datetime, timezone
 
@@ -246,21 +253,31 @@ async def collect_club_transitions(
             await repo.upsert_data_gap(
                 gap_key="attribution_touches_stale",
                 description=(
-                    f"Последний attribution_touch {last_touch_at.isoformat()} "
-                    f"({age_days} дн. назад). KPI3 по свежим дням будет 0 — "
-                    "проверить запись /start в club onboarding."
+                    f"Где: club.attribution_touches. "
+                    f"Что: последний touch {last_touch_at.isoformat()} ({age_days} дн. назад). "
+                    f"Зачем: KPI3 по свежим дням будет 0. "
+                    f"Что сделать: проверить запись /start в club onboarding."
                 ),
                 severity="high",
                 on=day,
                 meta={"last_touch_at": str(last_touch_at), "age_days": age_days},
             )
+        else:
+            await repo.close_data_gap("attribution_touches_stale")
     elif total_starts == 0:
         await repo.upsert_data_gap(
             gap_key="attribution_touches_empty_day",
-            description="За день нет source_type=start в attribution_touches.",
+            description=(
+                f"Где: club.attribution_touches за {day}. "
+                f"Что: нет ни одного source_type=start. "
+                f"Зачем: KPI3=0 может быть правдой или сбоем логирования."
+            ),
             severity="medium",
             on=day,
         )
+    else:
+        await repo.close_data_gap("attribution_touches_empty_day")
+
     return payload
 
 

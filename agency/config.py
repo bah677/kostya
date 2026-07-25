@@ -74,6 +74,7 @@ class Config:
     ANTHROPIC_API_KEY: str = ""
 
     OPENAI_MODEL: str = "gpt-4o-mini"
+    OPENAI_STRONG_MODEL: str = "gpt-4o"
     OPENAI_WEB_MODEL: str = "gpt-4o-mini-search-preview"
     DEEPSEEK_MODEL: str = "deepseek-v4-flash"
     ANTHROPIC_MODEL: str = "claude-sonnet-4-5"
@@ -113,6 +114,7 @@ def load_config() -> Config:
         DEEPSEEK_API_KEY=(os.getenv("DEEPSEEK_API_KEY") or "").strip(),
         ANTHROPIC_API_KEY=(os.getenv("ANTHROPIC_API_KEY") or "").strip(),
         OPENAI_MODEL=os.getenv("OPENAI_MODEL", "gpt-4o-mini") or "gpt-4o-mini",
+        OPENAI_STRONG_MODEL=os.getenv("OPENAI_STRONG_MODEL", "gpt-4o") or "gpt-4o",
         OPENAI_WEB_MODEL=os.getenv("OPENAI_WEB_MODEL", "gpt-4o-mini-search-preview")
         or "gpt-4o-mini-search-preview",
         DEEPSEEK_MODEL=os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash")

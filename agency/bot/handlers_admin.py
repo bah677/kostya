@@ -318,12 +318,44 @@ def register_with_ctx(dp: Dispatcher, cfg: Config, pools: Pools, bot) -> None:
             logger.exception("agency_run_nums")
             await message.answer(f"Ошибка: {e}")
 
+    @dp.message(_chat_ok(), F.reply_to_message)
+    async def cmd_discuss_brief(message: Message) -> None:
+        if not await _require_admin(cfg, pools, message):
+            return
+        reply = message.reply_to_message
+        if reply is None or not message.from_user:
+            return
+        text = (message.text or message.caption or "").strip()
+        if not text:
+            await message.answer("Напишите текст вопроса реплаем на отчёт.")
+            return
+        await message.answer("Думаю над реплаем…")
+        from agents.bible_bot_manager.discuss import discuss_brief_reply
+
+        try:
+            answer = await discuss_brief_reply(
+                cfg=cfg,
+                pools=pools,
+                chat_id=int(message.chat.id),
+                reply_to_message_id=int(reply.message_id),
+                user_id=int(message.from_user.id),
+                user_text=text,
+            )
+            # reply in thread
+            await message.reply(answer[:4000])
+        except Exception as e:
+            logger.exception("discuss_brief")
+            await message.answer(f"Ошибка обсуждения: {e}")
+
     @dp.message(private)
     async def cmd_fallback_private(message: Message) -> None:
         if message.from_user and await is_agency_admin(
             cfg, pools.agency, message.from_user.id
         ):
-            await message.answer("Неизвестная команда. /adm")
+            await message.answer(
+                "Неизвестная команда. /adm\n"
+                "Или реплай на daily brief, чтобы обсудить отчёт."
+            )
             return
         await message.answer("⛔ Нет доступа.")
 

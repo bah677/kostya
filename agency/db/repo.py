@@ -308,6 +308,132 @@ class AgencyRepo:
                 _j(meta or {}),
             )
 
+    async def close_data_gap(self, gap_key: str) -> None:
+        async with self.pool.acquire() as conn:
+            await conn.execute(
+                """
+                UPDATE data_gaps
+                SET status = 'closed',
+                    last_seen_on = (CURRENT_TIMESTAMP AT TIME ZONE 'Europe/Moscow')::date
+                WHERE gap_key = $1 AND status <> 'closed'
+                """,
+                gap_key,
+            )
+
+    async def register_brief_message(
+        self,
+        *,
+        run_id: int,
+        agent_id: str,
+        chat_id: int,
+        telegram_message_id: int,
+        chunk_index: int = 0,
+    ) -> None:
+        async with self.pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO brief_messages (
+                    run_id, agent_id, chat_id, telegram_message_id, chunk_index
+                ) VALUES ($1,$2,$3,$4,$5)
+                ON CONFLICT (chat_id, telegram_message_id) DO UPDATE SET
+                    run_id = EXCLUDED.run_id
+                """,
+                run_id,
+                agent_id,
+                chat_id,
+                telegram_message_id,
+                chunk_index,
+            )
+
+    async def find_brief_by_reply(
+        self, chat_id: int, reply_to_message_id: int
+    ) -> Optional[Dict[str, Any]]:
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT bm.*, r.run_date, r.status AS run_status
+                FROM brief_messages bm
+                JOIN runs r ON r.id = bm.run_id
+                WHERE bm.chat_id = $1 AND bm.telegram_message_id = $2
+                """,
+                chat_id,
+                reply_to_message_id,
+            )
+        return dict(row) if row else None
+
+    async def get_run_brief_text(self, run_id: int) -> str:
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT body_text FROM artifacts
+                WHERE run_id = $1 AND kind = 'brief_md'
+                ORDER BY id DESC LIMIT 1
+                """,
+                run_id,
+            )
+        return (row["body_text"] if row else "") or ""
+
+    async def get_run_recommendations(self, run_id: int) -> List[Dict[str, Any]]:
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT * FROM recommendations
+                WHERE run_id = $1
+                ORDER BY id
+                """,
+                run_id,
+            )
+        return [dict(r) for r in rows]
+
+    async def add_brief_discussion(
+        self,
+        *,
+        run_id: Optional[int],
+        agent_id: str,
+        chat_id: int,
+        reply_to_message_id: int,
+        user_id: int,
+        user_text: str,
+        assistant_text: str,
+        actions: Optional[dict] = None,
+    ) -> int:
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                INSERT INTO brief_discussions (
+                    run_id, agent_id, chat_id, reply_to_message_id,
+                    user_id, user_text, assistant_text, actions_json
+                ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb)
+                RETURNING id
+                """,
+                run_id,
+                agent_id,
+                chat_id,
+                reply_to_message_id,
+                user_id,
+                user_text,
+                assistant_text,
+                _j(actions or {}),
+            )
+            return int(row["id"])
+
+    async def recent_discussions_for_run(
+        self, run_id: int, limit: int = 10
+    ) -> List[Dict[str, Any]]:
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT user_text, assistant_text, created_at
+                FROM brief_discussions
+                WHERE run_id = $1
+                ORDER BY created_at DESC
+                LIMIT $2
+                """,
+                run_id,
+                limit,
+            )
+        return [dict(r) for r in rows]
+
     async def open_gaps(self, limit: int = 20) -> List[Dict[str, Any]]:
         async with self.pool.acquire() as conn:
             rows = await conn.fetch(
@@ -424,18 +550,23 @@ class AgencyRepo:
     async def content_events_around(
         self, center: datetime, days: int = 3, limit: int = 40
     ) -> List[Dict[str, Any]]:
+        from datetime import timedelta
+
+        delta = timedelta(days=max(0, int(days)))
+        start = center - delta
+        end = center + delta
         async with self.pool.acquire() as conn:
             rows = await conn.fetch(
                 """
                 SELECT * FROM content_events
                 WHERE published_at IS NOT NULL
-                  AND published_at >= $1::timestamptz - ($2 || ' days')::interval
-                  AND published_at <= $1::timestamptz + ($2 || ' days')::interval
+                  AND published_at >= $1
+                  AND published_at <= $2
                 ORDER BY published_at DESC
                 LIMIT $3
                 """,
-                center,
-                str(days),
+                start,
+                end,
                 limit,
             )
         return [dict(r) for r in rows]

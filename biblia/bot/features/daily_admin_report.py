@@ -76,6 +76,13 @@ class DailyAdminReportFeature(BaseFeature):
                 _MSK,
                 config.BIBLIA_REPORT_THREAD_ID or "(general)",
             )
+            # гарантируем таблицу снапшотов (бот — владелец)
+            try:
+                from bot.services.metrics_snapshot_storage import MetricsSnapshotStorage
+
+                await MetricsSnapshotStorage(self.user_storage.pool).ensure_schema()
+            except Exception as e:
+                logger.warning("[%s] ensure metric snapshots: %s", self.name, e)
 
     async def teardown(self) -> None:
         try:

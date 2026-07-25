@@ -57,6 +57,11 @@ ADM_CATALOG: Tuple[AdmEntry, ...] = (
     AdmEntry("/start", "Алиас /help", "info"),
     AdmEntry(
         "—",
+        "Реплай на daily brief — обсуждение отчёта (Claude/GPT-4o), можно пересобрать рекомендации",
+        "info",
+    ),
+    AdmEntry(
+        "—",
         "Ночной cron 03:00 МСК → brief в AGENCY_BRIEF_CHAT_ID",
         "info",
     ),

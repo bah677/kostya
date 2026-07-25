@@ -67,18 +67,21 @@ async def sample_dialog_threads(
         donated_set = {int(r["user_id"]) for r in donated}
 
         # хвост сообщений за день + чуть раньше для контекста
+        from datetime import timedelta
+
+        ctx_start = w.start_utc - timedelta(hours=6)
         msgs = await conn.fetch(
             """
             SELECT user_id, content, role, sender_type, created_at
             FROM messages
             WHERE user_id = ANY($1::bigint[])
-              AND created_at >= $2 - interval '6 hours'
+              AND created_at >= $2
               AND created_at < $3
               AND COALESCE(TRIM(content), '') <> ''
             ORDER BY user_id, created_at
             """,
             uids,
-            w.start_utc,
+            ctx_start,
             w.end_utc,
         )
 
