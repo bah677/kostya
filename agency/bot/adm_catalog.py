@@ -24,8 +24,13 @@ class AdmEntry:
 # Все команды из bot/handlers_admin.py (включая алиасы).
 ADM_CATALOG: Tuple[AdmEntry, ...] = (
     # ops
-    AdmEntry("/agency_run", "Прогон Bible Bot Manager за вчера (с LLM)", "ops"),
-    AdmEntry("/agency_run_nums", "Только KPI / цифры, без LLM", "ops"),
+    AdmEntry("/agency_run", "Прогон всех агентов за вчера (с LLM)", "ops"),
+    AdmEntry("/agency_run_nums", "Bible Bot Manager: только KPI / цифры", "ops"),
+    AdmEntry(
+        "/agency_qa",
+        "QA Manager: error-логи club/biblia/avatar → короткие ТЗ",
+        "ops",
+    ),
     # memory
     AdmEntry(
         "/agency_recs",

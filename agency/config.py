@@ -91,7 +91,21 @@ class Config:
     ENABLE_DRAFT_PR: bool = False
     GITHUB_BIBLIA_PATH: str = str(ROOT.parent / "biblia")
 
+    # QA Manager — корни error-логов (через запятую; пусто = дефолты prod)
+    QA_LOG_ROOTS_CLUB: tuple = ()
+    QA_LOG_ROOTS_BIBLIA: tuple = ()
+    QA_LOG_ROOTS_AVATAR: tuple = ()
+    QA_TOP_CLUSTERS: int = 12
+    QA_DIGEST_MAX_CHARS: int = 28000
+
     TIMEZONE: str = "Europe/Moscow"
+
+
+def _paths(name: str) -> tuple:
+    raw = (os.getenv(name) or "").strip()
+    if not raw:
+        return ()
+    return tuple(p.strip() for p in raw.replace(";", ",").split(",") if p.strip())
 
 
 def load_config() -> Config:
@@ -137,6 +151,11 @@ def load_config() -> Config:
             "GITHUB_BIBLIA_PATH", str(ROOT.parent / "biblia")
         )
         or str(ROOT.parent / "biblia"),
+        QA_LOG_ROOTS_CLUB=_paths("QA_LOG_ROOTS_CLUB"),
+        QA_LOG_ROOTS_BIBLIA=_paths("QA_LOG_ROOTS_BIBLIA"),
+        QA_LOG_ROOTS_AVATAR=_paths("QA_LOG_ROOTS_AVATAR"),
+        QA_TOP_CLUSTERS=_int("QA_TOP_CLUSTERS", 12),
+        QA_DIGEST_MAX_CHARS=_int("QA_DIGEST_MAX_CHARS", 28000),
     )
 
 

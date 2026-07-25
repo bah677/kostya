@@ -65,10 +65,11 @@ async def discuss_brief_reply(
     if not brief_row:
         return (
             "Не вижу связанный daily brief для этого реплая. "
-            "Ответьте именно на сообщение отчёта Bible Bot Manager."
+            "Ответьте именно на сообщение отчёта агентства."
         )
 
     run_id = int(brief_row["run_id"])
+    agent_id = str(brief_row.get("agent_id") or AGENT_ID)
     brief_text = await repo.get_run_brief_text(run_id)
     recs = await repo.get_run_recommendations(run_id)
     prior = await repo.recent_discussions_for_run(run_id, limit=6)
@@ -103,7 +104,7 @@ async def discuss_brief_reply(
     res = await _call_strong(hub, cfg, user_block)
     await repo.log_llm_call(
         run_id=run_id,
-        agent_id=AGENT_ID,
+        agent_id=agent_id,
         provider=res.provider,
         model=res.model,
         role_in_panel="discuss",
@@ -143,7 +144,7 @@ async def discuss_brief_reply(
             if not isinstance(a, dict):
                 continue
             rid = await repo.add_recommendation(
-                agent_id=AGENT_ID,
+                agent_id=agent_id,
                 run_id=run_id,
                 created_on=run_day,
                 title=str(a.get("title") or "revised")[:300],

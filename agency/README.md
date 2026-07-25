@@ -2,7 +2,9 @@
 
 Отдельный проект: потребитель данных `biblia` + `club` (+ RAG), советник с памятью и мульти-LLM панелью.
 
-Первый агент: **Bible Bot Manager** (ночью 03:00 МСК).
+Агенты (ночью 03:00 МСК):
+- **Bible Bot Manager** — KPI / рекомендации
+- **QA Manager** — ERROR-логи club/biblia/avatar (все ротации) → короткие ТЗ
 
 ## Быстрый старт
 
@@ -41,10 +43,13 @@ python3 -m venv .venv
 ### 4. Ручной прогон
 
 ```bash
-.venv/bin/python main.py run --skip-llm          # только KPI
+.venv/bin/python main.py run --skip-llm          # все агенты, без LLM
 .venv/bin/python main.py run                     # полный цикл с LLM
+.venv/bin/python main.py run --agent qa          # только QA Manager
 .venv/bin/python main.py run --day 2026-07-25
 ```
+
+TG: `/agency_qa` — ручной прогон QA.
 
 ### 5. Бот + cron / «деплой»
 

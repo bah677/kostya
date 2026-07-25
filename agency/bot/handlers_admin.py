@@ -69,8 +69,9 @@ def register_with_ctx(dp: Dispatcher, cfg: Config, pools: Pools, bot) -> None:
         await message.answer(
             "Agency bot\n"
             "/adm — панель команд\n"
-            "/agency_run — прогон с LLM\n"
-            "/agency_run_nums — только KPI\n"
+            "/agency_run — прогон всех агентов (с LLM)\n"
+            "/agency_run_nums — Bible Bot Manager: только KPI\n"
+            "/agency_qa — QA Manager: error-логи → ТЗ\n"
             "/agency_recs — рекомендации\n"
             "/agency_gaps — пробелы данных\n"
             "/admins /admin_add /admin_del — только супер-админ"
@@ -289,13 +290,16 @@ def register_with_ctx(dp: Dispatcher, cfg: Config, pools: Pools, bot) -> None:
     async def cmd_run_llm(message: Message) -> None:
         if not await _require_admin(cfg, pools, message):
             return
-        await message.answer("Запускаю…")
+        await message.answer("Запускаю всех агентов…")
         from runtime.orchestrator import run_nightly
 
         try:
-            result = await run_nightly(cfg=cfg, pools=pools, bot=bot, skip_llm=False)
+            result = await run_nightly(
+                cfg=cfg, pools=pools, bot=bot, skip_llm=False, agent="all"
+            )
             await message.answer(
-                f"Готово: {result.get('status')} run_id={result.get('run_id')}"
+                f"Готово: {result.get('status')} "
+                f"bbm={result.get('run_id')} qa={result.get('qa_run_id')}"
             )
         except Exception as e:
             logger.exception("agency_run")
@@ -305,17 +309,49 @@ def register_with_ctx(dp: Dispatcher, cfg: Config, pools: Pools, bot) -> None:
     async def cmd_run_nums(message: Message) -> None:
         if not await _require_admin(cfg, pools, message):
             return
-        await message.answer("KPI-only…")
+        await message.answer("KPI-only (Bible Bot Manager)…")
         from runtime.orchestrator import run_nightly
 
         try:
-            result = await run_nightly(cfg=cfg, pools=pools, bot=bot, skip_llm=True)
-            text = result.get("brief") or str(result)
+            result = await run_nightly(
+                cfg=cfg,
+                pools=pools,
+                bot=bot,
+                skip_llm=True,
+                agent="bible_bot_manager",
+            )
+            text = (result.get("agents") or {}).get("bible_bot_manager", {}).get(
+                "brief"
+            ) or result.get("brief") or str(result)
             if len(text) > 3500:
                 text = text[:3500] + "…"
             await message.answer(text)
         except Exception as e:
             logger.exception("agency_run_nums")
+            await message.answer(f"Ошибка: {e}")
+
+    @dp.message(Command("agency_qa"), _chat_ok())
+    async def cmd_qa(message: Message) -> None:
+        if not await _require_admin(cfg, pools, message):
+            return
+        await message.answer("QA Manager: читаю error-логи…")
+        from runtime.orchestrator import run_nightly
+
+        try:
+            result = await run_nightly(
+                cfg=cfg, pools=pools, bot=bot, skip_llm=False, agent="qa_manager"
+            )
+            text = (result.get("agents") or {}).get("qa_manager", {}).get(
+                "brief"
+            ) or result.get("brief") or str(result)
+            await message.answer(
+                f"Готово: {result.get('status')} run_id={result.get('qa_run_id')}"
+            )
+            if len(text) > 3500:
+                text = text[:3500] + "…"
+            await message.answer(text)
+        except Exception as e:
+            logger.exception("agency_qa")
             await message.answer(f"Ошибка: {e}")
 
     @dp.message(_chat_ok(), F.reply_to_message)

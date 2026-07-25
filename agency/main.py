@@ -107,7 +107,7 @@ async def run_bot() -> None:
         await bot.session.close()
 
 
-async def run_once(day: str | None, skip_llm: bool) -> None:
+async def run_once(day: str | None, skip_llm: bool, agent: str) -> None:
     cfg = load_config()
     pools = Pools()
     await pools.open(cfg)
@@ -118,7 +118,7 @@ async def run_once(day: str | None, skip_llm: bool) -> None:
     try:
         d = date.fromisoformat(day) if day else None
         result = await run_nightly(
-            cfg=cfg, pools=pools, bot=bot, day=d, skip_llm=skip_llm
+            cfg=cfg, pools=pools, bot=bot, day=d, skip_llm=skip_llm, agent=agent
         )
         print(result.get("brief") or result)
     finally:
@@ -137,6 +137,11 @@ def main() -> None:
     )
     parser.add_argument("--day", help="YYYY-MM-DD (default: yesterday MSK)")
     parser.add_argument("--skip-llm", action="store_true")
+    parser.add_argument(
+        "--agent",
+        default="all",
+        help="bible_bot_manager | qa_manager | all (default all)",
+    )
     args = parser.parse_args()
 
     if args.command == "bot":
@@ -151,8 +156,7 @@ def main() -> None:
 
         asyncio.run(_m())
     else:
-        asyncio.run(run_once(args.day, args.skip_llm))
-
+        asyncio.run(run_once(args.day, args.skip_llm, args.agent))
 
 if __name__ == "__main__":
     main()
