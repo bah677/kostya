@@ -18,6 +18,7 @@ from bot.features.club_scripture_pulse import ClubScripturePulseFeature
 from bot.features.club_schedule import ClubScheduleFeature
 from bot.features.club_group import ClubGroupFeature
 from bot.features.club_outreach_dm import ClubOutreachDmFeature
+from bot.features.club_topic_assist import ClubTopicAssistFeature
 from bot.features.followup import FollowupFeature
 from bot.features.legacy_103_reactivation import Legacy103ReactivationFeature
 from bot.features.legal_consent import LegalConsentFeature
@@ -152,6 +153,11 @@ class TelegramBot(TelegramBotApp):
             bot=self.bot,
         )
 
+        club_topic_assist_feature = ClubTopicAssistFeature(
+            user_storage=self.user_storage,
+            bot=self.bot,
+        )
+
         gift_activation_feature = GiftActivationFeature(
             user_storage=self.user_storage,
             bot=self.bot,
@@ -226,9 +232,11 @@ class TelegramBot(TelegramBotApp):
         if _shared_llm:
             subscription_reminder_feature.set_llm_client(_shared_llm)
             member_proactive_feature.set_llm_client(_shared_llm)
+            club_topic_assist_feature.set_llm_client(_shared_llm)
 
         subscription_reminder_feature.set_rag_stack(self.rag_stack)
         member_proactive_feature.set_rag_stack(self.rag_stack)
+        club_topic_assist_feature.set_rag_stack(self.rag_stack)
 
         features = [
             onboarding_feature,
@@ -245,6 +253,7 @@ class TelegramBot(TelegramBotApp):
             club_digest_feature,
             club_scripture_pulse_feature,
             club_outreach_dm_feature,
+            club_topic_assist_feature,
             gift_activation_feature,
             subscription_info_feature,
             mailing_feature,

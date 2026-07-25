@@ -186,6 +186,13 @@ HELP_CATALOG: Tuple[HelpEntry, ...] = (
         "outreach",
     ),
     HelpEntry(
+        "—",
+        "Топик «общение»: ассистент с ephemeral (пилот) — "
+        "<code>CLUB_TOPIC_ASSIST_ENABLED</code> + thread/mirror в .env; когорта как outreach",
+        "admin",
+        "outreach",
+    ),
+    HelpEntry(
         "/schedule",
         "Расписание: week (по умолч.), <code>today</code>, <code>raw</code>, <code>2weeks</code>",
         "admin",

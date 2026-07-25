@@ -15,6 +15,10 @@ CLUB_DIGEST_PERSONALIZE = "club_digest_personalize"
 CLUB_SCRIPTURE_PERSONALIZE = "club_scripture_personalize"
 CLUB_OUTREACH_POLICY = "club_outreach_policy"
 
+# Ассистент в топике «общение» (ephemeral / public)
+CLUB_TOPIC_ASSIST_CLASSIFY = "club_topic_assist_classify"
+CLUB_TOPIC_ASSIST_ANSWER = "club_topic_assist_answer"
+
 # Прочие (должны логироваться при рефакторинге)
 WISH_BUTTON_TITLE = "wish_button_title"
 CLUB_SCHEDULE_EXTRACT = "club_schedule_extract"

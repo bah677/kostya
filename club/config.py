@@ -229,6 +229,21 @@ class Config:
     CLUB_OUTREACH_PILOT_LOOKBACK_DAYS: int = 30
     CLUB_OUTREACH_DAILY_LIMIT: int = 3
 
+    #: Ассистент в топике клубной группы (ephemeral Bot API 10.2 + RAG).
+    CLUB_TOPIC_ASSIST_ENABLED: bool = False
+    #: Только пилотная когорта (member_outreach_state.pilot_cohort).
+    CLUB_TOPIC_ASSIST_PILOT_ONLY: bool = True
+    #: message_thread_id топика «общение» в CLUB_GROUP_ID.
+    CLUB_TOPIC_ASSIST_THREAD_ID: int = 0
+    #: Разрешить обычные (всем видимые) ответы при «общем» вопросе.
+    CLUB_TOPIC_ASSIST_PUBLIC_ENABLED: bool = False
+    #: Зеркало ответов в отдельную форум-группу (контроль пилота).
+    CLUB_TOPIC_ASSIST_MIRROR_ENABLED: bool = False
+    CLUB_TOPIC_ASSIST_MIRROR_GROUP_ID: int = 0
+    CLUB_TOPIC_ASSIST_DEBOUNCE_SEC: float = 3.0
+    CLUB_TOPIC_ASSIST_CONTEXT_MSGS: int = 4
+    CLUB_TOPIC_ASSIST_HOURLY_LIMIT: int = 8
+
     def __post_init__(self):
         self._validate_required()
 
@@ -284,6 +299,16 @@ class Config:
     def club_outreach_dm_active(self) -> bool:
         """Дайджест и цитаты в личку (batch + LLM per user)."""
         return bool(self.CLUB_OUTREACH_DM_ENABLED and (self.DEEPSEEK_API_KEY or "").strip())
+
+    @property
+    def club_topic_assist_active(self) -> bool:
+        """Ассистент в топике общения: ephemeral/public + RAG."""
+        return bool(
+            self.CLUB_TOPIC_ASSIST_ENABLED
+            and self.CLUB_GROUP_ID
+            and self.CLUB_TOPIC_ASSIST_THREAD_ID > 0
+            and (self.DEEPSEEK_API_KEY or "").strip()
+        )
 
     @property
     def club_digest_group_active(self) -> bool:
@@ -644,6 +669,29 @@ def load_config() -> Config:
         ),
         CLUB_OUTREACH_DAILY_LIMIT=_safe_int_env(
             "CLUB_OUTREACH_DAILY_LIMIT", 3, min_v=1, max_v=20
+        ),
+        CLUB_TOPIC_ASSIST_ENABLED=_env_bool("CLUB_TOPIC_ASSIST_ENABLED", False),
+        CLUB_TOPIC_ASSIST_PILOT_ONLY=_env_bool("CLUB_TOPIC_ASSIST_PILOT_ONLY", True),
+        CLUB_TOPIC_ASSIST_THREAD_ID=int(
+            os.getenv("CLUB_TOPIC_ASSIST_THREAD_ID", "0") or "0"
+        ),
+        CLUB_TOPIC_ASSIST_PUBLIC_ENABLED=_env_bool(
+            "CLUB_TOPIC_ASSIST_PUBLIC_ENABLED", False
+        ),
+        CLUB_TOPIC_ASSIST_MIRROR_ENABLED=_env_bool(
+            "CLUB_TOPIC_ASSIST_MIRROR_ENABLED", False
+        ),
+        CLUB_TOPIC_ASSIST_MIRROR_GROUP_ID=int(
+            os.getenv("CLUB_TOPIC_ASSIST_MIRROR_GROUP_ID", "0") or "0"
+        ),
+        CLUB_TOPIC_ASSIST_DEBOUNCE_SEC=float(
+            os.getenv("CLUB_TOPIC_ASSIST_DEBOUNCE_SEC", "3") or "3"
+        ),
+        CLUB_TOPIC_ASSIST_CONTEXT_MSGS=_safe_int_env(
+            "CLUB_TOPIC_ASSIST_CONTEXT_MSGS", 4, min_v=1, max_v=10
+        ),
+        CLUB_TOPIC_ASSIST_HOURLY_LIMIT=_safe_int_env(
+            "CLUB_TOPIC_ASSIST_HOURLY_LIMIT", 8, min_v=1, max_v=50
         ),
     )
 

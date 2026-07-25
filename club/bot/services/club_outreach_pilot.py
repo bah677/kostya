@@ -1,4 +1,4 @@
-"""Пилотная группа для клубных рассылок в личку."""
+"""Пилотная группа для клубных рассылок в личку и topic-assist."""
 
 from __future__ import annotations
 
@@ -56,3 +56,11 @@ async def resolve_outreach_recipients(user_storage) -> List[int]:
         return await refresh_pilot_cohort(user_storage)
 
     return await user_storage.list_user_ids_with_active_license()
+
+
+async def user_in_pilot_cohort(user_storage, user_id: int) -> bool:
+    """True, если user_id в актуальной пилотной когорте (при пустой — refresh)."""
+    ids = await user_storage.list_pilot_outreach_user_ids()
+    if not ids:
+        ids = await refresh_pilot_cohort(user_storage)
+    return int(user_id) in {int(x) for x in ids}
