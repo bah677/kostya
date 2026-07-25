@@ -128,6 +128,9 @@ class YandexDiskWebDAV:
             content=body,
             headers={"Depth": "1", "Content-Type": "application/xml"},
         )
+        if r.status_code == 404:
+            logger.warning("WebDAV 404: папка не найдена: %s", dir_path)
+            return []
         r.raise_for_status()
         return self._parse_propfind(r.text)
 

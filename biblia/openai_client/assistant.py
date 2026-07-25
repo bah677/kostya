@@ -10,6 +10,7 @@
 
 import logging
 import uuid
+import asyncio
 from datetime import datetime
 from typing import Any, Dict, Optional
 
@@ -102,56 +103,79 @@ class OpenAIClient:
         audio_file_path: str,
         user_id: int,
         duration_sec: Optional[int] = None,
+        *,
+        max_attempts: int = 3,
     ) -> Optional[str]:
-        """Распознаёт аудиофайл через Whisper."""
+        """Распознаёт аудиофайл через Whisper (с ретраями на 5xx)."""
         start_time = datetime.now()
+        last_err: Optional[Exception] = None
 
-        try:
-            with open(audio_file_path, "rb") as audio_file:
-                transcript = await self.client.audio.transcriptions.create(
+        for attempt in range(1, max(1, max_attempts) + 1):
+            try:
+                with open(audio_file_path, "rb") as audio_file:
+                    transcript = await self.client.audio.transcriptions.create(
+                        model="whisper-1",
+                        file=audio_file,
+                        prompt=(
+                            "Если в аудио нет речи, просто верни [тишина]. "
+                            "Если в аудио посторонние шумы, но не слышно слов, "
+                            "ответить текстом [шум, слов не разобрать]"
+                        ),
+                        response_format="text",
+                    )
+
+                processing_time = (datetime.now() - start_time).total_seconds()
+
+                await self._log_llm_metrics(
+                    user_id=user_id,
+                    provider="openai",
                     model="whisper-1",
-                    file=audio_file,
-                    prompt=(
-                        "Если в аудио нет речи, просто верни [тишина]. "
-                        "Если в аудио посторонние шумы, но не слышно слов, "
-                        "ответить текстом [шум, слов не разобрать]"
-                    ),
-                    response_format="text",
+                    usage=None,
+                    request_kind="whisper_transcription",
+                    duration_sec=duration_sec,
+                    metadata={
+                        "processing_time_sec": processing_time,
+                        "audio_duration_sec": duration_sec,
+                        "transcription_length": len(transcript) if transcript else 0,
+                        "attempt": attempt,
+                    },
                 )
 
-            processing_time = (datetime.now() - start_time).total_seconds()
+                return transcript or None
 
-            await self._log_llm_metrics(
-                user_id=user_id,
-                provider="openai",
-                model="whisper-1",
-                usage=None,
-                request_kind="whisper_transcription",
-                duration_sec=duration_sec,
-                metadata={
-                    "processing_time_sec": processing_time,
-                    "audio_duration_sec": duration_sec,
-                    "transcription_length": len(transcript) if transcript else 0,
-                },
-            )
+            except Exception as e:
+                last_err = e
+                err = str(e)
+                if "insufficient_quota" in err:
+                    logger.warning("⚠️ Whisper quota exceeded for user %s", user_id)
+                    raise WhisperQuotaExceededError(err) from e
+                retryable = any(
+                    x in err.lower()
+                    for x in ("500", "502", "503", "504", "server_error", "timeout")
+                )
+                if retryable and attempt < max_attempts:
+                    delay = min(2 ** attempt, 8)
+                    logger.warning(
+                        "Whisper attempt %s/%s failed (%s); retry in %ss",
+                        attempt,
+                        max_attempts,
+                        err[:180],
+                        delay,
+                    )
+                    await asyncio.sleep(delay)
+                    continue
+                logger.error("❌ Whisper transcription failed: %s", e)
+                break
 
-            return transcript or None
-
-        except Exception as e:
-            err = str(e)
-            if "insufficient_quota" in err:
-                logger.warning("⚠️ Whisper quota exceeded for user %s", user_id)
-                raise WhisperQuotaExceededError(err) from e
-            logger.error(f"❌ Whisper transcription failed: {e}")
-            await self.user_storage.log_interaction(
-                user_id=user_id,
-                event_category="openai",
-                event_type="whisper_error",
-                data={"error": str(e), "duration_sec": duration_sec},
-                source="openai",
-                outcome="error",
-            )
-            return None
+        await self.user_storage.log_interaction(
+            user_id=user_id,
+            event_category="openai",
+            event_type="whisper_error",
+            data={"error": str(last_err), "duration_sec": duration_sec},
+            source="openai",
+            outcome="error",
+        )
+        return None
 
     # =====================================================
     # VISION: описание фото

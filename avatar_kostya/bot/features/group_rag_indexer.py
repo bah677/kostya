@@ -43,6 +43,7 @@ from bot.features.rag_source_visibility import (
     resolve_source_visibility,
     youtube_public_link,
 )
+from bot.features.rag_tags import extract_content_tags
 from bot.media_processing.processors.youtube import (
     extract_youtube_urls,
     download_youtube_audio,

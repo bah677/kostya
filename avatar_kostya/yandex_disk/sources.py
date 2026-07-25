@@ -23,6 +23,8 @@ class YandexDiskSource:
     default_content_type: str = ""
     recursive: bool = False
     enabled: bool = True
+    #: запасные пути, если основной дал 404 / пусто
+    alternate_paths: List[str] = field(default_factory=list)
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> Optional["YandexDiskSource"]:
@@ -37,6 +39,12 @@ class YandexDiskSource:
             masks = [m.strip() for m in masks_raw.split(",") if m.strip()]
         else:
             masks = [str(m).strip() for m in masks_raw if str(m).strip()]
+        alts_raw = data.get("alternate_paths") or data.get("path_fallbacks") or []
+        if isinstance(alts_raw, str):
+            alts = [a.strip() for a in alts_raw.split(",") if a.strip()]
+        else:
+            alts = [str(a).strip() for a in alts_raw if str(a).strip()]
+        alts = [a if a.startswith("/") else f"/{a}" for a in alts]
         return cls(
             id=sid,
             path=path if path.startswith("/") else f"/{path}",
@@ -46,6 +54,7 @@ class YandexDiskSource:
             default_content_type=str(data.get("default_content_type") or "").strip(),
             recursive=bool(data.get("recursive", False)),
             enabled=bool(data.get("enabled", True)),
+            alternate_paths=alts,
         )
 
 

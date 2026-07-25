@@ -80,6 +80,12 @@ class VoiceProcessor(BaseProcessor):
 
                 converted_path = await self._convert_audio(file_path)
                 if not converted_path:
+                    logger.error(
+                        "❌ Audio conversion failed; cannot retry Whisper "
+                        "(file=%s duration=%s)",
+                        file_path,
+                        duration,
+                    )
                     raise Exception("Audio conversion failed")
 
                 logger.info(f"✅ Audio converted to: {converted_path}")
@@ -99,8 +105,13 @@ class VoiceProcessor(BaseProcessor):
                 logger.info("✅ Direct transcription successful")
 
             if transcribed_text is None and not quota_exceeded:
-                logger.error("❌ Transcription failed after conversion attempt")
-            
+                logger.error(
+                    "❌ Transcription failed after conversion "
+                    "(Whisper returned empty; file=%s converted=%s duration=%s)",
+                    file_path,
+                    converted_path,
+                    duration,
+                )            
             processing_time = self._end_timer(start_time)
             
             # Формируем результат

@@ -130,13 +130,59 @@ class YandexDiskSyncService:
                 results.append(r)
         return results
 
+    async def _list_source_files(
+        self, source: YandexDiskSource
+    ) -> tuple[str, List[RemoteFile]]:
+        """list_files с alternate_paths; возвращает (used_path, files)."""
+        paths = [source.path] + [
+            p for p in (source.alternate_paths or []) if p and p != source.path
+        ]
+        files: List[RemoteFile] = []
+        used_path = paths[0]
+        for p in paths:
+            used_path = p
+            try:
+                files = await self._webdav.list_files(p, recursive=source.recursive)
+            except Exception as e:
+                err = str(e)
+                if "404" in err:
+                    logger.warning(
+                        "yandex_disk source %s: path missing %s (%s)",
+                        source.id,
+                        p,
+                        err[:160],
+                    )
+                    files = []
+                else:
+                    raise
+            if files:
+                break
+            if p != paths[-1]:
+                logger.info(
+                    "yandex_disk source %s: нет файлов на %s, пробуем alternate",
+                    source.id,
+                    p,
+                )
+        if used_path != source.path and files:
+            logger.warning(
+                "yandex_disk source %s: используем path=%s (основной %s недоступен/пуст)",
+                source.id,
+                used_path,
+                source.path,
+            )
+        if not files:
+            logger.error(
+                "yandex_disk source %s: ни один путь не дал файлов: %s",
+                source.id,
+                paths,
+            )
+        return used_path, files
+
     async def sync_source(
         self, source: YandexDiskSource, *, since: Optional[datetime] = None
     ) -> SyncResult:
         res = SyncResult(source_id=source.id)
-        files = await self._webdav.list_files(
-            source.path, recursive=source.recursive
-        )
+        _used, files = await self._list_source_files(source)
         res.scanned = len(files)
         for rf in files:
             if since is not None and not self._file_modified_since(rf, since):
@@ -167,9 +213,7 @@ class YandexDiskSyncService:
         since = datetime.now(timezone.utc) - timedelta(days=stats.days)
         for src in self._sources:
             try:
-                files = await self._webdav.list_files(
-                    src.path, recursive=src.recursive
-                )
+                _used, files = await self._list_source_files(src)
                 stats.scanned += len(files)
                 for rf in files:
                     if not self._file_modified_since(rf, since):

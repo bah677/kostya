@@ -58,6 +58,51 @@ def _strip_json_fence(raw: str) -> str:
     return t.strip()
 
 
+def _parse_llm_json_obj(raw: str) -> Dict[str, Any]:
+    """Парсит JSON от LLM; терпит fence и слегка битый JSON (unterminated string)."""
+    t = _strip_json_fence(raw)
+    if not t:
+        raise json.JSONDecodeError("empty", t, 0)
+
+    candidates = [t]
+    m = re.search(r"\{[\s\S]*\}", t)
+    if m and m.group(0) not in candidates:
+        candidates.append(m.group(0))
+
+    last_err: Optional[Exception] = None
+    for cand in candidates:
+        try:
+            data = json.loads(cand)
+            if isinstance(data, dict):
+                return data
+        except json.JSONDecodeError as e:
+            last_err = e
+
+        # грубый ремонт: закрыть незакрытую строку/объект
+        repaired = cand
+        if repaired.count('"') % 2 == 1:
+            repaired = repaired + '"'
+        # закрыть скобки
+        open_curly = repaired.count("{") - repaired.count("}")
+        open_square = repaired.count("[") - repaired.count("]")
+        if open_square > 0:
+            repaired += "]" * open_square
+        if open_curly > 0:
+            repaired += "}" * open_curly
+        # убрать висячие запятые перед } ]
+        repaired = re.sub(r",\s*([}\]])", r"\1", repaired)
+        try:
+            data = json.loads(repaired)
+            if isinstance(data, dict):
+                logger.warning("stuck LLM JSON repaired after decode error")
+                return data
+        except json.JSONDecodeError as e:
+            last_err = e
+
+    if last_err:
+        raise last_err
+    raise json.JSONDecodeError("not an object", t, 0)
+
 async def _log_llm(
     user_storage: Optional["Database"],
     *,
@@ -118,7 +163,24 @@ async def analyze_dialog(
         usage=getattr(resp, "usage", None),
     )
     raw = _strip_json_fence(resp.choices[0].message.content or "")
-    data = json.loads(raw)
+    try:
+        data = _parse_llm_json_obj(raw)
+    except json.JSONDecodeError as e:
+        logger.warning(
+            "stuck analyzer JSON failed: %s; raw_head=%r",
+            e,
+            raw[:400],
+        )
+        return {
+            "topic_label": "",
+            "stuck_point": "",
+            "user_need": "",
+            "rag_focus": "",
+            "tone_notes": "",
+            "ping_line": "",
+            "sensitive": False,
+            "error": f"analyzer_json:{e}",
+        }
     return {
         "topic_label": str(data.get("topic_label") or "").strip(),
         "stuck_point": str(data.get("stuck_point") or "").strip(),
@@ -174,7 +236,11 @@ async def plan_stuck_rag(
         usage=getattr(resp, "usage", None),
     )
     raw = _strip_json_fence(resp.choices[0].message.content or "")
-    data = json.loads(raw)
+    try:
+        data = _parse_llm_json_obj(raw)
+    except json.JSONDecodeError as e:
+        logger.warning("stuck rag planner JSON failed: %s; using heuristic", e)
+        return heuristic
     llm_plan = RagSearchPlan(
         semantic_queries=_dedupe_str_list(
             [str(q) for q in (data.get("semantic_queries") or []) if q]
@@ -285,6 +351,8 @@ async def run_full_stuck_pipeline(
     )
     if analysis.get("sensitive"):
         return {"sensitive": True, "analysis": analysis}
+    if analysis.get("error"):
+        return {"error": analysis["error"], "sensitive": False, "analysis": analysis}
 
     expert, golden, plan = "", "", None
     chunk_count = 0

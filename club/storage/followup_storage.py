@@ -13,11 +13,24 @@ def _utc_now() -> datetime:
 
 
 def _as_utc(dt: Optional[datetime]) -> Optional[datetime]:
+    """Aware UTC (для timestamptz, например last_assistant_at)."""
     if dt is None:
         return None
     if dt.tzinfo is None:
         return dt.replace(tzinfo=timezone.utc)
     return dt.astimezone(timezone.utc)
+
+
+def _as_utc_naive(dt: Optional[datetime]) -> Optional[datetime]:
+    """Naive UTC для колонок timestamp without time zone (started_at).
+
+    asyncpg падает с «can't subtract offset-naive and offset-aware»,
+    если в timestamp без TZ передать aware datetime.
+    """
+    aware = _as_utc(dt)
+    if aware is None:
+        return None
+    return aware.replace(tzinfo=None)
 
 
 class FollowupStorage:
@@ -104,9 +117,9 @@ class FollowupStorage:
         try:
             async with self.pool.acquire() as conn:
                 if started_at is None and reset_timer:
-                    started_at = _utc_now()
+                    started_at = _as_utc_naive(_utc_now())
                 else:
-                    started_at = _as_utc(started_at)
+                    started_at = _as_utc_naive(started_at)
                 last_assistant_at = _as_utc(last_assistant_at)
 
                 terminal = (901, 997, 998, 999, 203, 112, 122)
@@ -257,8 +270,7 @@ class FollowupStorage:
         """Проверяет, был ли недавний лог отправки"""
         try:
             async with self.pool.acquire() as conn:
-                # 🔥 ВЫЧИСЛЯЕМ ДАТУ В PYTHON
-                cutoff_time = datetime.now() - timedelta(minutes=minutes)
+                cutoff_time = _as_utc_naive(_utc_now() - timedelta(minutes=minutes))
                 
                 # 🔥 ИСПРАВЛЯЕМ: только 2 параметра
                 row = await conn.fetchval("""

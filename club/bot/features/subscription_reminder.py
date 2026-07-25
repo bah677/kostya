@@ -424,10 +424,13 @@ class SubscriptionReminderFeature(BaseFeature):
         text: str,
         keyboard: Optional[InlineKeyboardMarkup],
     ) -> bool:
+        from bot.utils.telegram_html import sanitize_telegram_html
+
+        safe_text = sanitize_telegram_html(text)
         try:
             await self.bot.send_message(
                 chat_id=user_id,
-                text=text,
+                text=safe_text,
                 reply_markup=keyboard,
                 parse_mode=ParseMode.HTML,
             )

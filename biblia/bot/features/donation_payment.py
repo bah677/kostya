@@ -755,5 +755,12 @@ class DonationPaymentFeature(BaseFeature):
 
     async def _cancel(self, callback: CallbackQuery, state: FSMContext) -> None:
         await state.clear()
-        await callback.message.delete()
+        try:
+            await callback.message.delete()
+        except Exception as e:
+            logger.info("donation cancel: delete skipped: %s", e)
+            try:
+                await callback.message.edit_text("❌ Операция отменена")
+            except Exception:
+                pass
         await callback.answer("❌ Операция отменена")
