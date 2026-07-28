@@ -30,11 +30,13 @@ from bot.services.prayer_stress import (
     dictionary_hits,
     parse_prayer_stress_words,
 )
+from bot.services.prayer_tts_queue import PrayerTtsQueue, get_prayer_tts_queue
 from bot.services.voicebox_tts import VoiceboxPrayerTTS, format_prayer_for_tts
 from bot.services.yandex_speechkit import YandexSpeechKitTTS
 from bot.states import PrayerStates
 from bot.utils.admin_channel import admin_channel_chat_id
 from bot.utils.chat_actions import record_voice_chat_action
+from config import config
 from openai_client.agents_client import AgentsClient
 from openai_client.prayer_prompt import (
     PRAYER_COMPOSE_SYSTEM_PROMPT,
@@ -122,6 +124,9 @@ class PersonalPrayerFeature(BaseFeature):
         self.agents_client: Optional[AgentsClient] = None
         self.voicebox = VoiceboxPrayerTTS()
         self.speechkit = YandexSpeechKitTTS()
+        self.tts_queue: PrayerTtsQueue = get_prayer_tts_queue(
+            max_concurrent=int(getattr(config, "PRAYER_TTS_MAX_CONCURRENT", 1) or 1)
+        )
         self._stress_dict_cache: dict[str, str] = {}
 
     @property
@@ -139,10 +144,11 @@ class PersonalPrayerFeature(BaseFeature):
         self._stress_dict_cache = await self.user_storage.get_prayer_stress_dictionary()
         if self.voicebox.configured:
             logger.info(
-                "[%s] Voicebox TTS готов (profile=%s atempo=%s)",
+                "[%s] Voicebox TTS готов (profile=%s atempo=%s queue_max=%s)",
                 self.name,
                 self.voicebox.profile_id[:8],
                 self.voicebox.atempo,
+                self.tts_queue.max_concurrent,
             )
         elif self.speechkit.configured:
             logger.info(
@@ -301,9 +307,13 @@ class PersonalPrayerFeature(BaseFeature):
                 async with record_voice_chat_action(
                     bot, message.chat.id, message_thread_id=message.message_thread_id
                 ):
-                    prayer_text, ogg = await self._compose_and_synthesize(uid, turns)
+                    prayer_text, ogg = await self._compose_and_synthesize(
+                        uid, turns, wait_msg=wait_msg
+                    )
             else:
-                prayer_text, ogg = await self._compose_and_synthesize(uid, turns)
+                prayer_text, ogg = await self._compose_and_synthesize(
+                    uid, turns, wait_msg=wait_msg
+                )
 
             if not prayer_text:
                 await wait_msg.edit_text(
@@ -329,10 +339,26 @@ class PersonalPrayerFeature(BaseFeature):
         finally:
             await state.clear()
 
+    async def _notify_tts_queue(
+        self, wait_msg: Optional[Message], ahead: int
+    ) -> None:
+        if wait_msg is None or ahead <= 0:
+            return
+        try:
+            await wait_msg.edit_text(
+                "Сейчас много обращений, и генерация голоса занимает время.\n"
+                f"Пожалуйста, подождите — ваша молитва в очереди "
+                f"(перед вами примерно {ahead})."
+            )
+        except Exception as e:
+            logger.debug("[%s] queue wait notify failed: %s", self.name, e)
+
     async def _compose_and_synthesize(
         self,
         uid: int,
         turns: List[str],
+        *,
+        wait_msg: Optional[Message] = None,
     ) -> tuple[Optional[str], Optional[bytes]]:
         logger.info("[%s] compose start uid=%s turns=%s", self.name, uid, len(turns))
         prayer_text = await self._compose_prayer(uid, turns)
@@ -353,29 +379,74 @@ class PersonalPrayerFeature(BaseFeature):
         tts = self.tts
         if tts.configured:
             engine = "voicebox" if tts is self.voicebox else "speechkit"
-            logger.info("[%s] TTS start uid=%s engine=%s", self.name, uid, engine)
-            try:
-                ogg = await tts.synthesize_ogg_opus(tts_text)
-            except Exception as e:
-                logger.error("[%s] TTS failed uid=%s engine=%s: %s", self.name, uid, engine, e)
-                if tts is self.voicebox and self.speechkit.configured:
-                    logger.info("[%s] TTS fallback SpeechKit uid=%s", self.name, uid)
-                    try:
-                        ogg = await self.speechkit.synthesize_ogg_opus(tts_text)
-                    except Exception as e2:
-                        logger.error(
-                            "[%s] SpeechKit fallback failed uid=%s: %s",
-                            self.name,
-                            uid,
-                            e2,
-                        )
-            else:
+            use_queue = tts is self.voicebox
+
+            async def _synth_voicebox() -> Optional[bytes]:
+                logger.info("[%s] TTS start uid=%s engine=voicebox", self.name, uid)
+                try:
+                    audio = await self.voicebox.synthesize_ogg_opus(tts_text)
+                except Exception as e:
+                    logger.error(
+                        "[%s] TTS failed uid=%s engine=voicebox: %s", self.name, uid, e
+                    )
+                    return None
                 logger.info(
                     "[%s] TTS done uid=%s bytes=%s",
                     self.name,
                     uid,
-                    len(ogg) if ogg else 0,
+                    len(audio) if audio else 0,
                 )
+                return audio
+
+            if use_queue:
+
+                async def _on_queued(ahead: int) -> None:
+                    await self._notify_tts_queue(wait_msg, ahead)
+
+                async with self.tts_queue.hold(
+                    label=f"prayer:{uid}",
+                    on_queued=_on_queued if wait_msg is not None else None,
+                ):
+                    if wait_msg is not None:
+                        try:
+                            await wait_msg.edit_text(
+                                "⏳ Готовлю голосовое сообщение…"
+                            )
+                        except Exception:
+                            pass
+                    ogg = await _synth_voicebox()
+            else:
+                logger.info("[%s] TTS start uid=%s engine=%s", self.name, uid, engine)
+                try:
+                    ogg = await tts.synthesize_ogg_opus(tts_text)
+                except Exception as e:
+                    logger.error(
+                        "[%s] TTS failed uid=%s engine=%s: %s",
+                        self.name,
+                        uid,
+                        engine,
+                        e,
+                    )
+                    ogg = None
+                else:
+                    logger.info(
+                        "[%s] TTS done uid=%s bytes=%s",
+                        self.name,
+                        uid,
+                        len(ogg) if ogg else 0,
+                    )
+
+            if ogg is None and self.voicebox.configured and self.speechkit.configured:
+                logger.info("[%s] TTS fallback SpeechKit uid=%s", self.name, uid)
+                try:
+                    ogg = await self.speechkit.synthesize_ogg_opus(tts_text)
+                except Exception as e2:
+                    logger.error(
+                        "[%s] SpeechKit fallback failed uid=%s: %s",
+                        self.name,
+                        uid,
+                        e2,
+                    )
         else:
             logger.warning("[%s] TTS skipped — not configured uid=%s", self.name, uid)
 
@@ -588,7 +659,13 @@ class PersonalPrayerFeature(BaseFeature):
         tts = self.tts
         if tts.configured:
             try:
-                ogg = await tts.synthesize_ogg_opus(ctx.sample_text)
+                if tts is self.voicebox:
+                    async with self.tts_queue.hold(
+                        label=f"stress:{ctx.proposal_id}"
+                    ):
+                        ogg = await self.voicebox.synthesize_ogg_opus(ctx.sample_text)
+                else:
+                    ogg = await tts.synthesize_ogg_opus(ctx.sample_text)
                 msg = await self.bot.send_voice(
                     voice=BufferedInputFile(ogg, filename=f"stress_{ctx.proposal_id}.ogg"),
                     **kwargs,
@@ -596,6 +673,31 @@ class PersonalPrayerFeature(BaseFeature):
                 voice_msg_id = int(msg.message_id)
             except Exception as e:
                 logger.error("[%s] prayer stress voice preview failed: %s", self.name, e)
+                if (
+                    tts is self.voicebox
+                    and self.speechkit.configured
+                    and voice_msg_id is None
+                ):
+                    try:
+                        ogg = await self.speechkit.synthesize_ogg_opus(ctx.sample_text)
+                        msg = await self.bot.send_voice(
+                            voice=BufferedInputFile(
+                                ogg, filename=f"stress_{ctx.proposal_id}.ogg"
+                            ),
+                            **kwargs,
+                        )
+                        voice_msg_id = int(msg.message_id)
+                        logger.info(
+                            "[%s] prayer stress preview SpeechKit fallback ok id=%s",
+                            self.name,
+                            ctx.proposal_id,
+                        )
+                    except Exception as e2:
+                        logger.error(
+                            "[%s] prayer stress SpeechKit preview failed: %s",
+                            self.name,
+                            e2,
+                        )
 
         text_msg_id: Optional[int] = None
         if voice_msg_id is None:
