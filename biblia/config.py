@@ -201,6 +201,10 @@ class AppConfig:
         "The final word амИнь: stress on capital И (a-MÍN), clear and solemn."
     )
     VOICEBOX_ATEMPO: float = 0.92
+    PRAYER_STRESS_FEEDBACK_ENABLED: bool = False
+    PRAYER_STRESS_MODERATION_THREAD_ID: int = 0
+    PRAYER_STRESS_MODERATION_REPLY_TO_MESSAGE_ID: int = 0
+    PRAYER_STRESS_MAX_WORDS_PER_SUBMIT: int = 20
 
     LOG_LEVEL: str = "INFO"
     MAX_WORKERS: int = 5
@@ -314,6 +318,18 @@ def load_app_config() -> AppConfig:
             )
         ).strip(),
         VOICEBOX_ATEMPO=_parse_voicebox_atempo(os.getenv("VOICEBOX_ATEMPO")),
+        PRAYER_STRESS_FEEDBACK_ENABLED=_parse_bool_env(
+            os.getenv("PRAYER_STRESS_FEEDBACK_ENABLED"), False
+        ),
+        PRAYER_STRESS_MODERATION_THREAD_ID=int(
+            os.getenv("PRAYER_STRESS_MODERATION_THREAD_ID", "0") or "0"
+        ),
+        PRAYER_STRESS_MODERATION_REPLY_TO_MESSAGE_ID=int(
+            os.getenv("PRAYER_STRESS_MODERATION_REPLY_TO_MESSAGE_ID", "0") or "0"
+        ),
+        PRAYER_STRESS_MAX_WORDS_PER_SUBMIT=max(
+            1, min(50, int(os.getenv("PRAYER_STRESS_MAX_WORDS_PER_SUBMIT", "20") or "20"))
+        ),
         LOG_LEVEL=os.getenv("LOG_LEVEL", "INFO"),
         MEDIA_INBOUND_ARCHIVE_DIR=media_raw,
     )

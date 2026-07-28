@@ -10,6 +10,7 @@ class PrayerStates(StatesGroup):
     """Анкета и генерация персональной молитвы (/prayer)."""
     collecting = State()
     generating = State()
+    waiting_stress_feedback = State()
 
 
 class ScriptureChallengeStates(StatesGroup):

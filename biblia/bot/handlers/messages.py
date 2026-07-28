@@ -138,11 +138,12 @@ class MessageHandlers:
         self.dp.callback_query.register(
             self._callback_handler,
             ~F.data.startswith("payment_"),
+            ~F.data.startswith("pst:"),
             ~F.data.startswith("preset_faq_"),
             ~F.data.startswith("more_button_"),
             ~F.data.startswith("challenge_"),
             ~F.data.startswith("mdraft_"),
-            ~F.data.in_({"prayer_start", "molitva_start"}),
+            ~F.data.in_({"prayer_start", "molitva_start", "prayer_stress_open"}),
         )
         self.dp.edited_message.register(self._edited_message_handler)
         self.dp.message_reaction.register(self._reaction_handler)
