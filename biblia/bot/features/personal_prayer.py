@@ -431,9 +431,13 @@ class PersonalPrayerFeature(BaseFeature):
 
         if self.config.PRAYER_STRESS_FEEDBACK_ENABLED:
             await message.answer(
-                "Если услышали неправильное ударение в голосе, пришлите нам такие слова.\n\n"
-                "Формат: через запятую, ударную гласную сделайте БОЛЬШОЙ.\n"
-                "Например: <code>амИнь, мОре</code>",
+                "Генерация голоса требует много ресурсов и стоит довольно дорого, "
+                "поэтому каждое ваше пожертвование помогает нам сохранять и развивать "
+                "эту функцию.\n\n"
+                "<blockquote>Носите бремена друг друга, и таким образом исполните закон Христов.</blockquote>\n"
+                "<i>Гал. 6:2</i>\n\n"
+                "Если услышали ошибку в ударении, вы тоже можете нам помочь — "
+                "просто нажмите кнопку внизу.",
                 parse_mode=ParseMode.HTML,
                 reply_markup=self._prayer_stress_feedback_kb(),
             )
@@ -492,6 +496,16 @@ class PersonalPrayerFeature(BaseFeature):
             "Спасибо! После модерации мы добавим эти слова в словарь ударений."
             + note,
             parse_mode=ParseMode.HTML,
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        InlineKeyboardButton(
+                            text="Поддержать проект",
+                            callback_data="payment_start",
+                        )
+                    ]
+                ]
+            ),
         )
         logger.info(
             "[%s] prayer stress feedback uid=%s accepted=%s rejected=%s stored=%s",

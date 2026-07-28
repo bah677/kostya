@@ -21,6 +21,10 @@ _EXCLUDED_DONOR_USER_IDS = _EXCLUDED_STATS_USER_IDS
 _EXCLUDED_DONORS_FILTER = (
     f"AND user_id NOT IN ({', '.join(str(uid) for uid in _EXCLUDED_DONOR_USER_IDS)})"
 )
+_EXCLUDED_PRAYER_USER_IDS = _EXCLUDED_STATS_USER_IDS
+_EXCLUDED_PRAYER_FILTER = (
+    f"AND user_id NOT IN ({', '.join(str(uid) for uid in _EXCLUDED_PRAYER_USER_IDS)})"
+)
 _EXCLUDED_REFERRALS_FILTER = f"""
   AND referrer_id::text IS DISTINCT FROM referred_id::text
   AND referrer_id NOT IN ({', '.join(str(uid) for uid in _EXCLUDED_STATS_USER_IDS)})
@@ -248,6 +252,28 @@ class BibliaDailyReportCollector:
             )
             or 0
         )
+
+    async def get_prayer_generation_stats(
+        self, period_start: datetime, period_end: datetime
+    ) -> Dict[str, int]:
+        row = await self._row(
+            f"""
+            SELECT
+                COUNT(*) AS generations_count,
+                COUNT(DISTINCT user_id) AS unique_users
+            FROM token_usage
+            WHERE created_at >= $1
+              AND created_at < $2
+              AND request_kind = 'personal_prayer_compose'
+              {_EXCLUDED_PRAYER_FILTER}
+            """,
+            period_start,
+            period_end,
+        )
+        return {
+            "generations_count": int((row or {}).get("generations_count") or 0),
+            "unique_users": int((row or {}).get("unique_users") or 0),
+        }
 
     async def get_referrals_unique_referrers(self) -> int:
         return int(
@@ -811,6 +837,8 @@ class BibliaDailyReportCollector:
         referrals_referred = await self.get_referrals_unique_referred()
         referrals_paid = await self.get_referrals_paid_referred()
         referral_max_depth, referral_depth_dist = await self.get_referral_tree_stats()
+        prayer_day = await self.get_prayer_generation_stats(day_start, day_end)
+        prayer_30d = await self.get_prayer_generation_stats(users_30d_start, day_end)
 
         metrics: Dict[str, Any] = {
             "period": f"Данные за {report_day.strftime('%d.%m.%Y')}",
@@ -830,6 +858,10 @@ class BibliaDailyReportCollector:
             "avg_messages_per_user": await self.get_avg_messages_per_user(day_start, day_end),
             "voice_messages": await self.get_voice_messages_yesterday(day_start, day_end),
             "unique_voice_users": await self.get_unique_voice_users_yesterday(day_start, day_end),
+            "prayer_generations_yesterday": prayer_day["generations_count"],
+            "prayer_unique_users_yesterday": prayer_day["unique_users"],
+            "prayer_generations_30d": prayer_30d["generations_count"],
+            "prayer_unique_users_30d": prayer_30d["unique_users"],
             "new_users_yesterday": await self.get_new_users(day_start, day_end),
             "new_users_30d": await self.get_new_users(users_30d_start, day_end),
             "new_referrals_yesterday": await self.get_new_referrals(day_start, day_end),
@@ -949,6 +981,9 @@ class BibliaDailyReportCollector:
     • Глубина общения: {metrics['avg_messages_per_user']}
     • Голосовых сообщений: {metrics.get('voice_messages', 0)} ({voice_percent}%)
     • Пользователей с аудио: {metrics.get('unique_voice_users', 0)} ({voice_users_percent}%)
+    • Генераций молитв: {metrics.get('prayer_generations_yesterday', 0)}
+    • Уников в молитвах: {metrics.get('prayer_unique_users_yesterday', 0)}
+    • Молитвы за 30 дней: {metrics.get('prayer_generations_30d', 0)} / {metrics.get('prayer_unique_users_30d', 0)} уников
 
     <b>🆕 НОВЫЕ ПОЛЬЗОВАТЕЛИ</b>
     • За вчера: {metrics['new_users_yesterday']:,}
