@@ -112,6 +112,12 @@ ADMIN_CATALOG: Tuple[AdminEntry, ...] = (
         "reports",
     ),
     AdminEntry(
+        "⚡ /adm → быстрые отчёты",
+        "На сейчас: статус последних 3 рассылок и статистика голосовой молитвы",
+        "admin",
+        "reports",
+    ),
+    AdminEntry(
         "/refstats USER_ID",
         "Статистика рефералов другого пользователя: "
         "<code>/refstats 123</code> или <code>/refstats ref_123</code> (только админ)",

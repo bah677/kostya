@@ -16,7 +16,13 @@ from bot.services.admin_panel import (
     CB_PREFIX,
     build_admin_panel_group,
     build_admin_panel_home,
+    build_quick_report_keyboard_for,
     parse_admin_panel_group_cb,
+    parse_admin_panel_quick_cb,
+)
+from bot.services.admin_quick_reports import (
+    build_last_campaigns_report_html,
+    build_prayer_usage_report_html,
 )
 from bot.texts.admin_panel_catalog import HelpTier
 from bot.utils.admin_channel import resolved_admin_group_id
@@ -60,6 +66,16 @@ class AdminPanelFeature(BaseFeature):
         text, kb = build_admin_panel_home(tier)
         await message.answer(text, parse_mode=ParseMode.HTML, reply_markup=kb)
 
+    async def _build_quick_report(self, key: str) -> str:
+        pool = getattr(self.user_storage, "pool", None)
+        if pool is None:
+            return "❌ База данных недоступна."
+        if key == "mail3":
+            return await build_last_campaigns_report_html(pool)
+        if key == "prayer":
+            return await build_prayer_usage_report_html(pool)
+        return "❌ Неизвестный отчёт."
+
     async def _cb_panel(self, query: CallbackQuery) -> None:
         if query.from_user is None or query.message is None:
             await query.answer()
@@ -70,6 +86,19 @@ class AdminPanelFeature(BaseFeature):
         tier = await self._resolve_tier(query.from_user.id)
         data = query.data or ""
         try:
+            quick_key = parse_admin_panel_quick_cb(data)
+            if quick_key:
+                await query.answer("⏳")
+                text = await self._build_quick_report(quick_key)
+                kb = build_quick_report_keyboard_for(quick_key)
+                await query.message.edit_text(
+                    text,
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=kb,
+                    disable_web_page_preview=True,
+                )
+                return
+
             if data == CB_HOME:
                 text, kb = build_admin_panel_home(tier)
             else:

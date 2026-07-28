@@ -15,8 +15,12 @@ logger = logging.getLogger(__name__)
 _MSK = ZoneInfo("Europe/Moscow")
 _EXCLUDED_REFERRER_ID = 367302291
 _EXCLUDED_DEPTH_USER_ID = 7135176398
-# Тестовые/служебные аккаунты — не в метриках донатеров и реферального дерева.
+# Тестовые/служебные аккаунты — не в daily-метриках.
 _EXCLUDED_STATS_USER_IDS = (304631563, _EXCLUDED_REFERRER_ID)
+_EXCLUDED_STATS_USER_IDS_SQL = ", ".join(str(uid) for uid in _EXCLUDED_STATS_USER_IDS)
+_EXCLUDED_USERS_FILTER = f"AND user_id NOT IN ({_EXCLUDED_STATS_USER_IDS_SQL})"
+_EXCLUDED_USERS_FILTER_U = f"AND u.user_id NOT IN ({_EXCLUDED_STATS_USER_IDS_SQL})"
+_EXCLUDED_USERS_FILTER_M = f"AND m.user_id NOT IN ({_EXCLUDED_STATS_USER_IDS_SQL})"
 _EXCLUDED_DONOR_USER_IDS = _EXCLUDED_STATS_USER_IDS
 _EXCLUDED_DONORS_FILTER = (
     f"AND user_id NOT IN ({', '.join(str(uid) for uid in _EXCLUDED_DONOR_USER_IDS)})"
@@ -385,7 +389,7 @@ class BibliaDailyReportCollector:
     async def get_subscribers(self) -> int:
         return int(
             await self._scalar(
-                "SELECT COUNT(*) FROM users WHERE is_active = true"
+                f"SELECT COUNT(*) FROM users WHERE is_active = true {_EXCLUDED_USERS_FILTER}"
             )
             or 0
         )
@@ -398,6 +402,7 @@ class BibliaDailyReportCollector:
                 FROM messages m
                 JOIN users u ON m.user_id = u.user_id
                 WHERE {_USER_MSG_FILTER}
+                  {_EXCLUDED_USERS_FILTER_M}
                   AND m.created_at >= $1
                   AND m.created_at < $2
             )
@@ -432,6 +437,7 @@ class BibliaDailyReportCollector:
                 FROM messages m
                 JOIN users u ON m.user_id = u.user_id
                 WHERE {_USER_MSG_FILTER}
+                  {_EXCLUDED_USERS_FILTER_M}
                   AND m.created_at >= $1
                   AND m.created_at < $2
                 GROUP BY m.user_id, u.created_at
@@ -465,6 +471,7 @@ class BibliaDailyReportCollector:
                 FROM messages m
                 WHERE {_USER_MSG_FILTER}
                   AND {_NOT_VOICE_FILTER}
+                  {_EXCLUDED_USERS_FILTER_M}
                   AND m.created_at >= $1
                   AND m.created_at < $2
                 """,
@@ -484,6 +491,7 @@ class BibliaDailyReportCollector:
                 FROM messages m
                 WHERE {_USER_MSG_FILTER}
                   AND {_NOT_VOICE_FILTER}
+                  {_EXCLUDED_USERS_FILTER_M}
                   AND m.user_id != $3
                   AND m.created_at >= $1
                   AND m.created_at < $2
@@ -508,6 +516,7 @@ class BibliaDailyReportCollector:
                 FROM messages m
                 WHERE {_USER_MSG_FILTER}
                   AND {_VOICE_FILTER}
+                  {_EXCLUDED_USERS_FILTER_M}
                   AND m.created_at >= $1
                   AND m.created_at < $2
                 """,
@@ -525,6 +534,7 @@ class BibliaDailyReportCollector:
                 FROM messages m
                 WHERE {_USER_MSG_FILTER}
                   AND {_VOICE_FILTER}
+                  {_EXCLUDED_USERS_FILTER_M}
                   AND m.created_at >= $1
                   AND m.created_at < $2
                 """,
@@ -541,6 +551,7 @@ class BibliaDailyReportCollector:
                 SELECT COUNT(*)
                 FROM users
                 WHERE created_at >= $1 AND created_at < $2
+                  {_EXCLUDED_USERS_FILTER}
                 """,
                 period_start,
                 period_end,
@@ -556,6 +567,7 @@ class BibliaDailyReportCollector:
             WHERE status = 'succeeded'
               AND order_id IS NULL
               AND amount_rub IS NOT NULL
+              {_EXCLUDED_DONORS_FILTER}
               AND created_at >= $1
               AND created_at < $2
             """,
@@ -573,6 +585,7 @@ class BibliaDailyReportCollector:
                 WHERE status = 'succeeded'
                   AND order_id IS NULL
                   AND amount_rub IS NOT NULL
+                  {_EXCLUDED_DONORS_FILTER}
                   AND created_at >= $1
                   AND created_at < $2
                 """,
@@ -608,6 +621,7 @@ class BibliaDailyReportCollector:
             WHERE status = 'succeeded'
               AND order_id IS NULL
               AND amount_rub IS NOT NULL
+              {_EXCLUDED_DONORS_FILTER}
             GROUP BY 1
             ORDER BY 1 DESC
             """,
@@ -727,18 +741,22 @@ class BibliaDailyReportCollector:
 
     async def get_total_donation_shows(self) -> int:
         return int(
-            await self._scalar("SELECT COALESCE(SUM(donation_button), 0) FROM users") or 0
+            await self._scalar(
+                f"SELECT COALESCE(SUM(donation_button), 0) FROM users WHERE TRUE {_EXCLUDED_USERS_FILTER}"
+            ) or 0
         )
 
     async def get_total_donation_clicks(self) -> int:
         return int(
-            await self._scalar("SELECT COALESCE(SUM(donation_button_click), 0) FROM users") or 0
+            await self._scalar(
+                f"SELECT COALESCE(SUM(donation_button_click), 0) FROM users WHERE TRUE {_EXCLUDED_USERS_FILTER}"
+            ) or 0
         )
 
     async def get_total_donation_proposals(self) -> int:
         return int(
             await self._scalar(
-                "SELECT COALESCE(SUM(donation_proposal_count), 0) FROM users"
+                f"SELECT COALESCE(SUM(donation_proposal_count), 0) FROM users WHERE TRUE {_EXCLUDED_USERS_FILTER}"
             )
             or 0
         )
@@ -751,6 +769,7 @@ class BibliaDailyReportCollector:
                 SELECT COUNT(*)
                 FROM users u
                 WHERE u.is_active = true
+                  {_EXCLUDED_USERS_FILTER_U}
                   AND NOT EXISTS (
                     SELECT 1
                     FROM mailing_audience ma
