@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import html
 import json
 import logging
@@ -23,6 +24,7 @@ from aiogram.types import (
 
 from bot.admin_guard import is_admin_or_super
 from bot.features.base import BaseFeature
+from bot.services.openai_tts import OpenAIPrayerTTS
 from bot.services.prayer_stress import (
     PrayerStressWord,
     apply_prayer_stress_dictionary,
@@ -124,6 +126,7 @@ class PersonalPrayerFeature(BaseFeature):
         self.agents_client: Optional[AgentsClient] = None
         self.voicebox = VoiceboxPrayerTTS()
         self.speechkit = YandexSpeechKitTTS()
+        self.openai_tts = OpenAIPrayerTTS()
         self.tts_queue: PrayerTtsQueue = get_prayer_tts_queue(
             max_concurrent=int(getattr(config, "PRAYER_TTS_MAX_CONCURRENT", 1) or 1)
         )
@@ -160,6 +163,13 @@ class PersonalPrayerFeature(BaseFeature):
             logger.warning(
                 "[%s] TTS не настроен (Voicebox/SpeechKit) — только текст молитвы",
                 self.name,
+            )
+        if self.openai_tts.configured:
+            logger.info(
+                "[%s] OpenAI TTS для админ-сравнения (model=%s voice=%s)",
+                self.name,
+                self.openai_tts.model,
+                self.openai_tts.voice,
             )
 
     def register_handlers(self, dp: Dispatcher) -> None:
@@ -293,27 +303,56 @@ class PersonalPrayerFeature(BaseFeature):
     ) -> None:
         uid = message.from_user.id if message.from_user else 0
         await state.set_state(PrayerStates.generating)
+        admin_compare = bool(uid) and await is_admin_or_super(self.user_storage, uid)
 
         wait_msg = await message.answer(
-            "⏳ Составляю молитву и готовлю голосовое сообщение…"
+            (
+                "⏳ Составляю молитву и готовлю голосовое сообщение…\n"
+                "<i>Админ-режим: сравню OpenAI / Яндекс / Voicebox</i>"
+            )
+            if admin_compare
+            else "⏳ Составляю молитву и готовлю голосовое сообщение…",
+            parse_mode=ParseMode.HTML if admin_compare else None,
         )
 
         bot = self.bot
         prayer_text: Optional[str] = None
         ogg: Optional[bytes] = None
+        compare_voices: Optional[dict[str, Optional[bytes]]] = None
 
         try:
             if bot:
                 async with record_voice_chat_action(
                     bot, message.chat.id, message_thread_id=message.message_thread_id
                 ):
+                    if admin_compare:
+                        prayer_text, compare_voices = await self._compose_and_synthesize_compare(
+                            uid, turns, wait_msg=wait_msg
+                        )
+                        # Для доставки текста используем любой удачный ogg как «основной».
+                        ogg = (
+                            (compare_voices or {}).get("voicebox")
+                            or (compare_voices or {}).get("openai")
+                            or (compare_voices or {}).get("yandex")
+                        )
+                    else:
+                        prayer_text, ogg = await self._compose_and_synthesize(
+                            uid, turns, wait_msg=wait_msg
+                        )
+            else:
+                if admin_compare:
+                    prayer_text, compare_voices = await self._compose_and_synthesize_compare(
+                        uid, turns, wait_msg=wait_msg
+                    )
+                    ogg = (
+                        (compare_voices or {}).get("voicebox")
+                        or (compare_voices or {}).get("openai")
+                        or (compare_voices or {}).get("yandex")
+                    )
+                else:
                     prayer_text, ogg = await self._compose_and_synthesize(
                         uid, turns, wait_msg=wait_msg
                     )
-            else:
-                prayer_text, ogg = await self._compose_and_synthesize(
-                    uid, turns, wait_msg=wait_msg
-                )
 
             if not prayer_text:
                 await wait_msg.edit_text(
@@ -326,8 +365,19 @@ class PersonalPrayerFeature(BaseFeature):
             except Exception:
                 pass
 
-            await self._deliver_prayer(message, bot, prayer_text, ogg)
-            logger.info("[%s] prayer delivered uid=%s voice=%s", self.name, uid, bool(ogg))
+            if admin_compare and compare_voices is not None:
+                await self._deliver_prayer_compare(
+                    message, bot, prayer_text, compare_voices
+                )
+            else:
+                await self._deliver_prayer(message, bot, prayer_text, ogg)
+            logger.info(
+                "[%s] prayer delivered uid=%s voice=%s compare=%s",
+                self.name,
+                uid,
+                bool(ogg),
+                bool(admin_compare),
+            )
         except Exception as e:
             logger.error("[%s] generate failed uid=%s: %s", self.name, uid, e, exc_info=True)
             try:
@@ -451,6 +501,169 @@ class PersonalPrayerFeature(BaseFeature):
             logger.warning("[%s] TTS skipped — not configured uid=%s", self.name, uid)
 
         return prayer_text, ogg
+
+    async def _compose_and_synthesize_compare(
+        self,
+        uid: int,
+        turns: List[str],
+        *,
+        wait_msg: Optional[Message] = None,
+    ) -> tuple[Optional[str], dict[str, Optional[bytes]]]:
+        """Админ-тест: один текст → три озвучки (OpenAI / Yandex / Voicebox)."""
+        logger.info("[%s] compare compose start uid=%s", self.name, uid)
+        prayer_text = await self._compose_prayer(uid, turns)
+        if not prayer_text:
+            return None, {"openai": None, "yandex": None, "voicebox": None}
+
+        tts_text = await self._apply_prayer_stress_dictionary(prayer_text)
+        if wait_msg is not None:
+            try:
+                await wait_msg.edit_text(
+                    "⏳ Текст готов. Готовлю 3 варианта озвучки:\n"
+                    "OpenAI / Яндекс SpeechKit / Voicebox…"
+                )
+            except Exception:
+                pass
+
+        async def _one(label: str, coro) -> tuple[str, Optional[bytes]]:
+            try:
+                audio = await coro
+                logger.info(
+                    "[%s] compare TTS ok uid=%s engine=%s bytes=%s",
+                    self.name,
+                    uid,
+                    label,
+                    len(audio) if audio else 0,
+                )
+                return label, audio
+            except Exception as e:
+                logger.error(
+                    "[%s] compare TTS failed uid=%s engine=%s: %s",
+                    self.name,
+                    uid,
+                    label,
+                    e,
+                )
+                return label, None
+
+        async def _voicebox() -> Optional[bytes]:
+            if not self.voicebox.configured:
+                return None
+
+            async def _on_queued(ahead: int) -> None:
+                await self._notify_tts_queue(wait_msg, ahead)
+
+            async with self.tts_queue.hold(
+                label=f"compare-vb:{uid}",
+                on_queued=_on_queued if wait_msg is not None else None,
+            ):
+                return await self.voicebox.synthesize_ogg_opus(tts_text)
+
+        tasks = []
+        if self.openai_tts.configured:
+            tasks.append(_one("openai", self.openai_tts.synthesize_ogg_opus(tts_text)))
+        else:
+            logger.warning("[%s] compare: OpenAI TTS не настроен", self.name)
+        if self.speechkit.configured:
+            tasks.append(_one("yandex", self.speechkit.synthesize_ogg_opus(tts_text)))
+        else:
+            logger.warning("[%s] compare: SpeechKit не настроен", self.name)
+        if self.voicebox.configured:
+            tasks.append(_one("voicebox", _voicebox()))
+        else:
+            logger.warning("[%s] compare: Voicebox не настроен", self.name)
+
+        out: dict[str, Optional[bytes]] = {
+            "openai": None,
+            "yandex": None,
+            "voicebox": None,
+        }
+        if tasks:
+            results = await asyncio.gather(*tasks)
+            for label, audio in results:
+                out[label] = audio
+        return prayer_text, out
+
+    async def _deliver_prayer_compare(
+        self,
+        message: Message,
+        bot: Optional[Bot],
+        prayer_text: str,
+        voices: dict[str, Optional[bytes]],
+    ) -> None:
+        body = (prayer_text or "").strip()
+        header = (
+            "<b>🧪 Сравнение озвучки (только для админов)</b>\n\n"
+            f"{html.escape(body)}"
+        )
+        if len(header) <= _TG_MESSAGE_MAX:
+            await message.answer(header, parse_mode=ParseMode.HTML)
+        else:
+            first, rest = _split_caption(
+                body, _TG_MESSAGE_MAX - len("🧪 Сравнение озвучки\n\n")
+            )
+            await message.answer(
+                f"<b>🧪 Сравнение озвучки (только для админов)</b>\n\n"
+                f"{html.escape(first)}",
+                parse_mode=ParseMode.HTML,
+            )
+            await _send_text_chunks(message, rest)
+
+        variants = [
+            (
+                "openai",
+                f"1/3 OpenAI ({self.openai_tts.model} / {self.openai_tts.voice})",
+            ),
+            (
+                "yandex",
+                f"2/3 Яндекс SpeechKit ({self.speechkit.voice})",
+            ),
+            (
+                "voicebox",
+                "3/3 Voicebox (локальный / Константин)",
+            ),
+        ]
+        chat_id = message.chat.id
+        any_voice = False
+        for key, caption in variants:
+            ogg = voices.get(key)
+            if not ogg:
+                await message.answer(
+                    f"<i>{html.escape(caption)} — не удалось сгенерировать</i>",
+                    parse_mode=ParseMode.HTML,
+                )
+                continue
+            any_voice = True
+            if bot:
+                await bot.send_voice(
+                    chat_id,
+                    BufferedInputFile(ogg, filename=f"prayer_{key}.ogg"),
+                    caption=caption[:1024],
+                )
+            else:
+                await message.answer_voice(
+                    BufferedInputFile(ogg, filename=f"prayer_{key}.ogg"),
+                    caption=caption[:1024],
+                )
+
+        if not any_voice:
+            await message.answer(
+                "<i>Ни один TTS не вернул аудио.</i>",
+                parse_mode=ParseMode.HTML,
+            )
+
+        if self.config.PRAYER_STRESS_FEEDBACK_ENABLED:
+            await message.answer(
+                "Генерация голоса требует много ресурсов и стоит довольно дорого, "
+                "поэтому каждое ваше пожертвование помогает нам сохранять и развивать "
+                "эту функцию.\n\n"
+                "<blockquote>Носите бремена друг друга, и таким образом исполните закон Христов.</blockquote>\n"
+                "<i>Гал. 6:2</i>\n\n"
+                "Если услышали ошибку в ударении, вы тоже можете нам помочь — "
+                "просто нажмите кнопку внизу.",
+                parse_mode=ParseMode.HTML,
+                reply_markup=self._prayer_stress_feedback_kb(),
+            )
 
     async def _deliver_prayer(
         self,

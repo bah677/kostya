@@ -114,6 +114,16 @@ def _parse_voicebox_atempo(raw: Optional[str]) -> float:
     return max(0.5, min(1.2, v))
 
 
+def _parse_openai_tts_speed(raw: Optional[str]) -> float:
+    if raw is None or not str(raw).strip():
+        return 1.0
+    try:
+        v = float(str(raw).strip().replace(",", "."))
+    except ValueError:
+        return 1.0
+    return max(0.25, min(4.0, v))
+
+
 def _parse_gift_link_validity_days(raw: Optional[str]) -> int:
     if raw is None or not str(raw).strip():
         return 30
@@ -203,6 +213,15 @@ class AppConfig:
     VOICEBOX_ATEMPO: float = 0.92
     # Сколько Voicebox-синтезов параллельно (1 = очередь при нагрузке, меньше таймаутов).
     PRAYER_TTS_MAX_CONCURRENT: int = 1
+    # OpenAI TTS — только для админ-сравнения трёх голосов.
+    OPENAI_TTS_MODEL: str = "gpt-4o-mini-tts"
+    OPENAI_TTS_VOICE: str = "onyx"
+    OPENAI_TTS_SPEED: float = 1.0
+    OPENAI_TTS_INSTRUCT: str = (
+        "Warm natural prayerful speech in Russian, gentle rhythm, slight emotional "
+        "variation, not monotone and not robotic. Soft unhurried pace. "
+        "The final word амИнь: stress on И (a-MÍN), clear and solemn."
+    )
     PRAYER_STRESS_FEEDBACK_ENABLED: bool = False
     PRAYER_STRESS_MODERATION_THREAD_ID: int = 0
     PRAYER_STRESS_MODERATION_REPLY_TO_MESSAGE_ID: int = 0
@@ -324,6 +343,19 @@ def load_app_config() -> AppConfig:
             1,
             min(8, int(os.getenv("PRAYER_TTS_MAX_CONCURRENT", "1") or "1")),
         ),
+        OPENAI_TTS_MODEL=(os.getenv("OPENAI_TTS_MODEL") or "gpt-4o-mini-tts").strip()
+        or "gpt-4o-mini-tts",
+        OPENAI_TTS_VOICE=(os.getenv("OPENAI_TTS_VOICE") or "onyx").strip().lower()
+        or "onyx",
+        OPENAI_TTS_SPEED=_parse_openai_tts_speed(os.getenv("OPENAI_TTS_SPEED")),
+        OPENAI_TTS_INSTRUCT=(
+            os.getenv("OPENAI_TTS_INSTRUCT")
+            or (
+                "Warm natural prayerful speech in Russian, gentle rhythm, slight emotional "
+                "variation, not monotone and not robotic. Soft unhurried pace. "
+                "The final word амИнь: stress on И (a-MÍN), clear and solemn."
+            )
+        ).strip(),
         PRAYER_STRESS_FEEDBACK_ENABLED=_parse_bool_env(
             os.getenv("PRAYER_STRESS_FEEDBACK_ENABLED"), False
         ),
