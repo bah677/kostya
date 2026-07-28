@@ -59,6 +59,27 @@ def _fmt_rub_line(rub_amount: Optional[float]) -> str:
     return f"💵 <b>В рублях:</b> {html_module.escape(rub_s)} RUB"
 
 
+async def _count_user_voice_prayers(user_storage, user_id: int) -> int:
+    pool = getattr(user_storage, "pool", None)
+    if pool is None:
+        return 0
+    try:
+        async with pool.acquire() as conn:
+            n = await conn.fetchval(
+                """
+                SELECT COUNT(*)
+                FROM token_usage
+                WHERE request_kind = 'personal_prayer_compose'
+                  AND user_id = $1
+                """,
+                int(user_id),
+            )
+        return int(n or 0)
+    except Exception as e:
+        logger.debug("voice prayer count for notify user=%s: %s", user_id, e)
+        return 0
+
+
 async def notify_admins_standalone_donation_success(
     bot: Bot,
     user_storage,
@@ -90,6 +111,7 @@ async def notify_admins_standalone_donation_success(
         logger.debug("referral source for notify: %s", e)
 
     assistant_n = await user_storage.get_assistant_messages_count(user_id)
+    prayer_n = await _count_user_voice_prayers(user_storage, user_id)
 
     amount_bit = html_module.escape(str(amt)).strip()
     curr_bit = html_module.escape(currency)
@@ -111,6 +133,8 @@ async def notify_admins_standalone_donation_success(
         f"🔗 <b>Источник:</b> {html_module.escape(source_name or 'неизвестно')}\n"
         f"💬 <b>Ответов ассистента в истории:</b> "
         f"{html_module.escape(str(assistant_n or '0'))}\n"
+        f"🙏 <b>Голосовых молитв за всё время:</b> "
+        f"{html_module.escape(str(prayer_n))}\n"
     )
     marathon_block = await marathon_admin_notify_block(user_storage)
     if marathon_block:
