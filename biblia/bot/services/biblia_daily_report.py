@@ -268,7 +268,7 @@ class BibliaDailyReportCollector:
             FROM token_usage
             WHERE created_at >= $1
               AND created_at < $2
-              AND request_kind = 'personal_prayer_compose'
+              AND request_kind LIKE 'personal_prayer_compose%'
               {_EXCLUDED_PRAYER_FILTER}
             """,
             period_start,

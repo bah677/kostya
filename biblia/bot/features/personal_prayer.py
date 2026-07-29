@@ -35,6 +35,7 @@ from bot.services.prayer_stress import (
     parse_prayer_stress_words,
 )
 from bot.services.prayer_tts_queue import PrayerTtsQueue, get_prayer_tts_queue
+from bot.services.prayer_rag import build_compose_user_content, fetch_prayer_style_examples
 from bot.services.salute_tts import SaluteSpeechTTS
 from bot.services.voicebox_tts import VoiceboxPrayerTTS, format_prayer_for_tts
 from bot.services.yandex_speechkit import YandexSpeechKitTTS
@@ -44,8 +45,11 @@ from bot.utils.chat_actions import record_voice_chat_action
 from config import config
 from openai_client.agents_client import AgentsClient
 from openai_client.prayer_prompt import (
-    PRAYER_COMPOSE_SYSTEM_PROMPT,
     PRAYER_INTAKE_SYSTEM_PROMPT,
+    pick_prayer_compose_variant,
+    prayer_compose_max_tokens,
+    prayer_compose_request_kind,
+    resolve_prayer_compose_system_prompt,
 )
 
 logger = logging.getLogger(__name__)
@@ -88,14 +92,18 @@ class _TTS(Protocol):
 def _first_compare_ogg(voices: Optional[dict[str, Optional[bytes]]]) -> Optional[bytes]:
     if not voices:
         return None
+    # Сначала пробуем ключи без префикса варианта (старый формат), потом A:/B:.
     for key in _COMPARE_ENGINE_ORDER:
         if key == "elevenlabs":
             continue
-        ogg = voices.get(key)
+        ogg = voices.get(key) or voices.get(f"A:{key}") or voices.get(f"B:{key}")
         if ogg:
             return ogg
     for key, ogg in voices.items():
-        if key.startswith("elevenlabs:") and ogg:
+        if ogg and ("elevenlabs:" in key):
+            return ogg
+    for ogg in voices.values():
+        if ogg:
             return ogg
     return None
 
@@ -349,8 +357,8 @@ class PersonalPrayerFeature(BaseFeature):
 
         wait_msg = await message.answer(
             (
-                "⏳ Составляю молитву и готовлю голосовое сообщение…\n"
-                "<i>Админ-режим: сравню OpenAI / Яндекс / Voicebox</i>"
+                "⏳ Составляю 2 варианта молитвы (A и B) и готовлю озвучку всеми голосами…\n"
+                "<i>Админ-претест: ожидайте ~16 голосовых</i>"
             )
             if admin_compare
             else "⏳ Составляю молитву и готовлю голосовое сообщение…",
@@ -359,6 +367,7 @@ class PersonalPrayerFeature(BaseFeature):
 
         bot = self.bot
         prayer_text: Optional[str] = None
+        prayer_texts: Optional[dict[str, str]] = None
         ogg: Optional[bytes] = None
         compare_voices: Optional[dict[str, Optional[bytes]]] = None
 
@@ -368,10 +377,10 @@ class PersonalPrayerFeature(BaseFeature):
                     bot, message.chat.id, message_thread_id=message.message_thread_id
                 ):
                     if admin_compare:
-                        prayer_text, compare_voices = await self._compose_and_synthesize_compare(
+                        prayer_texts, compare_voices = await self._compose_and_synthesize_compare(
                             uid, turns, wait_msg=wait_msg
                         )
-                        # Для доставки текста используем любой удачный ogg как «основной».
+                        prayer_text = (prayer_texts or {}).get("A") or (prayer_texts or {}).get("B")
                         ogg = _first_compare_ogg(compare_voices)
                     else:
                         prayer_text, ogg = await self._compose_and_synthesize(
@@ -379,9 +388,10 @@ class PersonalPrayerFeature(BaseFeature):
                         )
             else:
                 if admin_compare:
-                    prayer_text, compare_voices = await self._compose_and_synthesize_compare(
+                    prayer_texts, compare_voices = await self._compose_and_synthesize_compare(
                         uid, turns, wait_msg=wait_msg
                     )
+                    prayer_text = (prayer_texts or {}).get("A") or (prayer_texts or {}).get("B")
                     ogg = _first_compare_ogg(compare_voices)
                 else:
                     prayer_text, ogg = await self._compose_and_synthesize(
@@ -401,7 +411,10 @@ class PersonalPrayerFeature(BaseFeature):
 
             if admin_compare and compare_voices is not None:
                 await self._deliver_prayer_compare(
-                    message, bot, prayer_text, compare_voices
+                    message,
+                    bot,
+                    prayer_texts or {"A": prayer_text},
+                    compare_voices,
                 )
             else:
                 await self._deliver_prayer(message, bot, prayer_text, ogg)
@@ -445,7 +458,8 @@ class PersonalPrayerFeature(BaseFeature):
         wait_msg: Optional[Message] = None,
     ) -> tuple[Optional[str], Optional[bytes]]:
         logger.info("[%s] compose start uid=%s turns=%s", self.name, uid, len(turns))
-        prayer_text = await self._compose_prayer(uid, turns)
+        # Обычные пользователи всегда на варианте A (претест B — только у админов).
+        prayer_text = await self._compose_prayer(uid, turns, force_variant="A")
         if not prayer_text:
             logger.warning("[%s] compose empty uid=%s", self.name, uid)
             return None, None
@@ -542,21 +556,42 @@ class PersonalPrayerFeature(BaseFeature):
         turns: List[str],
         *,
         wait_msg: Optional[Message] = None,
-    ) -> tuple[Optional[str], dict[str, Optional[bytes]]]:
-        """Админ-тест: один текст → озвучки всех настроенных TTS."""
-        logger.info("[%s] compare compose start uid=%s", self.name, uid)
-        prayer_text = await self._compose_prayer(uid, turns)
-        if not prayer_text:
-            return None, {}
-
-        tts_text = await self._apply_prayer_stress_dictionary(prayer_text)
+    ) -> tuple[Optional[dict[str, str]], dict[str, Optional[bytes]]]:
+        """Админ-претест: тексты A+B × все TTS → до ~16 голосовых."""
+        logger.info("[%s] compare compose start uid=%s (A+B)", self.name, uid)
         engines = self._compare_engine_specs()
-        names = [spec[1] for spec in engines]
         if wait_msg is not None:
             try:
-                listing = "\n".join(f"• {n}" for n in names) if names else "• (нет настроенных)"
+                n_eng = len(engines)
                 await wait_msg.edit_text(
-                    f"⏳ Текст готов. Готовлю {len(names)} вариант(ов) озвучки:\n{listing}"
+                    f"⏳ Составляю варианты промпта A и B…\n"
+                    f"Затем озвучу каждым из {n_eng} голосов "
+                    f"(итого до {n_eng * 2} голосовых)."
+                )
+            except Exception:
+                pass
+
+        text_a, text_b = await asyncio.gather(
+            self._compose_prayer(uid, turns, force_variant="A"),
+            self._compose_prayer(uid, turns, force_variant="B"),
+        )
+        texts: dict[str, str] = {}
+        if text_a:
+            texts["A"] = text_a
+        if text_b:
+            texts["B"] = text_b
+        if not texts:
+            return None, {}
+
+        if wait_msg is not None:
+            try:
+                listing = "\n".join(
+                    f"• {v}: {spec[1]}" for v in texts for spec in engines
+                )
+                await wait_msg.edit_text(
+                    f"⏳ Тексты готовы (A={'да' if 'A' in texts else 'нет'}, "
+                    f"B={'да' if 'B' in texts else 'нет'}).\n"
+                    f"Готовлю озвучку ({len(texts) * len(engines)} шт.):\n{listing}"
                 )
             except Exception:
                 pass
@@ -582,39 +617,47 @@ class PersonalPrayerFeature(BaseFeature):
                 )
                 return label, None
 
-        async def _voicebox() -> Optional[bytes]:
-            if not self.voicebox.configured:
-                return None
-
-            async def _on_queued(ahead: int) -> None:
-                await self._notify_tts_queue(wait_msg, ahead)
-
-            async with self.tts_queue.hold(
-                label=f"compare-vb:{uid}",
-                on_queued=_on_queued if wait_msg is not None else None,
-            ):
-                return await self.voicebox.synthesize_ogg_opus(tts_text)
-
         tasks = []
-        for key, _title, client, voice_id in engines:
-            if key == "voicebox":
-                tasks.append(_one(key, _voicebox()))
-            elif key.startswith("elevenlabs:"):
-                tasks.append(
-                    _one(
-                        key,
-                        client.synthesize_ogg_opus(tts_text, voice_id=voice_id),
-                    )
-                )
-            else:
-                tasks.append(_one(key, client.synthesize_ogg_opus(tts_text)))
+        out: dict[str, Optional[bytes]] = {}
+        for variant, raw_text in texts.items():
+            tts_text = await self._apply_prayer_stress_dictionary(raw_text)
+            for key, _title, client, voice_id in engines:
+                label = f"{variant}:{key}"
+                out[label] = None
 
-        out: dict[str, Optional[bytes]] = {key: None for key, *_ in engines}
+                if key == "voicebox":
+
+                    async def _voicebox(
+                        text: str = tts_text, vb_label: str = label
+                    ) -> Optional[bytes]:
+                        if not self.voicebox.configured:
+                            return None
+
+                        async def _on_queued(ahead: int) -> None:
+                            await self._notify_tts_queue(wait_msg, ahead)
+
+                        async with self.tts_queue.hold(
+                            label=f"compare-vb:{uid}:{vb_label}",
+                            on_queued=_on_queued if wait_msg is not None else None,
+                        ):
+                            return await self.voicebox.synthesize_ogg_opus(text)
+
+                    tasks.append(_one(label, _voicebox()))
+                elif key.startswith("elevenlabs:"):
+                    tasks.append(
+                        _one(
+                            label,
+                            client.synthesize_ogg_opus(tts_text, voice_id=voice_id),
+                        )
+                    )
+                else:
+                    tasks.append(_one(label, client.synthesize_ogg_opus(tts_text)))
+
         if tasks:
             results = await asyncio.gather(*tasks)
             for label, audio in results:
                 out[label] = audio
-        return prayer_text, out
+        return texts, out
 
     def _compare_engine_specs(
         self, *, log_missing: bool = True
@@ -672,53 +715,58 @@ class PersonalPrayerFeature(BaseFeature):
         self,
         message: Message,
         bot: Optional[Bot],
-        prayer_text: str,
+        prayer_texts: dict[str, str],
         voices: dict[str, Optional[bytes]],
     ) -> None:
-        body = (prayer_text or "").strip()
-        header = (
-            "<b>🧪 Сравнение озвучки (только для админов)</b>\n\n"
-            f"{html.escape(body)}"
-        )
-        if len(header) <= _TG_MESSAGE_MAX:
-            await message.answer(header, parse_mode=ParseMode.HTML)
-        else:
-            first, rest = _split_caption(
-                body, _TG_MESSAGE_MAX - len("🧪 Сравнение озвучки\n\n")
-            )
-            await message.answer(
-                f"<b>🧪 Сравнение озвучки (только для админов)</b>\n\n"
-                f"{html.escape(first)}",
-                parse_mode=ParseMode.HTML,
-            )
-            await _send_text_chunks(message, rest)
-
         specs = self._compare_engine_specs(log_missing=False)
-        total = len(specs) or 1
+        variants = [v for v in ("A", "B") if (prayer_texts.get(v) or "").strip()]
+        total = max(1, len(variants) * len(specs))
         chat_id = message.chat.id
         any_voice = False
-        for i, (key, title, _client, _voice_id) in enumerate(specs, 1):
-            caption = f"{i}/{total} {title}"
-            ogg = voices.get(key)
-            if not ogg:
+        idx = 0
+
+        for variant in variants:
+            body = (prayer_texts.get(variant) or "").strip()
+            header = (
+                f"<b>🧪 Промпт {variant} — текст молитвы</b>\n\n"
+                f"{html.escape(body)}"
+            )
+            if len(header) <= _TG_MESSAGE_MAX:
+                await message.answer(header, parse_mode=ParseMode.HTML)
+            else:
+                first, rest = _split_caption(
+                    body, _TG_MESSAGE_MAX - len(f"🧪 Промпт {variant}\n\n")
+                )
                 await message.answer(
-                    f"<i>{html.escape(caption)} — не удалось сгенерировать</i>",
+                    f"<b>🧪 Промпт {variant} — текст молитвы</b>\n\n"
+                    f"{html.escape(first)}",
                     parse_mode=ParseMode.HTML,
                 )
-                continue
-            any_voice = True
-            safe_name = key.replace(":", "_")[:40]
-            if bot:
-                await bot.send_voice(
-                    chat_id,
-                    BufferedInputFile(ogg, filename=f"prayer_{safe_name}.ogg"),
-                    caption=caption[:1024],
-                )
-            else:
-                await message.answer_voice(
-                    BufferedInputFile(ogg, filename=f"prayer_{safe_name}.ogg"),
-                    caption=caption[:1024],
-                )
+                await _send_text_chunks(message, rest)
+
+            for key, title, _client, _voice_id in specs:
+                idx += 1
+                caption = f"{idx}/{total} [{variant}] {title}"
+                ogg = voices.get(f"{variant}:{key}")
+                if not ogg:
+                    await message.answer(
+                        f"<i>{html.escape(caption)} — не удалось сгенерировать</i>",
+                        parse_mode=ParseMode.HTML,
+                    )
+                    continue
+                any_voice = True
+                safe_name = f"{variant}_{key}".replace(":", "_")[:40]
+                if bot:
+                    await bot.send_voice(
+                        chat_id,
+                        BufferedInputFile(ogg, filename=f"prayer_{safe_name}.ogg"),
+                        caption=caption[:1024],
+                    )
+                else:
+                    await message.answer_voice(
+                        BufferedInputFile(ogg, filename=f"prayer_{safe_name}.ogg"),
+                        caption=caption[:1024],
+                    )
 
         if not any_voice:
             await message.answer(
@@ -825,16 +873,47 @@ class PersonalPrayerFeature(BaseFeature):
         if notice:
             await message.answer(notice, parse_mode=ParseMode.HTML)
 
-    async def _compose_prayer(self, user_id: int, turns: List[str]) -> Optional[str]:
+    async def _compose_prayer(
+        self,
+        user_id: int,
+        turns: List[str],
+        *,
+        force_variant: Optional[str] = None,
+    ) -> Optional[str]:
         if not self.agents_client:
             return None
+        if force_variant in {"A", "B", "a", "b"}:
+            variant = force_variant.upper()  # type: ignore[assignment]
+        else:
+            variant = pick_prayer_compose_variant(user_id)
+        system_prompt = resolve_prayer_compose_system_prompt(variant)
+        turns_block = _format_user_context(turns)
+        style_examples = ""
+        if variant == "B":
+            try:
+                style_examples = await fetch_prayer_style_examples(turns_block)
+            except Exception as e:
+                logger.warning("[%s] prayer RAG examples failed: %s", self.name, e)
+        user_content = build_compose_user_content(
+            turns_block, style_examples=style_examples
+        )
+        max_tokens = prayer_compose_max_tokens(variant)
+        request_kind = prayer_compose_request_kind(variant)
+        logger.info(
+            "[%s] compose variant=%s uid=%s rag_chars=%s max_tokens=%s",
+            self.name,
+            variant,
+            user_id,
+            len(style_examples or ""),
+            max_tokens,
+        )
         raw = await self.agents_client.complete(
-            system_prompt=PRAYER_COMPOSE_SYSTEM_PROMPT,
-            user_content=_format_user_context(turns),
+            system_prompt=system_prompt,
+            user_content=user_content,
             user_id=user_id,
-            request_kind="personal_prayer_compose",
+            request_kind=request_kind,
             temperature=0.55,
-            max_tokens=1200,
+            max_tokens=max_tokens,
         )
         if not raw:
             return None

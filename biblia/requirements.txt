@@ -10,3 +10,4 @@ ffmpeg-python>=0.2.0      # для работы с видео (опционал�
 python-docx>=0.8.11       # для чтения .docx файлов
 PyPDF2>=3.0.0             # для чтения PDF (альтернатива pdftotext)
 apscheduler>=3.10.0
+chromadb>=0.5.0             # RAG-примеры структуры молитв (prayer_rag)

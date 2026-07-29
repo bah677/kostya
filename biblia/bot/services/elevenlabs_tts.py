@@ -125,11 +125,18 @@ class ElevenLabsTTS:
                     return raw
 
         audio = await asyncio.wait_for(_request(), timeout=_TIMEOUT_SEC)
-        # Только конвертация в OGG Opus для Telegram, без замедления.
+        # Основной голос (#1, ELEVENLABS_VOICE_ID) — ускорение на 10%.
+        primary = (self.voice_id or "").strip()
+        atempo = 1.1 if primary and vid == primary else 1.0
         ogg = await asyncio.to_thread(
-            audio_bytes_to_ogg_opus, audio, atempo=1.0, prefix="elabs_"
+            audio_bytes_to_ogg_opus, audio, atempo=atempo, prefix="elabs_"
         )
         if not ogg:
             raise RuntimeError("ffmpeg не смог обработать ElevenLabs audio")
-        logger.info("ElevenLabs TTS ok voice=%s bytes=%s", vid[:8], len(ogg))
+        logger.info(
+            "ElevenLabs TTS ok voice=%s bytes=%s atempo=%.2f",
+            vid[:8],
+            len(ogg),
+            atempo,
+        )
         return ogg

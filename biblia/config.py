@@ -261,6 +261,17 @@ class AppConfig:
     PRAYER_STRESS_MODERATION_THREAD_ID: int = 0
     PRAYER_STRESS_MODERATION_REPLY_TO_MESSAGE_ID: int = 0
     PRAYER_STRESS_MAX_WORDS_PER_SUBMIT: int = 20
+    # Compose A/B: A = короткий baseline, B = длинная + RAG-структура, AB = sticky split.
+    PRAYER_COMPOSE_PROMPT_VARIANT: str = "A"
+    PRAYER_COMPOSE_AB_B_PERCENT: int = 50
+    PRAYER_COMPOSE_MAX_TOKENS_A: int = 1200
+    PRAYER_COMPOSE_MAX_TOKENS_B: int = 2800
+    # RAG-примеры утренних молитв (Chroma avatar expert_materials) — только для варианта B.
+    PRAYER_RAG_ENABLED: bool = True
+    PRAYER_RAG_CHROMA_DIR: str = ""
+    PRAYER_RAG_COLLECTION: str = "expert_materials"
+    PRAYER_RAG_TOP_K: int = 2
+    PRAYER_RAG_FETCH_LIMIT: int = 800
 
     LOG_LEVEL: str = "INFO"
     MAX_WORKERS: int = 5
@@ -456,6 +467,30 @@ def load_app_config() -> AppConfig:
         ),
         PRAYER_STRESS_MAX_WORDS_PER_SUBMIT=max(
             1, min(50, int(os.getenv("PRAYER_STRESS_MAX_WORDS_PER_SUBMIT", "20") or "20"))
+        ),
+        PRAYER_COMPOSE_PROMPT_VARIANT=(
+            os.getenv("PRAYER_COMPOSE_PROMPT_VARIANT") or "A"
+        ).strip().upper()
+        or "A",
+        PRAYER_COMPOSE_AB_B_PERCENT=max(
+            0,
+            min(100, int(os.getenv("PRAYER_COMPOSE_AB_B_PERCENT", "50") or "50")),
+        ),
+        PRAYER_COMPOSE_MAX_TOKENS_A=max(
+            400, int(os.getenv("PRAYER_COMPOSE_MAX_TOKENS_A", "1200") or "1200")
+        ),
+        PRAYER_COMPOSE_MAX_TOKENS_B=max(
+            800, int(os.getenv("PRAYER_COMPOSE_MAX_TOKENS_B", "2800") or "2800")
+        ),
+        PRAYER_RAG_ENABLED=_parse_bool_env(os.getenv("PRAYER_RAG_ENABLED"), True),
+        PRAYER_RAG_CHROMA_DIR=(os.getenv("PRAYER_RAG_CHROMA_DIR") or "").strip(),
+        PRAYER_RAG_COLLECTION=(
+            os.getenv("PRAYER_RAG_COLLECTION") or "expert_materials"
+        ).strip()
+        or "expert_materials",
+        PRAYER_RAG_TOP_K=max(1, min(5, int(os.getenv("PRAYER_RAG_TOP_K", "2") or "2"))),
+        PRAYER_RAG_FETCH_LIMIT=max(
+            50, min(2000, int(os.getenv("PRAYER_RAG_FETCH_LIMIT", "800") or "800"))
         ),
         LOG_LEVEL=os.getenv("LOG_LEVEL", "INFO"),
         MEDIA_INBOUND_ARCHIVE_DIR=media_raw,

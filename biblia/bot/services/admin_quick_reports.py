@@ -166,7 +166,7 @@ async def format_prayer_usage_report(pool) -> str:
             f"""
             SELECT MIN(created_at) AS first_at, MAX(created_at) AS last_at
             FROM token_usage
-            WHERE request_kind = 'personal_prayer_compose'
+            WHERE request_kind LIKE 'personal_prayer_compose%'
               AND user_id NOT IN ({excl})
             """
         )

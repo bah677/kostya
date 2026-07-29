@@ -69,7 +69,7 @@ async def _count_user_voice_prayers(user_storage, user_id: int) -> int:
                 """
                 SELECT COUNT(*)
                 FROM token_usage
-                WHERE request_kind = 'personal_prayer_compose'
+                WHERE request_kind LIKE 'personal_prayer_compose%'
                   AND user_id = $1
                 """,
                 int(user_id),
