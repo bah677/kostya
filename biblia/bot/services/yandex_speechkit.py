@@ -54,15 +54,11 @@ class YandexSpeechKitTTS:
         if not self.configured:
             raise RuntimeError("YANDEX_SPEECHKIT_API_KEY не задан")
 
-        from bot.services.prayer_ssml import adapt_ssml_for_yandex, prepare_prayer_for_engine
+        from bot.services.prayer_ssml import prepare_prayer_for_engine
 
         body, mode = prepare_prayer_for_engine(text, engine="yandex")
         if not body:
             raise ValueError("empty text")
-        native_prosody = False
-        if mode == "ssml":
-            body = adapt_ssml_for_yandex(body)
-            native_prosody = False
         if len(body) > _MAX_CHARS:
             body = body[:_MAX_CHARS]
 
@@ -73,8 +69,9 @@ class YandexSpeechKitTTS:
         }
         if mode == "ssml":
             params["ssml"] = body
-            # В yandex-адаптации <prosody> убираем как несовместимый тег,
-            # поэтому финальный темп выравниваем общим ffmpeg-atempo.
+            # Темп/тон уже в <prosody>; API speed не дублируем сверх atempo.
+            # atempo оставляем общим (как у остальных) — prosody rate в SSML
+            # задаёт «характер», финальный темп выравнивает ffmpeg.
         else:
             params["text"] = body
             if self.voice not in _NO_SPEED_VOICES:
@@ -126,7 +123,8 @@ class YandexSpeechKitTTS:
 
         from bot.services.prayer_tts_style import audio_bytes_to_ogg_opus
 
-        post_atempo = 1.0 if native_prosody else self.atempo
+        # В SSML уже есть <prosody rate=…> — не замедляем ещё раз ffmpeg-atempo.
+        post_atempo = 1.0 if mode == "ssml" else self.atempo
         ogg = await asyncio.to_thread(
             audio_bytes_to_ogg_opus,
             raw,

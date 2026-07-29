@@ -272,6 +272,9 @@ class AppConfig:
     PRAYER_RAG_COLLECTION: str = "expert_materials"
     PRAYER_RAG_TOP_K: int = 2
     PRAYER_RAG_FETCH_LIMIT: int = 800
+    # Фоновая музыка под голос (админ-претест; треки вне rsync — data/ на проде).
+    PRAYER_BG_MUSIC_DIR: str = "/home/appuser/biblia/data/prayer_bg_music"
+    PRAYER_BG_MUSIC_VOLUME: float = 0.14
 
     LOG_LEVEL: str = "INFO"
     MAX_WORKERS: int = 5
@@ -491,6 +494,15 @@ def load_app_config() -> AppConfig:
         PRAYER_RAG_TOP_K=max(1, min(5, int(os.getenv("PRAYER_RAG_TOP_K", "2") or "2"))),
         PRAYER_RAG_FETCH_LIMIT=max(
             50, min(2000, int(os.getenv("PRAYER_RAG_FETCH_LIMIT", "800") or "800"))
+        ),
+        PRAYER_BG_MUSIC_DIR=(
+            os.getenv("PRAYER_BG_MUSIC_DIR")
+            or "/home/appuser/biblia/data/prayer_bg_music"
+        ).strip()
+        or "/home/appuser/biblia/data/prayer_bg_music",
+        PRAYER_BG_MUSIC_VOLUME=max(
+            0.02,
+            min(0.5, _parse_unit_float(os.getenv("PRAYER_BG_MUSIC_VOLUME"), 0.14) or 0.14),
         ),
         LOG_LEVEL=os.getenv("LOG_LEVEL", "INFO"),
         MEDIA_INBOUND_ARCHIVE_DIR=media_raw,

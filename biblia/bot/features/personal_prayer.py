@@ -34,6 +34,7 @@ from bot.services.prayer_stress import (
     dictionary_hits,
     parse_prayer_stress_words,
 )
+from bot.services.prayer_bg_music import mix_voice_with_bg_music
 from bot.services.prayer_tts_queue import PrayerTtsQueue, get_prayer_tts_queue
 from bot.services.prayer_rag import build_compose_user_content, fetch_prayer_style_examples
 from bot.services.salute_tts import SaluteSpeechTTS
@@ -353,46 +354,38 @@ class PersonalPrayerFeature(BaseFeature):
     ) -> None:
         uid = message.from_user.id if message.from_user else 0
         await state.set_state(PrayerStates.generating)
-        admin_compare = bool(uid) and await is_admin_or_super(self.user_storage, uid)
+        admin_pretest = bool(uid) and await is_admin_or_super(self.user_storage, uid)
 
         wait_msg = await message.answer(
             (
-                "⏳ Составляю 2 варианта молитвы (A и B) и готовлю озвучку всеми голосами…\n"
-                "<i>Админ-претест: ожидайте ~16 голосовых</i>"
+                "⏳ Составляю молитву (промпт B) и озвучку ElevenLabs #1 с фоном…"
             )
-            if admin_compare
-            else "⏳ Составляю молитву и готовлю голосовое сообщение…",
-            parse_mode=ParseMode.HTML if admin_compare else None,
+            if admin_pretest
+            else "⏳ Составляю молитву и готовлю голосовое сообщение…"
         )
 
         bot = self.bot
         prayer_text: Optional[str] = None
-        prayer_texts: Optional[dict[str, str]] = None
         ogg: Optional[bytes] = None
-        compare_voices: Optional[dict[str, Optional[bytes]]] = None
 
         try:
             if bot:
                 async with record_voice_chat_action(
                     bot, message.chat.id, message_thread_id=message.message_thread_id
                 ):
-                    if admin_compare:
-                        prayer_texts, compare_voices = await self._compose_and_synthesize_compare(
+                    if admin_pretest:
+                        prayer_text, ogg = await self._compose_and_synthesize_admin(
                             uid, turns, wait_msg=wait_msg
                         )
-                        prayer_text = (prayer_texts or {}).get("A") or (prayer_texts or {}).get("B")
-                        ogg = _first_compare_ogg(compare_voices)
                     else:
                         prayer_text, ogg = await self._compose_and_synthesize(
                             uid, turns, wait_msg=wait_msg
                         )
             else:
-                if admin_compare:
-                    prayer_texts, compare_voices = await self._compose_and_synthesize_compare(
+                if admin_pretest:
+                    prayer_text, ogg = await self._compose_and_synthesize_admin(
                         uid, turns, wait_msg=wait_msg
                     )
-                    prayer_text = (prayer_texts or {}).get("A") or (prayer_texts or {}).get("B")
-                    ogg = _first_compare_ogg(compare_voices)
                 else:
                     prayer_text, ogg = await self._compose_and_synthesize(
                         uid, turns, wait_msg=wait_msg
@@ -409,21 +402,13 @@ class PersonalPrayerFeature(BaseFeature):
             except Exception:
                 pass
 
-            if admin_compare and compare_voices is not None:
-                await self._deliver_prayer_compare(
-                    message,
-                    bot,
-                    prayer_texts or {"A": prayer_text},
-                    compare_voices,
-                )
-            else:
-                await self._deliver_prayer(message, bot, prayer_text, ogg)
+            await self._deliver_prayer(message, bot, prayer_text, ogg)
             logger.info(
-                "[%s] prayer delivered uid=%s voice=%s compare=%s",
+                "[%s] prayer delivered uid=%s voice=%s admin_pretest=%s",
                 self.name,
                 uid,
                 bool(ogg),
-                bool(admin_compare),
+                bool(admin_pretest),
             )
         except Exception as e:
             logger.error("[%s] generate failed uid=%s: %s", self.name, uid, e, exc_info=True)
@@ -548,6 +533,98 @@ class PersonalPrayerFeature(BaseFeature):
         else:
             logger.warning("[%s] TTS skipped — not configured uid=%s", self.name, uid)
 
+        return prayer_text, ogg
+
+    async def _compose_and_synthesize_admin(
+        self,
+        uid: int,
+        turns: List[str],
+        *,
+        wait_msg: Optional[Message] = None,
+    ) -> tuple[Optional[str], Optional[bytes]]:
+        """Админ-претест: промпт B + ElevenLabs #1 + тихий фон."""
+        logger.info("[%s] admin pretest compose start uid=%s (B)", self.name, uid)
+        if wait_msg is not None:
+            try:
+                await wait_msg.edit_text("⏳ Составляю молитву (промпт B)…")
+            except Exception:
+                pass
+
+        prayer_text = await self._compose_prayer(uid, turns, force_variant="B")
+        if not prayer_text:
+            logger.warning("[%s] admin compose empty uid=%s", self.name, uid)
+            return None, None
+
+        logger.info(
+            "[%s] admin compose done uid=%s chars=%s",
+            self.name,
+            uid,
+            len(prayer_text),
+        )
+
+        tts_text = await self._apply_prayer_stress_dictionary(prayer_text)
+        ogg: Optional[bytes] = None
+
+        if not self.elevenlabs_tts.configured or not self.elevenlabs_tts.voice_id:
+            logger.error(
+                "[%s] admin pretest: ElevenLabs #1 не настроен uid=%s",
+                self.name,
+                uid,
+            )
+            return prayer_text, None
+
+        if wait_msg is not None:
+            try:
+                await wait_msg.edit_text("⏳ Озвучиваю ElevenLabs #1…")
+            except Exception:
+                pass
+
+        try:
+            # Сырой mp3: atempo + фон — одним ffmpeg-проходом (без двойного encode).
+            raw_mp3 = await self.elevenlabs_tts.synthesize_ogg_opus(
+                tts_text,
+                voice_id=self.elevenlabs_tts.voice_id,
+                as_ogg=False,
+            )
+        except Exception as e:
+            logger.error(
+                "[%s] admin ElevenLabs failed uid=%s: %s", self.name, uid, e
+            )
+            return prayer_text, None
+
+        if wait_msg is not None:
+            try:
+                await wait_msg.edit_text("⏳ Накладываю фоновую музыку…")
+            except Exception:
+                pass
+
+        mixed = await asyncio.to_thread(
+            mix_voice_with_bg_music,
+            raw_mp3,
+            atempo=1.1,
+            voice_suffix=".mp3",
+            bitrate="160k",
+        )
+        if mixed:
+            ogg = mixed
+        else:
+            logger.warning(
+                "[%s] admin bg mix skipped/failed uid=%s — fallback без фона",
+                self.name,
+                uid,
+            )
+            from bot.services.prayer_tts_style import audio_bytes_to_ogg_opus
+
+            ogg = await asyncio.to_thread(
+                audio_bytes_to_ogg_opus, raw_mp3, atempo=1.1, prefix="elabs_admin_"
+            )
+
+        logger.info(
+            "[%s] admin pretest TTS done uid=%s bytes=%s",
+            self.name,
+            uid,
+            len(ogg) if ogg else 0,
+        )
         return prayer_text, ogg
 
     async def _compose_and_synthesize_compare(

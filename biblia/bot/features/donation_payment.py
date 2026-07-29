@@ -99,11 +99,38 @@ class DonationPaymentFeature(BaseFeature):
     def _recurring_enabled(self) -> bool:
         return bool(config.DONATION_RECURRING_ENABLED)
 
-    def _donation_intro_text(self) -> str:
+    async def _count_voice_prayers_all_time(self) -> int:
+        """Число генераций персональной молитвы за всё время (без служебных uid)."""
+        pool = getattr(self.user_storage, "pool", None)
+        if pool is None:
+            return 0
+        try:
+            async with pool.acquire() as conn:
+                n = await conn.fetchval(
+                    """
+                    SELECT COUNT(*)
+                    FROM token_usage
+                    WHERE request_kind = 'personal_prayer_compose'
+                      AND user_id NOT IN (304631563, 367302291)
+                    """
+                )
+            return int(n or 0)
+        except Exception as e:
+            logger.warning("[%s] prayer count for donation intro failed: %s", self.name, e)
+            return 0
+
+    async def _donation_intro_text(self) -> str:
+        prayer_n = await self._count_voice_prayers_all_time()
+        prayer_line = ""
+        if prayer_n > 0:
+            prayer_line = (
+                f"Уже создано голосовых молитв: **{prayer_n:,}**.\n\n".replace(",", " ")
+            )
         return (
             "🤝 **Поддержи развитие нашего проекта**\n\n"
             "Твоя поддержка поможет сделать его лучше для всех пользователей.\n"
             "Ты вкладываешь в Благое дело 🙏🏻\n\n"
+            f"{prayer_line}"
         )
 
     def _mode_keyboard(self, *, show_subscription_mgmt: bool) -> InlineKeyboardMarkup:
@@ -230,7 +257,7 @@ class DonationPaymentFeature(BaseFeature):
                 await state.update_data(donation_mode="one_time")
                 await state.set_state(None)
             await message.answer(
-                self._donation_intro_text() + "Выберите валюту для доната:",
+                await self._donation_intro_text() + "Выберите валюту для доната:",
                 reply_markup=self._currency_keyboard(
                     include_crypto=True,
                     show_subscription_mgmt=bool(active_sub),
@@ -241,7 +268,7 @@ class DonationPaymentFeature(BaseFeature):
             return
 
         await message.answer(
-            self._donation_intro_text() + "Выберите формат поддержки:",
+            await self._donation_intro_text() + "Выберите формат поддержки:",
             reply_markup=self._mode_keyboard(show_subscription_mgmt=bool(active_sub)),
             parse_mode=ParseMode.MARKDOWN,
         )
@@ -322,7 +349,7 @@ class DonationPaymentFeature(BaseFeature):
         elif self._recurring_enabled():
             title = "💳 **Разовый платёж**\n\nВыберите валюту:"
         else:
-            title = self._donation_intro_text() + "Выберите валюту для доната:"
+            title = await self._donation_intro_text() + "Выберите валюту для доната:"
         await callback.message.edit_text(
             title,
             reply_markup=self._currency_keyboard(
@@ -691,7 +718,7 @@ class DonationPaymentFeature(BaseFeature):
             await state.update_data(donation_mode="one_time")
             await state.set_state(None)
             await callback.message.edit_text(
-                self._donation_intro_text() + "Выберите валюту для доната:",
+                await self._donation_intro_text() + "Выберите валюту для доната:",
                 reply_markup=self._currency_keyboard(
                     include_crypto=True,
                     show_subscription_mgmt=bool(active_sub),
@@ -704,7 +731,7 @@ class DonationPaymentFeature(BaseFeature):
 
         await state.clear()
         await callback.message.edit_text(
-            self._donation_intro_text() + "Выберите формат поддержки:",
+            await self._donation_intro_text() + "Выберите формат поддержки:",
             reply_markup=self._mode_keyboard(show_subscription_mgmt=bool(active_sub)),
             parse_mode=ParseMode.MARKDOWN,
         )
@@ -741,7 +768,7 @@ class DonationPaymentFeature(BaseFeature):
         elif self._recurring_enabled():
             title = "💳 **Разовый платёж**\n\nВыберите валюту:"
         else:
-            title = self._donation_intro_text() + "Выберите валюту для доната:"
+            title = await self._donation_intro_text() + "Выберите валюту для доната:"
         await callback.message.edit_text(
             title,
             reply_markup=self._currency_keyboard(

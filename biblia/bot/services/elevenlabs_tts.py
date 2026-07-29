@@ -76,7 +76,11 @@ class ElevenLabsTTS:
         return ids
 
     async def synthesize_ogg_opus(
-        self, text: str, *, voice_id: Optional[str] = None
+        self,
+        text: str,
+        *,
+        voice_id: Optional[str] = None,
+        as_ogg: bool = True,
     ) -> bytes:
         if not self.api_key:
             raise RuntimeError("ELEVENLABS_API_KEY не задан")
@@ -157,15 +161,20 @@ class ElevenLabsTTS:
         # Основной голос (#1, ELEVENLABS_VOICE_ID) — ускорение на 10%.
         primary = (self.voice_id or "").strip()
         atempo = 1.1 if primary and vid == primary else 1.0
-        ogg = await asyncio.to_thread(
-            audio_bytes_to_ogg_opus, audio, atempo=atempo, prefix="elabs_"
-        )
-        if not ogg:
-            raise RuntimeError("ffmpeg не смог обработать ElevenLabs audio")
+        if as_ogg:
+            out = await asyncio.to_thread(
+                audio_bytes_to_ogg_opus, audio, atempo=atempo, prefix="elabs_"
+            )
+            if not out:
+                raise RuntimeError("ffmpeg не смог обработать ElevenLabs audio")
+        else:
+            # Сырой mp3 — atempo/фон накладываем одним проходом ffmpeg позже.
+            out = audio
         logger.info(
-            "ElevenLabs TTS ok voice=%s bytes=%s atempo=%.2f",
+            "ElevenLabs TTS ok voice=%s bytes=%s atempo=%.2f as_ogg=%s",
             vid[:8],
-            len(ogg),
+            len(out),
             atempo,
+            as_ogg,
         )
-        return ogg
+        return out
