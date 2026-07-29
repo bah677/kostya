@@ -547,7 +547,7 @@ class BibliaDailyReportCollector:
     async def get_new_users(self, period_start: datetime, period_end: datetime) -> int:
         return int(
             await self._scalar(
-                """
+                f"""
                 SELECT COUNT(*)
                 FROM users
                 WHERE created_at >= $1 AND created_at < $2
@@ -561,7 +561,7 @@ class BibliaDailyReportCollector:
 
     async def get_donations_sum(self, period_start: datetime, period_end: datetime) -> float:
         val = await self._scalar(
-            """
+            f"""
             SELECT COALESCE(SUM(amount_rub), 0)
             FROM payments
             WHERE status = 'succeeded'
@@ -579,7 +579,7 @@ class BibliaDailyReportCollector:
     async def get_donations_count(self, period_start: datetime, period_end: datetime) -> int:
         return int(
             await self._scalar(
-                """
+                f"""
                 SELECT COUNT(*)
                 FROM payments
                 WHERE status = 'succeeded'
@@ -604,7 +604,7 @@ class BibliaDailyReportCollector:
         """
         compare_day = report_day.day
         rows = await self._fetch(
-            """
+            f"""
             SELECT
                 (date_trunc(
                     'month',
@@ -765,7 +765,7 @@ class BibliaDailyReportCollector:
         """Активные пользователи без успешной рассылки из кампаний с «(авто)» в названии."""
         return int(
             await self._scalar(
-                """
+                f"""
                 SELECT COUNT(*)
                 FROM users u
                 WHERE u.is_active = true
