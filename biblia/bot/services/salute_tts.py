@@ -36,10 +36,15 @@ class SaluteSpeechTTS:
     def configured(self) -> bool:
         return bool(self.auth_key)
 
-    async def _ensure_token(self, session: aiohttp.ClientSession) -> str:
-        now = time.time()
-        if self._token and now < self._token_expires_at - 60:
-            return self._token
+    def _scope_candidates(self) -> list[str]:
+        preferred = (self.scope or "SALUTE_SPEECH_PERS").strip() or "SALUTE_SPEECH_PERS"
+        variants = [preferred]
+        for alt in ("SALUTE_SPEECH_PERS", "SALUTE_SPEECH_CORP"):
+            if alt not in variants:
+                variants.append(alt)
+        return variants
+
+    async def _request_token(self, session: aiohttp.ClientSession, *, scope: str) -> dict:
         headers = {
             "Authorization": f"Basic {self.auth_key}",
             "RqUID": str(uuid.uuid4()),
@@ -48,7 +53,7 @@ class SaluteSpeechTTS:
         async with session.post(
             _OAUTH_URL,
             headers=headers,
-            data={"scope": self.scope},
+            data={"scope": scope},
             ssl=False,  # Sber gateway часто требует корпоративный CA
         ) as resp:
             data = await resp.json(content_type=None)
@@ -56,6 +61,34 @@ class SaluteSpeechTTS:
                 raise RuntimeError(
                     f"SaluteSpeech oauth HTTP {resp.status}: {str(data)[:400]}"
                 )
+            return data
+
+    async def _ensure_token(self, session: aiohttp.ClientSession) -> str:
+        now = time.time()
+        if self._token and now < self._token_expires_at - 60:
+            return self._token
+        last_error: Optional[Exception] = None
+        data: Optional[dict] = None
+        for scope in self._scope_candidates():
+            try:
+                data = await self._request_token(session, scope=scope)
+                if scope != self.scope:
+                    logger.warning(
+                        "SaluteSpeech oauth: scope %s подошёл вместо %s",
+                        scope,
+                        self.scope,
+                    )
+                    self.scope = scope
+                break
+            except RuntimeError as e:
+                last_error = e
+                if "scope from db not fully includes consumed scope" not in str(e):
+                    raise
+                logger.warning("SaluteSpeech oauth scope mismatch for %s", scope)
+        if data is None:
+            if last_error:
+                raise last_error
+            raise RuntimeError("SaluteSpeech oauth: не удалось получить токен")
         token = (data.get("access_token") or "").strip()
         if not token:
             raise RuntimeError(f"SaluteSpeech oauth: нет access_token: {data!r}")

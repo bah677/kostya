@@ -200,6 +200,19 @@ def prepare_prayer_for_engine(text: str, *, engine: str) -> tuple[str, str]:
     return markup.plain, "plain"
 
 
+def adapt_ssml_for_yandex(raw_ssml: str) -> str:
+    """
+    SpeechKit v1 не принимает <prosody> в текущем TTS endpoint.
+    Оставляем совместимые теги и выносим темп в post-processing.
+    """
+    raw = (raw_ssml or "").strip()
+    if not raw:
+        return "<speak></speak>"
+    adapted = re.sub(r"<prosody\b[^>]*>\s*", "", raw, flags=re.I)
+    adapted = re.sub(r"\s*</prosody>", "", adapted, flags=re.I)
+    return adapted
+
+
 def resolve_prayer_tts_instruct_with_ssml() -> str:
     """Базовый instruct + доп. guidance из SSML-логики (для OpenAI/Voicebox)."""
     from bot.services.prayer_tts_style import resolve_prayer_tts_instruct

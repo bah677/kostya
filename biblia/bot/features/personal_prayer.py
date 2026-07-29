@@ -12,6 +12,7 @@ from typing import Any, List, Optional, Protocol
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.enums import ParseMode
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, CommandObject
 from aiogram.fsm.context import FSMContext
 from aiogram.types import (
@@ -96,6 +97,13 @@ def _first_compare_ogg(voices: Optional[dict[str, Optional[bytes]]]) -> Optional
 
 def _strip_prayer_text(raw: str) -> str:
     return format_prayer_for_tts(raw)
+
+
+def _is_voice_forbidden_error(exc: Exception) -> bool:
+    if not isinstance(exc, TelegramBadRequest):
+        return False
+    text = str(exc)
+    return "VOICE_MESSAGES_FORBIDDEN" in text or "voice messages forbidden" in text.lower()
 
 
 def _format_user_context(turns: List[str]) -> str:
@@ -719,28 +727,31 @@ class PersonalPrayerFeature(BaseFeature):
                 message.from_user.id if message.from_user else 0,
             )
             caption, rest = _split_caption(body, _TG_CAPTION_MAX)
-            await bot.send_voice(
-                message.chat.id,
-                BufferedInputFile(ogg, filename="prayer.ogg"),
-                caption=caption or None,
-            )
-            await _send_text_chunks(message, rest)
-        else:
-            header = "<b>🙏 Ваша молитва</b>\n\n"
-            safe = html.escape(body)
-            # Заголовок + текст; при переполнении — остаток обычными сообщениями.
-            full = header + safe
-            if len(full) <= _TG_MESSAGE_MAX:
-                await message.answer(full, parse_mode=ParseMode.HTML)
-            else:
-                # Первый кусок без HTML-разрыва посередине тега: шлём plain.
-                first, rest = _split_caption(body, _TG_MESSAGE_MAX - len("🙏 Ваша молитва\n\n"))
-                await message.answer(
-                    f"<b>🙏 Ваша молитва</b>\n\n{html.escape(first)}",
-                    parse_mode=ParseMode.HTML,
+            try:
+                await bot.send_voice(
+                    message.chat.id,
+                    BufferedInputFile(ogg, filename="prayer.ogg"),
+                    caption=caption or None,
                 )
                 await _send_text_chunks(message, rest)
-
+            except TelegramBadRequest as e:
+                if not _is_voice_forbidden_error(e):
+                    raise
+                logger.info(
+                    "[%s] voice forbidden for uid=%s, fallback to text",
+                    self.name,
+                    message.from_user.id if message.from_user else 0,
+                )
+                await self._deliver_prayer_text_only(
+                    message,
+                    body,
+                    notice=(
+                        "<i>В этом чате голосовые сообщения недоступны, "
+                        "поэтому отправляю молитву текстом.</i>"
+                    ),
+                )
+        else:
+            await self._deliver_prayer_text_only(message, body)
             if not self.tts.configured:
                 await message.answer(
                     "<i>Голосовое временно недоступно (не настроен TTS).</i>",
@@ -764,6 +775,28 @@ class PersonalPrayerFeature(BaseFeature):
                 parse_mode=ParseMode.HTML,
                 reply_markup=self._prayer_stress_feedback_kb(),
             )
+
+    async def _deliver_prayer_text_only(
+        self,
+        message: Message,
+        body: str,
+        *,
+        notice: Optional[str] = None,
+    ) -> None:
+        header = "<b>🙏 Ваша молитва</b>\n\n"
+        safe = html.escape(body)
+        full = header + safe
+        if len(full) <= _TG_MESSAGE_MAX:
+            await message.answer(full, parse_mode=ParseMode.HTML)
+        else:
+            first, rest = _split_caption(body, _TG_MESSAGE_MAX - len("🙏 Ваша молитва\n\n"))
+            await message.answer(
+                f"<b>🙏 Ваша молитва</b>\n\n{html.escape(first)}",
+                parse_mode=ParseMode.HTML,
+            )
+            await _send_text_chunks(message, rest)
+        if notice:
+            await message.answer(notice, parse_mode=ParseMode.HTML)
 
     async def _compose_prayer(self, user_id: int, turns: List[str]) -> Optional[str]:
         if not self.agents_client:
