@@ -62,8 +62,8 @@ _CANCEL_WORDS = frozenset(
 _PRAYER_STRESS_OPEN_CB = "prayer_stress_open"
 _PRAYER_STRESS_DECIDE_PREFIX = "pst:"
 
-# Короткая голосовая инструкция перед чтением текста молитвы (стиль Кости).
-_PRAYER_VOICE_INTRO = (
+# Текст подписи к голосовому (инструкция). В TTS уходит текст молитвы, не это.
+_PRAYER_VOICE_CAPTION = (
     "Найди тихое место. Закрой глаза.\n\n"
     "Повторяй слова молитвы про себя или совсем тихо вслух — "
     "собери всё внимание внутрь себя, в каждое произносимое слово.\n\n"
@@ -382,7 +382,7 @@ class PersonalPrayerFeature(BaseFeature):
         await state.set_state(PrayerStates.generating)
 
         wait_msg = await message.answer(
-            "⏳ Составляю молитву и готовлю голосовую инструкцию…"
+            "⏳ Составляю молитву и готовлю голосовое сообщение…"
         )
 
         bot = self.bot
@@ -452,7 +452,7 @@ class PersonalPrayerFeature(BaseFeature):
         *,
         wait_msg: Optional[Message] = None,
     ) -> tuple[Optional[str], Optional[bytes]]:
-        """Промпт B + голосовая инструкция (ElevenLabs #1 + фон). Текст молитвы — как от LLM."""
+        """Промпт B → озвучка ТЕКСТА МОЛИТВЫ (ElevenLabs #1 + фон). Подпись = инструкция."""
         logger.info("[%s] compose start uid=%s turns=%s", self.name, uid, len(turns))
         if wait_msg is not None:
             try:
@@ -474,22 +474,36 @@ class PersonalPrayerFeature(BaseFeature):
 
         if wait_msg is not None:
             try:
-                await wait_msg.edit_text("⏳ Готовлю голосовую инструкцию…")
+                await wait_msg.edit_text("⏳ Озвучиваю молитву…")
             except Exception:
                 pass
 
-        ogg = await self._synthesize_voice_intro(uid, wait_msg=wait_msg)
+        ogg = await self._synthesize_prayer_voice(
+            uid, prayer_text, wait_msg=wait_msg
+        )
         return prayer_text, ogg
 
-    async def _synthesize_voice_intro(
+    async def _synthesize_prayer_voice(
         self,
         uid: int,
+        prayer_text: str,
         *,
         wait_msg: Optional[Message] = None,
     ) -> Optional[bytes]:
-        """Короткая инструкция: ElevenLabs #1 + фон; fallback Voicebox/SpeechKit."""
+        """Озвучка молитвы: ElevenLabs #1 + фон; fallback Voicebox/SpeechKit."""
         # Спец-форматирование для TTS (паузы/SSML), без словаря ударений.
-        tts_text = format_prayer_for_tts(_PRAYER_VOICE_INTRO)
+        tts_text = format_prayer_for_tts(prayer_text)
+        if not tts_text.strip():
+            logger.warning("[%s] prayer TTS empty after format uid=%s", self.name, uid)
+            return None
+
+        logger.info(
+            "[%s] prayer TTS input uid=%s chars=%s preview=%r",
+            self.name,
+            uid,
+            len(tts_text),
+            tts_text[:80],
+        )
 
         if self.elevenlabs_tts.configured and self.elevenlabs_tts.voice_id:
             try:
@@ -507,7 +521,7 @@ class PersonalPrayerFeature(BaseFeature):
                 )
                 if mixed:
                     logger.info(
-                        "[%s] intro TTS ok engine=elevenlabs uid=%s bytes=%s",
+                        "[%s] prayer TTS ok engine=elevenlabs uid=%s bytes=%s",
                         self.name,
                         uid,
                         len(mixed),
@@ -516,16 +530,16 @@ class PersonalPrayerFeature(BaseFeature):
                 from bot.services.prayer_tts_style import audio_bytes_to_ogg_opus
 
                 ogg = await asyncio.to_thread(
-                    audio_bytes_to_ogg_opus, raw_mp3, atempo=1.1, prefix="elabs_intro_"
+                    audio_bytes_to_ogg_opus, raw_mp3, atempo=1.1, prefix="elabs_prayer_"
                 )
                 if ogg:
                     logger.warning(
-                        "[%s] intro bg mix failed uid=%s — без фона", self.name, uid
+                        "[%s] prayer bg mix failed uid=%s — без фона", self.name, uid
                     )
                     return ogg
             except Exception as e:
                 logger.error(
-                    "[%s] intro ElevenLabs failed uid=%s: %s", self.name, uid, e
+                    "[%s] prayer ElevenLabs failed uid=%s: %s", self.name, uid, e
                 )
 
         tts = self.tts
@@ -537,7 +551,7 @@ class PersonalPrayerFeature(BaseFeature):
                         await self._notify_tts_queue(wait_msg, ahead)
 
                     async with self.tts_queue.hold(
-                        label=f"prayer-intro:{uid}",
+                        label=f"prayer:{uid}",
                         on_queued=_on_queued if wait_msg is not None else None,
                     ):
                         ogg = await self.voicebox.synthesize_ogg_opus(tts_text)
@@ -545,14 +559,16 @@ class PersonalPrayerFeature(BaseFeature):
                     ogg = await tts.synthesize_ogg_opus(tts_text)
                 if ogg:
                     logger.info(
-                        "[%s] intro TTS ok engine=fallback uid=%s bytes=%s",
+                        "[%s] prayer TTS ok engine=fallback uid=%s bytes=%s",
                         self.name,
                         uid,
                         len(ogg),
                     )
                     return ogg
             except Exception as e:
-                logger.error("[%s] intro fallback TTS failed uid=%s: %s", self.name, uid, e)
+                logger.error(
+                    "[%s] prayer fallback TTS failed uid=%s: %s", self.name, uid, e
+                )
 
             if (
                 self.voicebox.configured
@@ -565,13 +581,13 @@ class PersonalPrayerFeature(BaseFeature):
                         return ogg
                 except Exception as e2:
                     logger.error(
-                        "[%s] intro SpeechKit fallback failed uid=%s: %s",
+                        "[%s] prayer SpeechKit fallback failed uid=%s: %s",
                         self.name,
                         uid,
                         e2,
                     )
 
-        logger.warning("[%s] intro TTS unavailable uid=%s", self.name, uid)
+        logger.warning("[%s] prayer TTS unavailable uid=%s", self.name, uid)
         return None
 
     async def _compose_and_synthesize_compare(
@@ -807,15 +823,15 @@ class PersonalPrayerFeature(BaseFeature):
     ) -> None:
         body = (prayer_text or "").strip()
         uid = message.from_user.id if message.from_user else 0
-        intro_caption = _PRAYER_VOICE_INTRO.strip()
+        intro_caption = _PRAYER_VOICE_CAPTION.strip()
         if len(intro_caption) > _TG_CAPTION_MAX:
             intro_caption = intro_caption[: _TG_CAPTION_MAX - 1].rstrip() + "…"
 
         if ogg:
-            logger.info("[%s] sending intro voice uid=%s bytes=%s", self.name, uid, len(ogg))
+            logger.info("[%s] sending prayer voice uid=%s bytes=%s", self.name, uid, len(ogg))
             try:
-                # Подпись на voice = текст инструкции (раньше caption не слали).
-                voice_file = BufferedInputFile(ogg, filename="prayer_intro.ogg")
+                # Аудио = молитва; подпись = короткая инструкция.
+                voice_file = BufferedInputFile(ogg, filename="prayer.ogg")
                 if bot:
                     kwargs = {
                         "chat_id": message.chat.id,
@@ -827,10 +843,10 @@ class PersonalPrayerFeature(BaseFeature):
                     await bot.send_voice(**kwargs)
                 else:
                     await message.answer_voice(voice_file, caption=intro_caption)
-                logger.info("[%s] intro voice sent uid=%s", self.name, uid)
+                logger.info("[%s] prayer voice sent uid=%s", self.name, uid)
             except TelegramBadRequest as e:
                 if not _is_voice_forbidden_error(e):
-                    logger.error("[%s] intro voice send failed uid=%s: %s", self.name, uid, e)
+                    logger.error("[%s] prayer voice send failed uid=%s: %s", self.name, uid, e)
                     raise
                 logger.info(
                     "[%s] voice forbidden for uid=%s — только текст",
@@ -845,7 +861,7 @@ class PersonalPrayerFeature(BaseFeature):
                 except Exception:
                     pass
         else:
-            logger.info("[%s] intro voice missing uid=%s — текст без аудио", self.name, uid)
+            logger.info("[%s] prayer voice missing uid=%s — текст без аудио", self.name, uid)
 
         await self._deliver_prayer_text_with_donation(message, body)
 
