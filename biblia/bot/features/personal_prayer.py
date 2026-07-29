@@ -24,6 +24,7 @@ from aiogram.types import (
 
 from bot.admin_guard import is_admin_or_super
 from bot.features.base import BaseFeature
+from bot.services.elevenlabs_tts import ElevenLabsTTS
 from bot.services.openai_tts import OpenAIPrayerTTS
 from bot.services.prayer_stress import (
     PrayerStressWord,
@@ -33,6 +34,7 @@ from bot.services.prayer_stress import (
     parse_prayer_stress_words,
 )
 from bot.services.prayer_tts_queue import PrayerTtsQueue, get_prayer_tts_queue
+from bot.services.salute_tts import SaluteSpeechTTS
 from bot.services.voicebox_tts import VoiceboxPrayerTTS, format_prayer_for_tts
 from bot.services.yandex_speechkit import YandexSpeechKitTTS
 from bot.states import PrayerStates
@@ -66,11 +68,30 @@ class _PrayerStressProposalContext:
     sample_text: str
 
 
+_COMPARE_ENGINE_ORDER = (
+    "openai",
+    "yandex",
+    "voicebox",
+    "salute",
+    "elevenlabs",
+)
+
+
 class _TTS(Protocol):
     @property
     def configured(self) -> bool: ...
 
     async def synthesize_ogg_opus(self, text: str) -> bytes: ...
+
+
+def _first_compare_ogg(voices: Optional[dict[str, Optional[bytes]]]) -> Optional[bytes]:
+    if not voices:
+        return None
+    for key in _COMPARE_ENGINE_ORDER:
+        ogg = voices.get(key)
+        if ogg:
+            return ogg
+    return None
 
 
 def _strip_prayer_text(raw: str) -> str:
@@ -127,6 +148,8 @@ class PersonalPrayerFeature(BaseFeature):
         self.voicebox = VoiceboxPrayerTTS()
         self.speechkit = YandexSpeechKitTTS()
         self.openai_tts = OpenAIPrayerTTS()
+        self.salute_tts = SaluteSpeechTTS()
+        self.elevenlabs_tts = ElevenLabsTTS()
         self.tts_queue: PrayerTtsQueue = get_prayer_tts_queue(
             max_concurrent=int(getattr(config, "PRAYER_TTS_MAX_CONCURRENT", 1) or 1)
         )
@@ -171,6 +194,12 @@ class PersonalPrayerFeature(BaseFeature):
                 self.openai_tts.model,
                 self.openai_tts.voice,
             )
+        for label, eng in (
+            ("SaluteSpeech", self.salute_tts),
+            ("ElevenLabs", self.elevenlabs_tts),
+        ):
+            if eng.configured:
+                logger.info("[%s] %s TTS для админ-сравнения готов", self.name, label)
 
     def register_handlers(self, dp: Dispatcher) -> None:
         dp.message.register(self.on_prayer_command, Command(commands=["prayer", "molitva"]))
@@ -330,11 +359,7 @@ class PersonalPrayerFeature(BaseFeature):
                             uid, turns, wait_msg=wait_msg
                         )
                         # Для доставки текста используем любой удачный ogg как «основной».
-                        ogg = (
-                            (compare_voices or {}).get("voicebox")
-                            or (compare_voices or {}).get("openai")
-                            or (compare_voices or {}).get("yandex")
-                        )
+                        ogg = _first_compare_ogg(compare_voices)
                     else:
                         prayer_text, ogg = await self._compose_and_synthesize(
                             uid, turns, wait_msg=wait_msg
@@ -344,11 +369,7 @@ class PersonalPrayerFeature(BaseFeature):
                     prayer_text, compare_voices = await self._compose_and_synthesize_compare(
                         uid, turns, wait_msg=wait_msg
                     )
-                    ogg = (
-                        (compare_voices or {}).get("voicebox")
-                        or (compare_voices or {}).get("openai")
-                        or (compare_voices or {}).get("yandex")
-                    )
+                    ogg = _first_compare_ogg(compare_voices)
                 else:
                     prayer_text, ogg = await self._compose_and_synthesize(
                         uid, turns, wait_msg=wait_msg
@@ -509,18 +530,21 @@ class PersonalPrayerFeature(BaseFeature):
         *,
         wait_msg: Optional[Message] = None,
     ) -> tuple[Optional[str], dict[str, Optional[bytes]]]:
-        """Админ-тест: один текст → три озвучки (OpenAI / Yandex / Voicebox)."""
+        """Админ-тест: один текст → озвучки всех настроенных TTS."""
         logger.info("[%s] compare compose start uid=%s", self.name, uid)
+        empty = {k: None for k in _COMPARE_ENGINE_ORDER}
         prayer_text = await self._compose_prayer(uid, turns)
         if not prayer_text:
-            return None, {"openai": None, "yandex": None, "voicebox": None}
+            return None, empty
 
         tts_text = await self._apply_prayer_stress_dictionary(prayer_text)
+        engines = self._compare_engine_specs()
+        names = [spec[1] for spec in engines]
         if wait_msg is not None:
             try:
+                listing = "\n".join(f"• {n}" for n in names) if names else "• (нет настроенных)"
                 await wait_msg.edit_text(
-                    "⏳ Текст готов. Готовлю 3 варианта озвучки:\n"
-                    "OpenAI / Яндекс SpeechKit / Voicebox…"
+                    f"⏳ Текст готов. Готовлю {len(names)} вариант(ов) озвучки:\n{listing}"
                 )
             except Exception:
                 pass
@@ -560,29 +584,55 @@ class PersonalPrayerFeature(BaseFeature):
                 return await self.voicebox.synthesize_ogg_opus(tts_text)
 
         tasks = []
-        if self.openai_tts.configured:
-            tasks.append(_one("openai", self.openai_tts.synthesize_ogg_opus(tts_text)))
-        else:
-            logger.warning("[%s] compare: OpenAI TTS не настроен", self.name)
-        if self.speechkit.configured:
-            tasks.append(_one("yandex", self.speechkit.synthesize_ogg_opus(tts_text)))
-        else:
-            logger.warning("[%s] compare: SpeechKit не настроен", self.name)
-        if self.voicebox.configured:
-            tasks.append(_one("voicebox", _voicebox()))
-        else:
-            logger.warning("[%s] compare: Voicebox не настроен", self.name)
+        for key, _title, client in engines:
+            if key == "voicebox":
+                tasks.append(_one(key, _voicebox()))
+            else:
+                tasks.append(_one(key, client.synthesize_ogg_opus(tts_text)))
 
-        out: dict[str, Optional[bytes]] = {
-            "openai": None,
-            "yandex": None,
-            "voicebox": None,
-        }
+        out: dict[str, Optional[bytes]] = {k: None for k in _COMPARE_ENGINE_ORDER}
         if tasks:
             results = await asyncio.gather(*tasks)
             for label, audio in results:
                 out[label] = audio
         return prayer_text, out
+
+    def _compare_engine_specs(self, *, log_missing: bool = True) -> list[tuple[str, str, Any]]:
+        """(key, human title, client) только для настроенных движков."""
+        candidates: list[tuple[str, str, Any]] = [
+            (
+                "openai",
+                f"OpenAI ({self.openai_tts.model} / {self.openai_tts.voice})",
+                self.openai_tts,
+            ),
+            (
+                "yandex",
+                f"Яндекс SpeechKit ({self.speechkit.voice})",
+                self.speechkit,
+            ),
+            (
+                "voicebox",
+                "Voicebox (локальный / Константин)",
+                self.voicebox,
+            ),
+            (
+                "salute",
+                f"SaluteSpeech ({self.salute_tts.voice})",
+                self.salute_tts,
+            ),
+            (
+                "elevenlabs",
+                f"ElevenLabs ({(self.elevenlabs_tts.voice_id[:8] or '?')}…)",
+                self.elevenlabs_tts,
+            ),
+        ]
+        ready: list[tuple[str, str, Any]] = []
+        for key, title, client in candidates:
+            if client.configured:
+                ready.append((key, title, client))
+            elif log_missing:
+                logger.warning("[%s] compare: %s не настроен — пропуск", self.name, title)
+        return ready
 
     async def _deliver_prayer_compare(
         self,
@@ -609,23 +659,12 @@ class PersonalPrayerFeature(BaseFeature):
             )
             await _send_text_chunks(message, rest)
 
-        variants = [
-            (
-                "openai",
-                f"1/3 OpenAI ({self.openai_tts.model} / {self.openai_tts.voice})",
-            ),
-            (
-                "yandex",
-                f"2/3 Яндекс SpeechKit ({self.speechkit.voice})",
-            ),
-            (
-                "voicebox",
-                "3/3 Voicebox (локальный / Константин)",
-            ),
-        ]
+        specs = self._compare_engine_specs(log_missing=False)
+        total = len(specs) or 1
         chat_id = message.chat.id
         any_voice = False
-        for key, caption in variants:
+        for i, (key, title, _client) in enumerate(specs, 1):
+            caption = f"{i}/{total} {title}"
             ogg = voices.get(key)
             if not ogg:
                 await message.answer(

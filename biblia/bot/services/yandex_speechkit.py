@@ -34,7 +34,15 @@ class YandexSpeechKitTTS:
         self.api_key = (api_key or config.YANDEX_SPEECHKIT_API_KEY or "").strip()
         self.folder_id = (folder_id or config.YANDEX_CLOUD_FOLDER_ID or "").strip()
         self.voice = (voice or config.YANDEX_SPEECHKIT_VOICE or _DEFAULT_VOICE).strip().lower()
-        self.speed = speed if speed is not None else config.YANDEX_SPEECHKIT_SPEED
+        # Для молитв темп выравниваем общим atempo (как Voicebox/OpenAI),
+        # поэтому API speed фиксируем в 1.0, если не передали явно.
+        from bot.services.prayer_tts_style import resolve_prayer_tts_atempo
+
+        self.atempo = resolve_prayer_tts_atempo()
+        if speed is not None:
+            self.speed = speed
+        else:
+            self.speed = 1.0
         self.emotion = (emotion or config.YANDEX_SPEECHKIT_EMOTION or "").strip()
 
     @property
@@ -46,21 +54,29 @@ class YandexSpeechKitTTS:
         if not self.configured:
             raise RuntimeError("YANDEX_SPEECHKIT_API_KEY не задан")
 
-        body = (text or "").strip()
+        from bot.services.prayer_ssml import prepare_prayer_for_engine
+
+        body, mode = prepare_prayer_for_engine(text, engine="yandex")
         if not body:
             raise ValueError("empty text")
         if len(body) > _MAX_CHARS:
             body = body[:_MAX_CHARS]
 
         params = {
-            "text": body,
             "lang": "ru-RU",
             "voice": self.voice,
             "format": "oggopus",
         }
-        if self.voice not in _NO_SPEED_VOICES:
-            params["speed"] = str(self.speed)
-        if self.emotion and self.voice in _EMOTION_VOICES:
+        if mode == "ssml":
+            params["ssml"] = body
+            # Темп/тон уже в <prosody>; API speed не дублируем сверх atempo.
+            # atempo оставляем общим (как у остальных) — prosody rate в SSML
+            # задаёт «характер», финальный темп выравнивает ffmpeg.
+        else:
+            params["text"] = body
+            if self.voice not in _NO_SPEED_VOICES:
+                params["speed"] = str(self.speed)
+        if self.emotion and self.voice in _EMOTION_VOICES and mode != "ssml":
             params["emotion"] = self.emotion
 
         headers = {"Authorization": f"Api-Key {self.api_key}"}
@@ -68,9 +84,12 @@ class YandexSpeechKitTTS:
             headers["x-folder-id"] = self.folder_id
 
         logger.info(
-            "SpeechKit TTS request voice=%s chars=%s",
+            "SpeechKit TTS request voice=%s chars=%s mode=%s speed=%s atempo=%.3f",
             self.voice,
             len(body),
+            mode,
+            params.get("speed"),
+            self.atempo,
         )
 
         async def _request() -> bytes:
@@ -102,10 +121,25 @@ class YandexSpeechKitTTS:
             )
             raise RuntimeError(f"SpeechKit timeout after {_TTS_TIMEOUT_SEC:.0f}s") from e
 
+        from bot.services.prayer_tts_style import audio_bytes_to_ogg_opus
+
+        # В SSML уже есть <prosody rate=…> — не замедляем ещё раз ffmpeg-atempo.
+        post_atempo = 1.0 if mode == "ssml" else self.atempo
+        ogg = await asyncio.to_thread(
+            audio_bytes_to_ogg_opus,
+            raw,
+            atempo=post_atempo,
+            prefix="ysk_prayer_",
+        )
+        if not ogg:
+            raise RuntimeError("ffmpeg не смог применить atempo к SpeechKit OGG")
+
         logger.info(
-            "SpeechKit TTS ok voice=%s chars=%s bytes=%s",
+            "SpeechKit TTS ok voice=%s chars=%s bytes=%s mode=%s post_atempo=%.3f",
             self.voice,
             len(body),
-            len(raw),
+            len(ogg),
+            mode,
+            post_atempo,
         )
-        return raw
+        return ogg

@@ -124,6 +124,16 @@ def _parse_openai_tts_speed(raw: Optional[str]) -> float:
     return max(0.25, min(4.0, v))
 
 
+def _parse_unit_float(raw: Optional[str], default: float) -> float:
+    if raw is None or not str(raw).strip():
+        return default
+    try:
+        v = float(str(raw).strip().replace(",", "."))
+    except ValueError:
+        return default
+    return max(0.0, min(1.0, v))
+
+
 def _parse_gift_link_validity_days(raw: Optional[str]) -> int:
     if raw is None or not str(raw).strip():
         return 30
@@ -205,23 +215,40 @@ class AppConfig:
     VOICEBOX_ENGINE: str = "qwen"
     VOICEBOX_MODEL_SIZE: str = "1.7B"
     VOICEBOX_LANGUAGE: str = "ru"
-    VOICEBOX_INSTRUCT: str = (
+    # Общий instruct для Voicebox + OpenAI (Yandex instruct не поддерживает).
+    PRAYER_TTS_INSTRUCT: str = (
         "Warm natural prayerful speech, gentle rhythm, slight emotional variation, "
         "not monotone and not robotic. Soft unhurried pace. "
         "The final word амИнь: stress on capital И (a-MÍN), clear and solemn."
     )
+    # Deprecated alias: если задан только он — подхватывается в PRAYER_TTS_INSTRUCT.
+    VOICEBOX_INSTRUCT: str = ""
     VOICEBOX_ATEMPO: float = 0.92
+    # Общий ffmpeg-atempo после синтеза (Voicebox / OpenAI / Yandex).
+    PRAYER_TTS_ATEMPO: float = 0.92
+    # SSML-паузы/просодия: Yandex — настоящий SSML; OpenAI/Voicebox — plain+instruct.
+    PRAYER_TTS_SSML_ENABLED: bool = True
+    PRAYER_TTS_SSML_RATE: str = "85%"
+    PRAYER_TTS_SSML_PITCH: str = "-3%"
     # Сколько Voicebox-синтезов параллельно (1 = очередь при нагрузке, меньше таймаутов).
     PRAYER_TTS_MAX_CONCURRENT: int = 1
-    # OpenAI TTS — только для админ-сравнения трёх голосов.
+    # Движки ниже — для админ-сравнения озвучки (/prayer у админов).
     OPENAI_TTS_MODEL: str = "gpt-4o-mini-tts"
     OPENAI_TTS_VOICE: str = "onyx"
     OPENAI_TTS_SPEED: float = 1.0
-    OPENAI_TTS_INSTRUCT: str = (
-        "Warm natural prayerful speech in Russian, gentle rhythm, slight emotional "
-        "variation, not monotone and not robotic. Soft unhurried pace. "
-        "The final word амИнь: stress on И (a-MÍN), clear and solemn."
-    )
+    OPENAI_TTS_INSTRUCT: str = ""
+    # SberDevices SaluteSpeech (Authorization Key = base64 client_id:secret).
+    SALUTE_SPEECH_AUTH_KEY: str = ""
+    SALUTE_SPEECH_SCOPE: str = "SALUTE_SPEECH_PERS"
+    SALUTE_SPEECH_VOICE: str = "Nec_24000"
+    SALUTE_SPEECH_FORMAT: str = "opus"
+    # ElevenLabs
+    ELEVENLABS_API_KEY: str = ""
+    ELEVENLABS_VOICE_ID: str = ""
+    ELEVENLABS_MODEL_ID: str = "eleven_multilingual_v2"
+    ELEVENLABS_OUTPUT_FORMAT: str = "mp3_44100_128"
+    ELEVENLABS_STABILITY: float = 0.45
+    ELEVENLABS_SIMILARITY: float = 0.75
     PRAYER_STRESS_FEEDBACK_ENABLED: bool = False
     PRAYER_STRESS_MODERATION_THREAD_ID: int = 0
     PRAYER_STRESS_MODERATION_REPLY_TO_MESSAGE_ID: int = 0
@@ -330,8 +357,20 @@ def load_app_config() -> AppConfig:
         ).strip()
         or "1.7B",
         VOICEBOX_LANGUAGE=(os.getenv("VOICEBOX_LANGUAGE") or "ru").strip() or "ru",
+        PRAYER_TTS_INSTRUCT=(
+            os.getenv("PRAYER_TTS_INSTRUCT")
+            or os.getenv("VOICEBOX_INSTRUCT")
+            or os.getenv("OPENAI_TTS_INSTRUCT")
+            or (
+                "Warm natural prayerful speech, gentle rhythm, slight emotional variation, "
+                "not monotone and not robotic. Soft unhurried pace. "
+                "The final word амИнь: stress on capital И (a-MÍN), clear and solemn."
+            )
+        ).strip(),
         VOICEBOX_INSTRUCT=(
             os.getenv("VOICEBOX_INSTRUCT")
+            or os.getenv("PRAYER_TTS_INSTRUCT")
+            or os.getenv("OPENAI_TTS_INSTRUCT")
             or (
                 "Warm natural prayerful speech, gentle rhythm, slight emotional variation, "
                 "not monotone and not robotic. Soft unhurried pace. "
@@ -339,6 +378,15 @@ def load_app_config() -> AppConfig:
             )
         ).strip(),
         VOICEBOX_ATEMPO=_parse_voicebox_atempo(os.getenv("VOICEBOX_ATEMPO")),
+        PRAYER_TTS_ATEMPO=_parse_voicebox_atempo(
+            os.getenv("PRAYER_TTS_ATEMPO") or os.getenv("VOICEBOX_ATEMPO")
+        ),
+        PRAYER_TTS_SSML_ENABLED=_parse_bool_env(
+            os.getenv("PRAYER_TTS_SSML_ENABLED"), True
+        ),
+        PRAYER_TTS_SSML_RATE=(os.getenv("PRAYER_TTS_SSML_RATE") or "85%").strip() or "85%",
+        PRAYER_TTS_SSML_PITCH=(os.getenv("PRAYER_TTS_SSML_PITCH") or "-3%").strip()
+        or "-3%",
         PRAYER_TTS_MAX_CONCURRENT=max(
             1,
             min(8, int(os.getenv("PRAYER_TTS_MAX_CONCURRENT", "1") or "1")),
@@ -350,12 +398,35 @@ def load_app_config() -> AppConfig:
         OPENAI_TTS_SPEED=_parse_openai_tts_speed(os.getenv("OPENAI_TTS_SPEED")),
         OPENAI_TTS_INSTRUCT=(
             os.getenv("OPENAI_TTS_INSTRUCT")
+            or os.getenv("PRAYER_TTS_INSTRUCT")
+            or os.getenv("VOICEBOX_INSTRUCT")
             or (
-                "Warm natural prayerful speech in Russian, gentle rhythm, slight emotional "
-                "variation, not monotone and not robotic. Soft unhurried pace. "
-                "The final word амИнь: stress on И (a-MÍN), clear and solemn."
+                "Warm natural prayerful speech, gentle rhythm, slight emotional variation, "
+                "not monotone and not robotic. Soft unhurried pace. "
+                "The final word амИнь: stress on capital И (a-MÍN), clear and solemn."
             )
         ).strip(),
+        SALUTE_SPEECH_AUTH_KEY=(os.getenv("SALUTE_SPEECH_AUTH_KEY") or "").strip(),
+        SALUTE_SPEECH_SCOPE=(
+            os.getenv("SALUTE_SPEECH_SCOPE") or "SALUTE_SPEECH_PERS"
+        ).strip()
+        or "SALUTE_SPEECH_PERS",
+        SALUTE_SPEECH_VOICE=(os.getenv("SALUTE_SPEECH_VOICE") or "Nec_24000").strip()
+        or "Nec_24000",
+        SALUTE_SPEECH_FORMAT=(os.getenv("SALUTE_SPEECH_FORMAT") or "opus").strip()
+        or "opus",
+        ELEVENLABS_API_KEY=(os.getenv("ELEVENLABS_API_KEY") or "").strip(),
+        ELEVENLABS_VOICE_ID=(os.getenv("ELEVENLABS_VOICE_ID") or "").strip(),
+        ELEVENLABS_MODEL_ID=(
+            os.getenv("ELEVENLABS_MODEL_ID") or "eleven_multilingual_v2"
+        ).strip()
+        or "eleven_multilingual_v2",
+        ELEVENLABS_OUTPUT_FORMAT=(
+            os.getenv("ELEVENLABS_OUTPUT_FORMAT") or "mp3_44100_128"
+        ).strip()
+        or "mp3_44100_128",
+        ELEVENLABS_STABILITY=_parse_unit_float(os.getenv("ELEVENLABS_STABILITY"), 0.45),
+        ELEVENLABS_SIMILARITY=_parse_unit_float(os.getenv("ELEVENLABS_SIMILARITY"), 0.75),
         PRAYER_STRESS_FEEDBACK_ENABLED=_parse_bool_env(
             os.getenv("PRAYER_STRESS_FEEDBACK_ENABLED"), False
         ),

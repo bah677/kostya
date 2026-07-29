@@ -5,11 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
-import shutil
-import subprocess
-import tempfile
 import time
-from pathlib import Path
 from typing import Any, Optional
 
 import httpx
@@ -17,12 +13,6 @@ import httpx
 from config import config
 
 logger = logging.getLogger(__name__)
-
-_DEFAULT_INSTRUCT = (
-    "Warm natural prayerful speech, gentle rhythm, slight emotional variation, "
-    "not monotone and not robotic. Soft unhurried pace. "
-    "The final word амИнь: stress on capital И (a-MÍN), clear and solemn."
-)
 
 # Ударение через заглавную гласную: амИнь (а-мИнь).
 _AMEN_STRESSED = "амИнь"
@@ -41,13 +31,17 @@ class VoiceboxPrayerTTS:
     """Озвучка молитв через Voicebox (клон голоса на GPU)."""
 
     def __init__(self) -> None:
+        from bot.services.prayer_tts_style import resolve_prayer_tts_atempo
+        from bot.services.prayer_ssml import resolve_prayer_tts_instruct_with_ssml
+
         self.base_url = (config.VOICEBOX_BASE_URL or "").rstrip("/")
         self.profile_id = (config.VOICEBOX_PROFILE_ID or "").strip()
         self.engine = (config.VOICEBOX_ENGINE or "qwen").strip() or "qwen"
         self.model_size = (config.VOICEBOX_MODEL_SIZE or "1.7B").strip() or "1.7B"
         self.language = (config.VOICEBOX_LANGUAGE or "ru").strip() or "ru"
-        self.instruct = (config.VOICEBOX_INSTRUCT or _DEFAULT_INSTRUCT).strip()
-        self.atempo = float(config.VOICEBOX_ATEMPO or 0.92)
+        # Voicebox instruct: базовый + guidance пауз из SSML-логики.
+        self.instruct = resolve_prayer_tts_instruct_with_ssml()
+        self.atempo = resolve_prayer_tts_atempo()
         self._timeout = httpx.Timeout(180.0, connect=15.0)
 
     @property
@@ -65,15 +59,18 @@ class VoiceboxPrayerTTS:
         if not self.configured:
             raise RuntimeError("Voicebox не настроен (VOICEBOX_*)")
 
-        body = format_prayer_for_tts(text)
+        from bot.services.prayer_ssml import prepare_prayer_for_engine
+
+        body, mode = prepare_prayer_for_engine(text, engine="voicebox")
         if not body:
             raise ValueError("empty text")
 
         logger.info(
-            "Voicebox TTS start profile=%s chars=%s atempo=%.3f",
+            "Voicebox TTS start profile=%s chars=%s atempo=%.3f mode=%s",
             self.profile_id[:8],
             len(body),
             self.atempo,
+            mode,
         )
 
         gen = await self._generate(body)
@@ -84,16 +81,22 @@ class VoiceboxPrayerTTS:
             await self._wait_generation(gid)
         wav_bytes = await self._download_audio(gid)
 
+        from bot.services.prayer_tts_style import audio_bytes_to_ogg_opus
+
         ogg = await asyncio.to_thread(
-            _wav_bytes_to_ogg_opus, wav_bytes, self.atempo
+            audio_bytes_to_ogg_opus,
+            wav_bytes,
+            atempo=self.atempo,
+            prefix="vb_prayer_",
         )
         if not ogg:
             raise VoiceboxError("ffmpeg не смог сконвертировать WAV → OGG")
         logger.info(
-            "Voicebox TTS ok profile=%s chars=%s bytes=%s",
+            "Voicebox TTS ok profile=%s chars=%s bytes=%s atempo=%.3f",
             self.profile_id[:8],
             len(body),
             len(ogg),
+            self.atempo,
         )
         return ogg
 
@@ -193,42 +196,8 @@ def ensure_amen_stress(text: str) -> str:
     return _AMEN_FLEX_RE.sub(_AMEN_STRESSED, text or "")
 
 
+# backward-compat alias (раньше локальный helper)
 def _wav_bytes_to_ogg_opus(wav_bytes: bytes, atempo: float) -> Optional[bytes]:
-    ffmpeg = shutil.which("ffmpeg") or "ffmpeg"
-    tempo = max(0.5, min(1.2, float(atempo or 1.0)))
-    with tempfile.TemporaryDirectory(prefix="vb_prayer_") as tmp:
-        root = Path(tmp)
-        wav_path = root / "in.wav"
-        ogg_path = root / "out.ogg"
-        wav_path.write_bytes(wav_bytes)
-        cmd = [
-            ffmpeg,
-            "-y",
-            "-i",
-            str(wav_path),
-            "-vn",
-            "-filter:a",
-            f"atempo={tempo:.4f}",
-            "-c:a",
-            "libopus",
-            "-b:a",
-            "96k",
-            "-vbr",
-            "on",
-            "-application",
-            "audio",
-            str(ogg_path),
-        ]
-        try:
-            proc = subprocess.run(
-                cmd, capture_output=True, text=True, timeout=180, check=False
-            )
-            if proc.returncode != 0:
-                logger.error("ffmpeg voicebox prayer: %s", (proc.stderr or "")[-500:])
-                return None
-            if not ogg_path.is_file() or ogg_path.stat().st_size < 200:
-                return None
-            return ogg_path.read_bytes()
-        except Exception as e:
-            logger.exception("ffmpeg voicebox prayer convert: %s", e)
-            return None
+    from bot.services.prayer_tts_style import audio_bytes_to_ogg_opus
+
+    return audio_bytes_to_ogg_opus(wav_bytes, atempo=atempo, prefix="vb_prayer_")
