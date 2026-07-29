@@ -16,6 +16,11 @@ logger = logging.getLogger(__name__)
 
 _MAX_CHARS = 5000
 _TIMEOUT_SEC = 120.0
+# Тариф ElevenLabs: max 3 concurrent requests — иначе HTTP 429 concurrent_limit_exceeded.
+_MAX_CONCURRENT = 3
+_REQUEST_SEMAPHORE = asyncio.Semaphore(_MAX_CONCURRENT)
+_RETRY_ON_429 = 4
+_RETRY_SLEEP_SEC = 1.5
 
 _DEFAULT_COMPARE_VOICES = (
     "CritVAMVzFsSIWmMDe7v",
@@ -111,7 +116,7 @@ class ElevenLabsTTS:
 
         timeout = aiohttp.ClientTimeout(total=_TIMEOUT_SEC)
 
-        async def _request() -> bytes:
+        async def _request_once() -> bytes:
             async with aiohttp.ClientSession(timeout=timeout) as session:
                 async with session.post(
                     url, params=params, headers=headers, json=payload
@@ -124,7 +129,31 @@ class ElevenLabsTTS:
                         raise RuntimeError("ElevenLabs вернул пустой ответ")
                     return raw
 
-        audio = await asyncio.wait_for(_request(), timeout=_TIMEOUT_SEC)
+        async def _request_with_limit() -> bytes:
+            last_err: Optional[Exception] = None
+            for attempt in range(1, _RETRY_ON_429 + 1):
+                async with _REQUEST_SEMAPHORE:
+                    try:
+                        return await asyncio.wait_for(
+                            _request_once(), timeout=_TIMEOUT_SEC
+                        )
+                    except RuntimeError as e:
+                        last_err = e
+                        msg = str(e)
+                        is_429 = "HTTP 429" in msg or "concurrent_limit_exceeded" in msg
+                        if not is_429 or attempt >= _RETRY_ON_429:
+                            raise
+                        logger.warning(
+                            "ElevenLabs 429 voice=%s attempt=%s/%s — ждём %.1fs",
+                            vid[:8],
+                            attempt,
+                            _RETRY_ON_429,
+                            _RETRY_SLEEP_SEC * attempt,
+                        )
+                await asyncio.sleep(_RETRY_SLEEP_SEC * attempt)
+            raise last_err or RuntimeError("ElevenLabs: неизвестная ошибка")
+
+        audio = await _request_with_limit()
         # Основной голос (#1, ELEVENLABS_VOICE_ID) — ускорение на 10%.
         primary = (self.voice_id or "").strip()
         atempo = 1.1 if primary and vid == primary else 1.0
