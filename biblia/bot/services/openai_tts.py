@@ -12,10 +12,7 @@ from bot.services.prayer_ssml import (
     prepare_prayer_for_engine,
     resolve_prayer_tts_instruct_with_ssml,
 )
-from bot.services.prayer_tts_style import (
-    audio_bytes_to_ogg_opus,
-    resolve_prayer_tts_atempo,
-)
+from bot.services.prayer_tts_style import audio_bytes_to_ogg_opus
 from config import config
 
 logger = logging.getLogger(__name__)
@@ -31,7 +28,6 @@ class OpenAIPrayerTTS:
         self.model = (getattr(config, "OPENAI_TTS_MODEL", None) or "gpt-4o-mini-tts").strip()
         self.voice = (getattr(config, "OPENAI_TTS_VOICE", None) or "onyx").strip().lower()
         self.instructions = resolve_prayer_tts_instruct_with_ssml()
-        self.atempo = resolve_prayer_tts_atempo()
         self.speed = 1.0
         self._client: Optional[AsyncOpenAI] = None
 
@@ -55,11 +51,10 @@ class OpenAIPrayerTTS:
             body = body[:_MAX_CHARS]
 
         logger.info(
-            "OpenAI TTS start model=%s voice=%s chars=%s atempo=%.3f mode=%s",
+            "OpenAI TTS start model=%s voice=%s chars=%s mode=%s",
             self.model,
             self.voice,
             len(body),
-            self.atempo,
             mode,
         )
 
@@ -83,19 +78,19 @@ class OpenAIPrayerTTS:
         if not wav_bytes:
             raise RuntimeError("OpenAI TTS вернул пустой ответ")
 
+        # Только WAV→OGG для Telegram, без замедления (atempo).
         ogg = await asyncio.to_thread(
             audio_bytes_to_ogg_opus,
             wav_bytes,
-            atempo=self.atempo,
+            atempo=1.0,
             prefix="oai_prayer_",
         )
         if not ogg:
             raise RuntimeError("ffmpeg не смог сконвертировать OpenAI WAV → OGG")
         logger.info(
-            "OpenAI TTS ok model=%s voice=%s bytes=%s atempo=%.3f",
+            "OpenAI TTS ok model=%s voice=%s bytes=%s",
             self.model,
             self.voice,
             len(ogg),
-            self.atempo,
         )
         return ogg

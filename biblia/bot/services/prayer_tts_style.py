@@ -71,18 +71,23 @@ def audio_bytes_to_ogg_opus(
             "-i",
             str(in_path),
             "-vn",
-            "-filter:a",
-            f"atempo={tempo:.4f}",
-            "-c:a",
-            "libopus",
-            "-b:a",
-            "96k",
-            "-vbr",
-            "on",
-            "-application",
-            "audio",
-            str(ogg_path),
         ]
+        # atempo≈1.0 — только конвертация контейнера/кодека, без замедления.
+        if abs(tempo - 1.0) >= 0.001:
+            cmd.extend(["-filter:a", f"atempo={tempo:.4f}"])
+        cmd.extend(
+            [
+                "-c:a",
+                "libopus",
+                "-b:a",
+                "96k",
+                "-vbr",
+                "on",
+                "-application",
+                "audio",
+                str(ogg_path),
+            ]
+        )
         try:
             proc = subprocess.run(
                 cmd, capture_output=True, text=True, timeout=180, check=False

@@ -237,7 +237,8 @@ class AppConfig:
     OPENAI_TTS_VOICE: str = "onyx"
     OPENAI_TTS_SPEED: float = 1.0
     OPENAI_TTS_INSTRUCT: str = ""
-    # SberDevices SaluteSpeech (Authorization Key = base64 client_id:secret).
+    # SberDevices SaluteSpeech — выключен: API закрыт.
+    SALUTE_SPEECH_ENABLED: bool = False
     SALUTE_SPEECH_AUTH_KEY: str = ""
     SALUTE_SPEECH_SCOPE: str = "SALUTE_SPEECH_PERS"
     SALUTE_SPEECH_VOICE: str = "Nec_24000"
@@ -245,6 +246,13 @@ class AppConfig:
     # ElevenLabs
     ELEVENLABS_API_KEY: str = ""
     ELEVENLABS_VOICE_ID: str = ""
+    # Доп. голоса только для админ-сравнения (через запятую).
+    ELEVENLABS_COMPARE_VOICE_IDS: str = (
+        "CritVAMVzFsSIWmMDe7v,"
+        "TU2w9J6yEyVkPB7HKH2g,"
+        "ogi2DyUAKJb7CEdqqvlU,"
+        "gMIlPNegT3C1SdNBp6rW"
+    )
     ELEVENLABS_MODEL_ID: str = "eleven_multilingual_v2"
     ELEVENLABS_OUTPUT_FORMAT: str = "mp3_44100_128"
     ELEVENLABS_STABILITY: float = 0.45
@@ -406,6 +414,7 @@ def load_app_config() -> AppConfig:
                 "The final word амИнь: stress on capital И (a-MÍN), clear and solemn."
             )
         ).strip(),
+        SALUTE_SPEECH_ENABLED=_parse_bool_env(os.getenv("SALUTE_SPEECH_ENABLED"), False),
         SALUTE_SPEECH_AUTH_KEY=(os.getenv("SALUTE_SPEECH_AUTH_KEY") or "").strip(),
         SALUTE_SPEECH_SCOPE=(
             os.getenv("SALUTE_SPEECH_SCOPE") or "SALUTE_SPEECH_PERS"
@@ -417,6 +426,15 @@ def load_app_config() -> AppConfig:
         or "opus",
         ELEVENLABS_API_KEY=(os.getenv("ELEVENLABS_API_KEY") or "").strip(),
         ELEVENLABS_VOICE_ID=(os.getenv("ELEVENLABS_VOICE_ID") or "").strip(),
+        ELEVENLABS_COMPARE_VOICE_IDS=(
+            os.getenv("ELEVENLABS_COMPARE_VOICE_IDS")
+            or (
+                "CritVAMVzFsSIWmMDe7v,"
+                "TU2w9J6yEyVkPB7HKH2g,"
+                "ogi2DyUAKJb7CEdqqvlU,"
+                "gMIlPNegT3C1SdNBp6rW"
+            )
+        ).strip(),
         ELEVENLABS_MODEL_ID=(
             os.getenv("ELEVENLABS_MODEL_ID") or "eleven_multilingual_v2"
         ).strip()

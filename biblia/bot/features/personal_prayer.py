@@ -89,8 +89,13 @@ def _first_compare_ogg(voices: Optional[dict[str, Optional[bytes]]]) -> Optional
     if not voices:
         return None
     for key in _COMPARE_ENGINE_ORDER:
+        if key == "elevenlabs":
+            continue
         ogg = voices.get(key)
         if ogg:
+            return ogg
+    for key, ogg in voices.items():
+        if key.startswith("elevenlabs:") and ogg:
             return ogg
     return None
 
@@ -540,10 +545,9 @@ class PersonalPrayerFeature(BaseFeature):
     ) -> tuple[Optional[str], dict[str, Optional[bytes]]]:
         """Админ-тест: один текст → озвучки всех настроенных TTS."""
         logger.info("[%s] compare compose start uid=%s", self.name, uid)
-        empty = {k: None for k in _COMPARE_ENGINE_ORDER}
         prayer_text = await self._compose_prayer(uid, turns)
         if not prayer_text:
-            return None, empty
+            return None, {}
 
         tts_text = await self._apply_prayer_stress_dictionary(prayer_text)
         engines = self._compare_engine_specs()
@@ -592,54 +596,76 @@ class PersonalPrayerFeature(BaseFeature):
                 return await self.voicebox.synthesize_ogg_opus(tts_text)
 
         tasks = []
-        for key, _title, client in engines:
+        for key, _title, client, voice_id in engines:
             if key == "voicebox":
                 tasks.append(_one(key, _voicebox()))
+            elif key.startswith("elevenlabs:"):
+                tasks.append(
+                    _one(
+                        key,
+                        client.synthesize_ogg_opus(tts_text, voice_id=voice_id),
+                    )
+                )
             else:
                 tasks.append(_one(key, client.synthesize_ogg_opus(tts_text)))
 
-        out: dict[str, Optional[bytes]] = {k: None for k in _COMPARE_ENGINE_ORDER}
+        out: dict[str, Optional[bytes]] = {key: None for key, *_ in engines}
         if tasks:
             results = await asyncio.gather(*tasks)
             for label, audio in results:
                 out[label] = audio
         return prayer_text, out
 
-    def _compare_engine_specs(self, *, log_missing: bool = True) -> list[tuple[str, str, Any]]:
-        """(key, human title, client) только для настроенных движков."""
-        candidates: list[tuple[str, str, Any]] = [
+    def _compare_engine_specs(
+        self, *, log_missing: bool = True
+    ) -> list[tuple[str, str, Any, Optional[str]]]:
+        """(key, human title, client, voice_id) только для настроенных движков."""
+        candidates: list[tuple[str, str, Any, Optional[str]]] = [
             (
                 "openai",
                 f"OpenAI ({self.openai_tts.model} / {self.openai_tts.voice})",
                 self.openai_tts,
+                None,
             ),
             (
                 "yandex",
                 f"Яндекс SpeechKit ({self.speechkit.voice})",
                 self.speechkit,
+                None,
             ),
             (
                 "voicebox",
                 "Voicebox (локальный / Константин)",
                 self.voicebox,
+                None,
             ),
             (
                 "salute",
                 f"SaluteSpeech ({self.salute_tts.voice})",
                 self.salute_tts,
-            ),
-            (
-                "elevenlabs",
-                f"ElevenLabs ({(self.elevenlabs_tts.voice_id[:8] or '?')}…)",
-                self.elevenlabs_tts,
+                None,
             ),
         ]
-        ready: list[tuple[str, str, Any]] = []
-        for key, title, client in candidates:
+        ready: list[tuple[str, str, Any, Optional[str]]] = []
+        for key, title, client, voice_id in candidates:
             if client.configured:
-                ready.append((key, title, client))
+                ready.append((key, title, client, voice_id))
             elif log_missing:
                 logger.warning("[%s] compare: %s не настроен — пропуск", self.name, title)
+
+        if self.elevenlabs_tts.configured:
+            voice_ids = self.elevenlabs_tts.compare_voice_ids_all
+            for i, vid in enumerate(voice_ids, 1):
+                ready.append(
+                    (
+                        f"elevenlabs:{vid}",
+                        f"ElevenLabs #{i} ({vid[:8]}…)",
+                        self.elevenlabs_tts,
+                        vid,
+                    )
+                )
+        elif log_missing:
+            logger.warning("[%s] compare: ElevenLabs не настроен — пропуск", self.name)
         return ready
 
     async def _deliver_prayer_compare(
@@ -671,7 +697,7 @@ class PersonalPrayerFeature(BaseFeature):
         total = len(specs) or 1
         chat_id = message.chat.id
         any_voice = False
-        for i, (key, title, _client) in enumerate(specs, 1):
+        for i, (key, title, _client, _voice_id) in enumerate(specs, 1):
             caption = f"{i}/{total} {title}"
             ogg = voices.get(key)
             if not ogg:
@@ -681,15 +707,16 @@ class PersonalPrayerFeature(BaseFeature):
                 )
                 continue
             any_voice = True
+            safe_name = key.replace(":", "_")[:40]
             if bot:
                 await bot.send_voice(
                     chat_id,
-                    BufferedInputFile(ogg, filename=f"prayer_{key}.ogg"),
+                    BufferedInputFile(ogg, filename=f"prayer_{safe_name}.ogg"),
                     caption=caption[:1024],
                 )
             else:
                 await message.answer_voice(
-                    BufferedInputFile(ogg, filename=f"prayer_{key}.ogg"),
+                    BufferedInputFile(ogg, filename=f"prayer_{safe_name}.ogg"),
                     caption=caption[:1024],
                 )
 

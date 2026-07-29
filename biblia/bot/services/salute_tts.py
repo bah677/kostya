@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 import uuid
-from typing import Optional
+from typing import Any, Optional
 
 import aiohttp
 
@@ -20,11 +21,13 @@ _OAUTH_URL = "https://ngw.devices.sberbank.ru:9443/api/v2/oauth"
 _SYNTH_URL = "https://smartspeech.sber.ru/rest/v1/text:synthesize"
 _MAX_CHARS = 4000
 _TIMEOUT_SEC = 90.0
+_SCOPE_MISMATCH = "scope from db not fully includes consumed scope"
 
 
 class SaluteSpeechTTS:
     def __init__(self) -> None:
         self.auth_key = (getattr(config, "SALUTE_SPEECH_AUTH_KEY", None) or "").strip()
+        self.enabled = bool(getattr(config, "SALUTE_SPEECH_ENABLED", False))
         self.scope = (getattr(config, "SALUTE_SPEECH_SCOPE", None) or "SALUTE_SPEECH_PERS").strip()
         self.voice = (getattr(config, "SALUTE_SPEECH_VOICE", None) or "Nec_24000").strip()
         self.format = (getattr(config, "SALUTE_SPEECH_FORMAT", None) or "opus").strip() or "opus"
@@ -34,12 +37,12 @@ class SaluteSpeechTTS:
 
     @property
     def configured(self) -> bool:
-        return bool(self.auth_key)
+        return bool(self.enabled and self.auth_key)
 
     def _scope_candidates(self) -> list[str]:
         preferred = (self.scope or "SALUTE_SPEECH_PERS").strip() or "SALUTE_SPEECH_PERS"
         variants = [preferred]
-        for alt in ("SALUTE_SPEECH_PERS", "SALUTE_SPEECH_CORP"):
+        for alt in ("SALUTE_SPEECH_PERS", "SALUTE_SPEECH_CORP", "SBER_SPEECH"):
             if alt not in variants:
                 variants.append(alt)
         return variants
@@ -49,6 +52,7 @@ class SaluteSpeechTTS:
             "Authorization": f"Basic {self.auth_key}",
             "RqUID": str(uuid.uuid4()),
             "Content-Type": "application/x-www-form-urlencoded",
+            "Accept": "application/json",
         }
         async with session.post(
             _OAUTH_URL,
@@ -56,12 +60,28 @@ class SaluteSpeechTTS:
             data={"scope": scope},
             ssl=False,  # Sber gateway часто требует корпоративный CA
         ) as resp:
-            data = await resp.json(content_type=None)
+            raw = await resp.text()
+            try:
+                data: Any = json.loads(raw) if raw.strip() else {}
+            except json.JSONDecodeError as e:
+                raise RuntimeError(
+                    f"SaluteSpeech oauth HTTP {resp.status} non-json "
+                    f"(scope={scope}): {raw[:300]!r}"
+                ) from e
             if resp.status >= 400:
                 raise RuntimeError(
-                    f"SaluteSpeech oauth HTTP {resp.status}: {str(data)[:400]}"
+                    f"SaluteSpeech oauth HTTP {resp.status} (scope={scope}): "
+                    f"{str(data)[:400]}"
+                )
+            if not isinstance(data, dict):
+                raise RuntimeError(
+                    f"SaluteSpeech oauth: неожиданный ответ (scope={scope}): {data!r}"
                 )
             return data
+
+    @staticmethod
+    def _is_scope_mismatch(exc: Exception) -> bool:
+        return _SCOPE_MISMATCH in str(exc)
 
     async def _ensure_token(self, session: aiohttp.ClientSession) -> str:
         now = time.time()
@@ -82,12 +102,22 @@ class SaluteSpeechTTS:
                 break
             except RuntimeError as e:
                 last_error = e
-                if "scope from db not fully includes consumed scope" not in str(e):
-                    raise
+                if not self._is_scope_mismatch(e):
+                    # non-json / auth ошибки тоже пробуем следующий scope,
+                    # но логируем тело — часто CORP возвращает HTML при PERS-ключе.
+                    logger.warning("SaluteSpeech oauth failed for %s: %s", scope, e)
+                    if "HTTP 401" in str(e) or "HTTP 403" in str(e):
+                        raise
+                    continue
                 logger.warning("SaluteSpeech oauth scope mismatch for %s", scope)
         if data is None:
             if last_error:
-                raise last_error
+                raise RuntimeError(
+                    "SaluteSpeech oauth: ни один scope не подошёл к ключу. "
+                    "Проверьте, что Authorization Key из проекта SaluteSpeech API "
+                    f"(не GigaChat) и SALUTE_SPEECH_SCOPE совпадает с типом проекта. "
+                    f"Последняя ошибка: {last_error}"
+                ) from last_error
             raise RuntimeError("SaluteSpeech oauth: не удалось получить токен")
         token = (data.get("access_token") or "").strip()
         if not token:
@@ -104,6 +134,8 @@ class SaluteSpeechTTS:
         return token
 
     async def synthesize_ogg_opus(self, text: str) -> bytes:
+        if not self.enabled:
+            raise RuntimeError("SaluteSpeech выключен (API закрыт)")
         if not self.configured:
             raise RuntimeError("SALUTE_SPEECH_AUTH_KEY не задан")
 
@@ -117,11 +149,12 @@ class SaluteSpeechTTS:
         content_type = "application/ssml" if mode == "ssml" else "application/text"
 
         logger.info(
-            "SaluteSpeech TTS start voice=%s format=%s chars=%s mode=%s",
+            "SaluteSpeech TTS start voice=%s format=%s chars=%s mode=%s scope=%s",
             self.voice,
             self.format,
             len(body),
             mode,
+            self.scope,
         )
 
         timeout = aiohttp.ClientTimeout(total=_TIMEOUT_SEC)
@@ -149,8 +182,7 @@ class SaluteSpeechTTS:
                     return raw
 
         audio = await asyncio.wait_for(_request(), timeout=_TIMEOUT_SEC)
-        # format=opus уже ogg/opus; всё равно прогоняем через общий atempo,
-        # но при SSML rate=85% не дублируем — как у Yandex.
+        # format=opus уже ogg/opus; при SSML rate не дублируем atempo.
         post_atempo = 1.0 if mode == "ssml" else self.atempo
         ogg = await asyncio.to_thread(
             audio_bytes_to_ogg_opus, audio, atempo=post_atempo, prefix="salute_"
