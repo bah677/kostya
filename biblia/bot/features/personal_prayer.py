@@ -232,19 +232,22 @@ class PersonalPrayerFeature(BaseFeature):
                 "[%s] TTS не настроен (Voicebox/SpeechKit) — только текст молитвы",
                 self.name,
             )
+        if self.elevenlabs_tts.configured and self.elevenlabs_tts.voice_id:
+            logger.info(
+                "[%s] ElevenLabs TTS готов (voice=%s… queue_max=%s)",
+                self.name,
+                self.elevenlabs_tts.voice_id[:8],
+                self.tts_queue.max_concurrent,
+            )
         if self.openai_tts.configured:
             logger.info(
-                "[%s] OpenAI TTS для админ-сравнения (model=%s voice=%s)",
+                "[%s] OpenAI TTS (model=%s voice=%s)",
                 self.name,
                 self.openai_tts.model,
                 self.openai_tts.voice,
             )
-        for label, eng in (
-            ("SaluteSpeech", self.salute_tts),
-            ("ElevenLabs", self.elevenlabs_tts),
-        ):
-            if eng.configured:
-                logger.info("[%s] %s TTS для админ-сравнения готов", self.name, label)
+        if self.salute_tts.configured:
+            logger.info("[%s] SaluteSpeech TTS готов", self.name)
 
     def register_handlers(self, dp: Dispatcher) -> None:
         dp.message.register(self.on_prayer_command, Command(commands=["prayer", "molitva"]))
@@ -490,7 +493,7 @@ class PersonalPrayerFeature(BaseFeature):
         *,
         wait_msg: Optional[Message] = None,
     ) -> Optional[bytes]:
-        """Озвучка молитвы: ElevenLabs #1 + фон; fallback Voicebox/SpeechKit."""
+        """Озвучка молитвы через общую очередь (ElevenLabs → Voicebox/SpeechKit)."""
         # Спец-форматирование для TTS (паузы/SSML), без словаря ударений.
         tts_text = format_prayer_for_tts(prayer_text)
         if not tts_text.strip():
@@ -505,87 +508,103 @@ class PersonalPrayerFeature(BaseFeature):
             tts_text[:80],
         )
 
-        if self.elevenlabs_tts.configured and self.elevenlabs_tts.voice_id:
-            try:
-                raw_mp3 = await self.elevenlabs_tts.synthesize_ogg_opus(
-                    tts_text,
-                    voice_id=self.elevenlabs_tts.voice_id,
-                    as_ogg=False,
-                )
-                mixed = await asyncio.to_thread(
-                    mix_voice_with_bg_music,
-                    raw_mp3,
-                    atempo=1.1,
-                    voice_suffix=".mp3",
-                    bitrate="160k",
-                )
-                if mixed:
-                    logger.info(
-                        "[%s] prayer TTS ok engine=elevenlabs uid=%s bytes=%s",
-                        self.name,
-                        uid,
-                        len(mixed),
-                    )
-                    return mixed
-                from bot.services.prayer_tts_style import audio_bytes_to_ogg_opus
+        async def _on_queued(ahead: int) -> None:
+            await self._notify_tts_queue(wait_msg, ahead)
 
-                ogg = await asyncio.to_thread(
-                    audio_bytes_to_ogg_opus, raw_mp3, atempo=1.1, prefix="elabs_prayer_"
-                )
-                if ogg:
-                    logger.warning(
-                        "[%s] prayer bg mix failed uid=%s — без фона", self.name, uid
-                    )
-                    return ogg
-            except Exception as e:
-                logger.error(
-                    "[%s] prayer ElevenLabs failed uid=%s: %s", self.name, uid, e
-                )
-
-        tts = self.tts
-        if tts.configured:
-            try:
-                if tts is self.voicebox:
-
-                    async def _on_queued(ahead: int) -> None:
-                        await self._notify_tts_queue(wait_msg, ahead)
-
-                    async with self.tts_queue.hold(
-                        label=f"prayer:{uid}",
-                        on_queued=_on_queued if wait_msg is not None else None,
-                    ):
-                        ogg = await self.voicebox.synthesize_ogg_opus(tts_text)
-                else:
-                    ogg = await tts.synthesize_ogg_opus(tts_text)
-                if ogg:
-                    logger.info(
-                        "[%s] prayer TTS ok engine=fallback uid=%s bytes=%s",
-                        self.name,
-                        uid,
-                        len(ogg),
-                    )
-                    return ogg
-            except Exception as e:
-                logger.error(
-                    "[%s] prayer fallback TTS failed uid=%s: %s", self.name, uid, e
-                )
-
-            if (
-                self.voicebox.configured
-                and self.speechkit.configured
-                and tts is self.voicebox
-            ):
+        async with self.tts_queue.hold(
+            label=f"prayer:{uid}",
+            on_queued=_on_queued if wait_msg is not None else None,
+        ):
+            if wait_msg is not None:
                 try:
-                    ogg = await self.speechkit.synthesize_ogg_opus(tts_text)
+                    await wait_msg.edit_text("⏳ Озвучиваю молитву…")
+                except Exception:
+                    pass
+
+            if self.elevenlabs_tts.configured and self.elevenlabs_tts.voice_id:
+                try:
+                    raw_mp3 = await self.elevenlabs_tts.synthesize_ogg_opus(
+                        tts_text,
+                        voice_id=self.elevenlabs_tts.voice_id,
+                        as_ogg=False,
+                    )
+                    mixed = await asyncio.to_thread(
+                        mix_voice_with_bg_music,
+                        raw_mp3,
+                        atempo=1.1,
+                        voice_suffix=".mp3",
+                        bitrate="160k",
+                    )
+                    if mixed:
+                        logger.info(
+                            "[%s] prayer TTS ok engine=elevenlabs uid=%s bytes=%s",
+                            self.name,
+                            uid,
+                            len(mixed),
+                        )
+                        return mixed
+                    from bot.services.prayer_tts_style import audio_bytes_to_ogg_opus
+
+                    ogg = await asyncio.to_thread(
+                        audio_bytes_to_ogg_opus,
+                        raw_mp3,
+                        atempo=1.1,
+                        prefix="elabs_prayer_",
+                    )
                     if ogg:
+                        logger.warning(
+                            "[%s] prayer bg mix failed uid=%s — без фона",
+                            self.name,
+                            uid,
+                        )
                         return ogg
-                except Exception as e2:
+                except Exception as e:
                     logger.error(
-                        "[%s] prayer SpeechKit fallback failed uid=%s: %s",
+                        "[%s] prayer ElevenLabs failed uid=%s: %s",
                         self.name,
                         uid,
-                        e2,
+                        e,
                     )
+
+            tts = self.tts
+            if tts.configured:
+                try:
+                    if tts is self.voicebox:
+                        ogg = await self.voicebox.synthesize_ogg_opus(tts_text)
+                    else:
+                        ogg = await tts.synthesize_ogg_opus(tts_text)
+                    if ogg:
+                        logger.info(
+                            "[%s] prayer TTS ok engine=fallback uid=%s bytes=%s",
+                            self.name,
+                            uid,
+                            len(ogg),
+                        )
+                        return ogg
+                except Exception as e:
+                    logger.error(
+                        "[%s] prayer fallback TTS failed uid=%s: %s",
+                        self.name,
+                        uid,
+                        e,
+                    )
+
+                if (
+                    self.voicebox.configured
+                    and self.speechkit.configured
+                    and tts is self.voicebox
+                ):
+                    try:
+                        ogg = await self.speechkit.synthesize_ogg_opus(tts_text)
+                        if ogg:
+                            return ogg
+                    except Exception as e2:
+                        logger.error(
+                            "[%s] prayer SpeechKit fallback failed uid=%s: %s",
+                            self.name,
+                            uid,
+                            e2,
+                        )
 
         logger.warning("[%s] prayer TTS unavailable uid=%s", self.name, uid)
         return None

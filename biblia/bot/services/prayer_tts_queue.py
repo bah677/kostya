@@ -1,4 +1,4 @@
-"""Очередь Voicebox TTS: ограничивает параллельные генерации при нагрузке."""
+"""Очередь TTS молитв: ограничивает параллельные генерации при нагрузке."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ OnQueued = Callable[[int], Awaitable[None]]
 
 
 class PrayerTtsQueue:
-    """FIFO-слот на GPU Voicebox: не больше ``max_concurrent`` одновременных синтезов."""
+    """FIFO-слоты на озвучку молитв: не больше ``max_concurrent`` одновременных синтезов."""
 
     def __init__(self, max_concurrent: int = 1) -> None:
         n = max(1, int(max_concurrent))
