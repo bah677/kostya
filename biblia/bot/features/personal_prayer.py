@@ -807,27 +807,44 @@ class PersonalPrayerFeature(BaseFeature):
     ) -> None:
         body = (prayer_text or "").strip()
         uid = message.from_user.id if message.from_user else 0
+        intro_caption = _PRAYER_VOICE_INTRO.strip()
+        if len(intro_caption) > _TG_CAPTION_MAX:
+            intro_caption = intro_caption[: _TG_CAPTION_MAX - 1].rstrip() + "…"
 
-        if ogg and bot:
-            logger.info("[%s] sending intro voice uid=%s", self.name, uid)
+        if ogg:
+            logger.info("[%s] sending intro voice uid=%s bytes=%s", self.name, uid, len(ogg))
             try:
-                await bot.send_voice(
-                    message.chat.id,
-                    BufferedInputFile(ogg, filename="prayer_intro.ogg"),
-                )
+                # Подпись на voice = текст инструкции (раньше caption не слали).
+                voice_file = BufferedInputFile(ogg, filename="prayer_intro.ogg")
+                if bot:
+                    kwargs = {
+                        "chat_id": message.chat.id,
+                        "voice": voice_file,
+                        "caption": intro_caption,
+                    }
+                    if message.message_thread_id:
+                        kwargs["message_thread_id"] = message.message_thread_id
+                    await bot.send_voice(**kwargs)
+                else:
+                    await message.answer_voice(voice_file, caption=intro_caption)
+                logger.info("[%s] intro voice sent uid=%s", self.name, uid)
             except TelegramBadRequest as e:
                 if not _is_voice_forbidden_error(e):
+                    logger.error("[%s] intro voice send failed uid=%s: %s", self.name, uid, e)
                     raise
                 logger.info(
                     "[%s] voice forbidden for uid=%s — только текст",
                     self.name,
                     uid,
                 )
-                await message.answer(
-                    "<i>В этом чате голосовые недоступны — ниже текст молитвы.</i>",
-                    parse_mode=ParseMode.HTML,
-                )
-        elif not ogg:
+                try:
+                    await message.answer(
+                        "<i>В этом чате голосовые недоступны — ниже текст молитвы.</i>",
+                        parse_mode=ParseMode.HTML,
+                    )
+                except Exception:
+                    pass
+        else:
             logger.info("[%s] intro voice missing uid=%s — текст без аудио", self.name, uid)
 
         await self._deliver_prayer_text_with_donation(message, body)
@@ -841,41 +858,82 @@ class PersonalPrayerFeature(BaseFeature):
     ) -> None:
         await self._deliver_prayer_text_with_donation(message, body)
         if notice:
-            await message.answer(notice, parse_mode=ParseMode.HTML)
+            try:
+                await message.answer(notice, parse_mode=ParseMode.HTML)
+            except Exception:
+                await message.answer(
+                    notice.replace("<i>", "").replace("</i>", ""),
+                )
 
     async def _deliver_prayer_text_with_donation(
         self, message: Message, body: str
     ) -> None:
-        """Исходный текст молитвы + блок поддержки + кнопка."""
+        """
+        1) Текст молитвы (plain, без HTML — надёжно доходит).
+        2) Отдельным сообщением — донат-блок + кнопка.
+        """
         body = (body or "").strip()
-        footer = "\n\n" + _PRAYER_DONATION_FOOTER_HTML
-        header = "<b>🙏 Ваша молитва</b>\n\n"
-        kb = self._prayer_support_kb()
         uid = message.from_user.id if message.from_user else 0
+        kb = self._prayer_support_kb()
         if uid:
             try:
                 await self.user_storage.increment_donation_button_counter(uid)
             except Exception:
                 pass
 
-        safe = html.escape(body)
-        full = header + safe + footer
-        if len(full) <= _TG_MESSAGE_MAX:
-            await message.answer(full, parse_mode=ParseMode.HTML, reply_markup=kb)
-            return
+        # Молитва — обычный текст, без parse_mode (не ломается на символах LLM).
+        prayer_msg = f"🙏 Ваша молитва\n\n{body}" if body else "🙏 Ваша молитва"
+        try:
+            if len(prayer_msg) <= _TG_MESSAGE_MAX:
+                await message.answer(prayer_msg)
+            else:
+                first, rest = _split_caption(
+                    body, _TG_MESSAGE_MAX - len("🙏 Ваша молитва\n\n")
+                )
+                await message.answer(f"🙏 Ваша молитва\n\n{first}")
+                await _send_text_chunks(message, rest)
+            logger.info(
+                "[%s] prayer text sent uid=%s chars=%s",
+                self.name,
+                uid,
+                len(body),
+            )
+        except Exception as e:
+            logger.error(
+                "[%s] prayer text send failed uid=%s: %s",
+                self.name,
+                uid,
+                e,
+                exc_info=True,
+            )
+            # Последняя попытка — кусками без заголовка.
+            try:
+                await _send_text_chunks(message, body)
+            except Exception as e2:
+                logger.error("[%s] prayer text chunks failed uid=%s: %s", self.name, uid, e2)
 
-        # Длинная молитва: сначала текст частями, в конце — донат с кнопкой.
-        first, rest = _split_caption(body, _TG_MESSAGE_MAX - len("🙏 Ваша молитва\n\n"))
-        await message.answer(
-            f"<b>🙏 Ваша молитва</b>\n\n{html.escape(first)}",
-            parse_mode=ParseMode.HTML,
-        )
-        await _send_text_chunks(message, rest)
-        await message.answer(
-            _PRAYER_DONATION_FOOTER_HTML,
-            parse_mode=ParseMode.HTML,
-            reply_markup=kb,
-        )
+        try:
+            await message.answer(
+                _PRAYER_DONATION_FOOTER_HTML,
+                parse_mode=ParseMode.HTML,
+                reply_markup=kb,
+            )
+            logger.info("[%s] donation footer sent uid=%s", self.name, uid)
+        except TelegramBadRequest as e:
+            logger.warning(
+                "[%s] donation HTML failed uid=%s: %s — plain fallback",
+                self.name,
+                uid,
+                e,
+            )
+            plain = (
+                "Генерация голоса требует много ресурсов и стоит довольно дорого, "
+                "поэтому каждое ваше пожертвование помогает нам сохранять и развивать "
+                "эту функцию.\n\n"
+                "«Носите бремена друг друга, и таким образом исполните закон Христов.»\n"
+                "Гал. 6:2"
+            )
+            await message.answer(plain, reply_markup=kb)
 
     def _prayer_support_kb(self) -> InlineKeyboardMarkup:
         return InlineKeyboardMarkup(
