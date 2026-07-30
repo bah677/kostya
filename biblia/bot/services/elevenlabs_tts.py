@@ -160,9 +160,9 @@ class ElevenLabsTTS:
             raise last_err or RuntimeError("ElevenLabs: неизвестная ошибка")
 
         audio = await _request_with_limit()
-        # Основной голос (#1, ELEVENLABS_VOICE_ID) — ускорение на 10%.
-        primary = (self.voice_id or "").strip()
-        atempo = 1.1 if primary and vid == primary else 1.0
+        from bot.services.prayer_tts_style import resolve_prayer_tts_atempo
+
+        atempo = resolve_prayer_tts_atempo()
         if as_ogg:
             out = await asyncio.to_thread(
                 audio_bytes_to_ogg_opus, audio, atempo=atempo, prefix="elabs_"

@@ -33,6 +33,7 @@ from bot.services.prayer_stress import (
     parse_prayer_stress_words,
 )
 from bot.services.prayer_bg_music import mix_voice_with_bg_music
+from bot.services.prayer_tts_style import resolve_prayer_tts_atempo
 from bot.services.prayer_tts_queue import PrayerTtsQueue, get_prayer_tts_queue
 from bot.services.prayer_rag import build_compose_user_content, fetch_prayer_style_examples
 from bot.services.salute_tts import SaluteSpeechTTS
@@ -537,6 +538,7 @@ class PersonalPrayerFeature(BaseFeature):
 
             if self.elevenlabs_tts.configured and vid:
                 try:
+                    tempo = resolve_prayer_tts_atempo()
                     raw_mp3 = await self.elevenlabs_tts.synthesize_ogg_opus(
                         tts_text,
                         voice_id=vid,
@@ -546,17 +548,18 @@ class PersonalPrayerFeature(BaseFeature):
                     mixed = await asyncio.to_thread(
                         mix_voice_with_bg_music,
                         raw_mp3,
-                        atempo=1.1,
+                        atempo=tempo,
                         voice_suffix=".mp3",
                         bitrate="160k",
                     )
                     if mixed:
                         logger.info(
-                            "[%s] prayer TTS ok engine=elevenlabs uid=%s model=%s voice=%s bytes=%s",
+                            "[%s] prayer TTS ok engine=elevenlabs uid=%s model=%s voice=%s atempo=%.2f bytes=%s",
                             self.name,
                             uid,
                             mid or self.elevenlabs_tts.model_id,
                             vid[:8],
+                            tempo,
                             len(mixed),
                         )
                         return mixed
@@ -565,7 +568,7 @@ class PersonalPrayerFeature(BaseFeature):
                     ogg = await asyncio.to_thread(
                         audio_bytes_to_ogg_opus,
                         raw_mp3,
-                        atempo=1.1,
+                        atempo=tempo,
                         prefix="elabs_prayer_",
                     )
                     if ogg:
