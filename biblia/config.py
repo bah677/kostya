@@ -254,6 +254,8 @@ class AppConfig:
         "gMIlPNegT3C1SdNBp6rW"
     )
     ELEVENLABS_MODEL_ID: str = "eleven_multilingual_v2"
+    # Дешёвая модель для админ-сравнения (тот же голос, Flash v2.5).
+    ELEVENLABS_CHEAP_MODEL_ID: str = "eleven_flash_v2_5"
     ELEVENLABS_OUTPUT_FORMAT: str = "mp3_44100_128"
     ELEVENLABS_STABILITY: float = 0.45
     ELEVENLABS_SIMILARITY: float = 0.75
@@ -453,6 +455,10 @@ def load_app_config() -> AppConfig:
             os.getenv("ELEVENLABS_MODEL_ID") or "eleven_multilingual_v2"
         ).strip()
         or "eleven_multilingual_v2",
+        ELEVENLABS_CHEAP_MODEL_ID=(
+            os.getenv("ELEVENLABS_CHEAP_MODEL_ID") or "eleven_flash_v2_5"
+        ).strip()
+        or "eleven_flash_v2_5",
         ELEVENLABS_OUTPUT_FORMAT=(
             os.getenv("ELEVENLABS_OUTPUT_FORMAT") or "mp3_44100_128"
         ).strip()

@@ -80,6 +80,7 @@ class ElevenLabsTTS:
         text: str,
         *,
         voice_id: Optional[str] = None,
+        model_id: Optional[str] = None,
         as_ogg: bool = True,
     ) -> bytes:
         if not self.api_key:
@@ -87,6 +88,7 @@ class ElevenLabsTTS:
         vid = (voice_id or self.voice_id or "").strip()
         if not vid:
             raise RuntimeError("ELEVENLABS_VOICE_ID не задан")
+        mid = (model_id or self.model_id or "eleven_multilingual_v2").strip()
 
         body, mode = prepare_prayer_for_engine(text, engine="elevenlabs")
         if not body:
@@ -98,7 +100,7 @@ class ElevenLabsTTS:
         params = {"output_format": self.output_format}
         payload = {
             "text": body,
-            "model_id": self.model_id,
+            "model_id": mid,
             "voice_settings": {
                 "stability": self.stability,
                 "similarity_boost": self.similarity,
@@ -113,7 +115,7 @@ class ElevenLabsTTS:
         logger.info(
             "ElevenLabs TTS start voice=%s model=%s chars=%s mode=%s",
             vid[:8],
-            self.model_id,
+            mid,
             len(body),
             mode,
         )

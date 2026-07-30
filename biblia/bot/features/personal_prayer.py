@@ -425,6 +425,10 @@ class PersonalPrayerFeature(BaseFeature):
                 uid,
                 bool(ogg),
             )
+            if uid and await is_admin_or_super(self.user_storage, uid):
+                await self._deliver_admin_cheap_model_compare(
+                    message, bot, prayer_text
+                )
         except Exception as e:
             logger.error("[%s] generate failed uid=%s: %s", self.name, uid, e, exc_info=True)
             try:
@@ -494,6 +498,8 @@ class PersonalPrayerFeature(BaseFeature):
         prayer_text: str,
         *,
         wait_msg: Optional[Message] = None,
+        model_id: Optional[str] = None,
+        queue_label: Optional[str] = None,
     ) -> Optional[bytes]:
         """Озвучка молитвы через общую очередь (ElevenLabs → Voicebox/SpeechKit)."""
         # Спец-форматирование для TTS (паузы/SSML), без словаря ударений.
@@ -502,11 +508,13 @@ class PersonalPrayerFeature(BaseFeature):
             logger.warning("[%s] prayer TTS empty after format uid=%s", self.name, uid)
             return None
 
+        mid = (model_id or "").strip() or None
         logger.info(
-            "[%s] prayer TTS input uid=%s chars=%s preview=%r",
+            "[%s] prayer TTS input uid=%s chars=%s model=%s preview=%r",
             self.name,
             uid,
             len(tts_text),
+            mid or self.elevenlabs_tts.model_id,
             tts_text[:80],
         )
 
@@ -514,7 +522,7 @@ class PersonalPrayerFeature(BaseFeature):
             await self._notify_tts_queue(wait_msg, ahead)
 
         async with self.tts_queue.hold(
-            label=f"prayer:{uid}",
+            label=queue_label or f"prayer:{uid}",
             on_queued=_on_queued if wait_msg is not None else None,
         ):
             if wait_msg is not None:
@@ -528,6 +536,7 @@ class PersonalPrayerFeature(BaseFeature):
                     raw_mp3 = await self.elevenlabs_tts.synthesize_ogg_opus(
                         tts_text,
                         voice_id=self.elevenlabs_tts.voice_id,
+                        model_id=mid,
                         as_ogg=False,
                     )
                     mixed = await asyncio.to_thread(
@@ -539,9 +548,10 @@ class PersonalPrayerFeature(BaseFeature):
                     )
                     if mixed:
                         logger.info(
-                            "[%s] prayer TTS ok engine=elevenlabs uid=%s bytes=%s",
+                            "[%s] prayer TTS ok engine=elevenlabs uid=%s model=%s bytes=%s",
                             self.name,
                             uid,
+                            mid or self.elevenlabs_tts.model_id,
                             len(mixed),
                         )
                         return mixed
@@ -562,11 +572,22 @@ class PersonalPrayerFeature(BaseFeature):
                         return ogg
                 except Exception as e:
                     logger.error(
-                        "[%s] prayer ElevenLabs failed uid=%s: %s",
+                        "[%s] prayer ElevenLabs failed uid=%s model=%s: %s",
                         self.name,
                         uid,
+                        mid or self.elevenlabs_tts.model_id,
                         e,
                     )
+
+            # Fallback на Voicebox/SpeechKit — только для основной модели (юзеры).
+            if mid:
+                logger.warning(
+                    "[%s] prayer cheap TTS unavailable uid=%s model=%s",
+                    self.name,
+                    uid,
+                    mid,
+                )
+                return None
 
             tts = self.tts
             if tts.configured:
@@ -885,6 +906,80 @@ class PersonalPrayerFeature(BaseFeature):
             logger.info("[%s] prayer voice missing uid=%s — текст без аудио", self.name, uid)
 
         await self._deliver_prayer_text_with_donation(message, body)
+
+    async def _deliver_admin_cheap_model_compare(
+        self,
+        message: Message,
+        bot: Optional[Bot],
+        prayer_text: str,
+    ) -> None:
+        """Админам: второй голос на дешёвой Flash-модели, тот же текст/голос."""
+        if not (self.elevenlabs_tts.configured and self.elevenlabs_tts.voice_id):
+            return
+        cheap_model = (
+            getattr(self.config, "ELEVENLABS_CHEAP_MODEL_ID", None)
+            or "eleven_flash_v2_5"
+        ).strip() or "eleven_flash_v2_5"
+        primary = (self.elevenlabs_tts.model_id or "").strip()
+        if cheap_model == primary:
+            return
+
+        uid = message.from_user.id if message.from_user else 0
+        try:
+            await message.answer(
+                f"🧪 <b>Админ-сравнение моделей</b>\n"
+                f"Ниже тот же текст на дешёвой модели "
+                f"<code>{html.escape(cheap_model)}</code> "
+                f"(основная: <code>{html.escape(primary)}</code>).",
+                parse_mode=ParseMode.HTML,
+            )
+        except Exception:
+            pass
+
+        ogg = await self._synthesize_prayer_voice(
+            uid,
+            prayer_text,
+            model_id=cheap_model,
+            queue_label=f"prayer-cheap:{uid}",
+        )
+        if not ogg:
+            try:
+                await message.answer(
+                    f"<i>Не удалось озвучить на {html.escape(cheap_model)}</i>",
+                    parse_mode=ParseMode.HTML,
+                )
+            except Exception:
+                pass
+            return
+
+        caption = f"🧪 Flash/Turbo: {cheap_model}"[:1024]
+        try:
+            voice_file = BufferedInputFile(ogg, filename="prayer_flash.ogg")
+            if bot:
+                kwargs = {
+                    "chat_id": message.chat.id,
+                    "voice": voice_file,
+                    "caption": caption,
+                }
+                if message.message_thread_id:
+                    kwargs["message_thread_id"] = message.message_thread_id
+                await bot.send_voice(**kwargs)
+            else:
+                await message.answer_voice(voice_file, caption=caption)
+            logger.info(
+                "[%s] admin cheap compare sent uid=%s model=%s bytes=%s",
+                self.name,
+                uid,
+                cheap_model,
+                len(ogg),
+            )
+        except Exception as e:
+            logger.error(
+                "[%s] admin cheap compare send failed uid=%s: %s",
+                self.name,
+                uid,
+                e,
+            )
 
     async def _deliver_prayer_text_only(
         self,
