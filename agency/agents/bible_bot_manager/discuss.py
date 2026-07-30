@@ -7,6 +7,7 @@ import logging
 from datetime import date
 from typing import Any, Dict, List, Optional
 
+from agents.bible_bot_manager.agent import _parse_priority
 from config import Config
 from db.pool import Pools
 from db.repo import AgencyRepo
@@ -151,7 +152,7 @@ async def discuss_brief_reply(
                 body=_format_action_body(a),
                 evidence=str(a.get("evidence") or ""),
                 target_system=str(a.get("target_system") or "biblia"),
-                priority=int(a.get("priority") or 2),
+                priority=_parse_priority(a.get("priority"), 2),
                 meta={
                     "kpi_impact": a.get("kpi_impact"),
                     "how_to_verify": a.get("how_to_verify"),

@@ -23,6 +23,28 @@ logger = logging.getLogger(__name__)
 
 AGENT_ID = "bible_bot_manager"
 
+_PRIORITY_LABELS = {"high": 1, "medium": 2, "low": 3, "hi": 1, "med": 2, "lo": 3}
+
+
+def _parse_priority(raw: Any, default: int = 2) -> int:
+    """LLM иногда отдаёт 1/2/3, иногда high/medium/low."""
+    if raw is None or raw == "":
+        return default
+    if isinstance(raw, bool):
+        return default
+    if isinstance(raw, (int, float)):
+        try:
+            return max(1, min(5, int(raw)))
+        except (TypeError, ValueError):
+            return default
+    s = str(raw).strip().lower()
+    if s in _PRIORITY_LABELS:
+        return _PRIORITY_LABELS[s]
+    try:
+        return max(1, min(5, int(float(s))))
+    except (TypeError, ValueError):
+        return default
+
 
 def _fmt_opt(v) -> str:
     if v is None:
@@ -393,7 +415,7 @@ async def run_bible_bot_manager(
                 body=body,
                 evidence=str(a.get("evidence") or ""),
                 target_system=str(a.get("target_system") or "biblia"),
-                priority=int(a.get("priority") or 2),
+                priority=_parse_priority(a.get("priority"), 2),
                 meta={
                     "kpi_impact": a.get("kpi_impact"),
                     "how_to_verify": a.get("how_to_verify"),
