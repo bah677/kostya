@@ -25,6 +25,8 @@ logger = logging.getLogger(__name__)
 _DEEPSEEK_HTTP_TIMEOUT_SEC = 150.0
 _DEEPSEEK_CHAT_WAIT_SEC = 120.0
 _DEEPSEEK_HTML_FORMAT_WAIT_SEC = 120.0
+_DEEPSEEK_RETRY_ATTEMPTS = 3
+_DEEPSEEK_RETRY_BASE_DELAY_SEC = 2.0
 
 # token_usage / аналитика: дополнительный вызов только для разметки → HTML (DeepSeek).
 TELEGRAM_HTML_FORMAT_REQUEST_KIND = "telegram_html_format_auxiliary"
@@ -49,6 +51,45 @@ def _strip_for_history_match(s: str) -> str:
     t = re.sub(r"<[^>]+>", " ", s)
     t = html_module.unescape(t)
     return " ".join(t.split())
+
+
+def _is_deepseek_retryable(exc: BaseException) -> bool:
+    if isinstance(exc, asyncio.TimeoutError):
+        return True
+    msg = str(exc).lower()
+    if "503" in msg or "too busy" in msg or "overloaded" in msg:
+        return True
+    if "429" in msg or "rate limit" in msg:
+        return True
+    status = getattr(exc, "status_code", None) or getattr(
+        getattr(exc, "response", None), "status_code", None
+    )
+    return status in (429, 503, 502, 504)
+
+
+async def _deepseek_with_retry(coro_factory, *, label: str, user_id: int):
+    """Повтор при timeout / 503 / rate-limit DeepSeek."""
+    last_exc: Optional[BaseException] = None
+    for attempt in range(1, _DEEPSEEK_RETRY_ATTEMPTS + 1):
+        try:
+            return await coro_factory()
+        except Exception as e:
+            last_exc = e
+            if attempt >= _DEEPSEEK_RETRY_ATTEMPTS or not _is_deepseek_retryable(e):
+                raise
+            delay = _DEEPSEEK_RETRY_BASE_DELAY_SEC * attempt
+            logger.warning(
+                "DeepSeek retry %s user=%s attempt=%s/%s delay=%.1fs err=%s",
+                label,
+                user_id,
+                attempt,
+                _DEEPSEEK_RETRY_ATTEMPTS,
+                delay,
+                e,
+            )
+            await asyncio.sleep(delay)
+    assert last_exc is not None
+    raise last_exc
 
 
 def _format_context_tail(history: List[dict], *, max_turns: int = 8, max_chars_per: int = 1200) -> str:
@@ -123,14 +164,19 @@ class AgentsClient:
                 ),
             )
 
-            response = await asyncio.wait_for(
-                self.client.chat.completions.create(
-                    model=self.CHAT_MODEL,
-                    messages=messages,
-                    temperature=0.7,
-                    max_tokens=2048,
-                ),
-                timeout=_DEEPSEEK_CHAT_WAIT_SEC,
+            async def _once():
+                return await asyncio.wait_for(
+                    self.client.chat.completions.create(
+                        model=self.CHAT_MODEL,
+                        messages=messages,
+                        temperature=0.7,
+                        max_tokens=2048,
+                    ),
+                    timeout=_DEEPSEEK_CHAT_WAIT_SEC,
+                )
+
+            response = await _deepseek_with_retry(
+                _once, label="chat", user_id=user_id
             )
 
             usage = getattr(response, "usage", None)
@@ -319,14 +365,20 @@ class AgentsClient:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_content},
             ]
-            response = await asyncio.wait_for(
-                self.client.chat.completions.create(
-                    model=self.CHAT_MODEL,
-                    messages=messages,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                ),
-                timeout=_DEEPSEEK_CHAT_WAIT_SEC,
+
+            async def _once():
+                return await asyncio.wait_for(
+                    self.client.chat.completions.create(
+                        model=self.CHAT_MODEL,
+                        messages=messages,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                    ),
+                    timeout=_DEEPSEEK_CHAT_WAIT_SEC,
+                )
+
+            response = await _deepseek_with_retry(
+                _once, label=f"complete:{request_kind}", user_id=user_id
             )
             usage = getattr(response, "usage", None)
             request_id = str(uuid.uuid4())
@@ -370,14 +422,19 @@ class AgentsClient:
                 user_id,
                 len(messages),
             )
-            response = await asyncio.wait_for(
-                self.client.chat.completions.create(
-                    model=self.CHAT_MODEL,
-                    messages=messages,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                ),
-                timeout=_DEEPSEEK_CHAT_WAIT_SEC,
+            async def _once():
+                return await asyncio.wait_for(
+                    self.client.chat.completions.create(
+                        model=self.CHAT_MODEL,
+                        messages=messages,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                    ),
+                    timeout=_DEEPSEEK_CHAT_WAIT_SEC,
+                )
+
+            response = await _deepseek_with_retry(
+                _once, label=f"complete_msgs:{request_kind}", user_id=user_id
             )
             usage = getattr(response, "usage", None)
             request_id = str(uuid.uuid4())

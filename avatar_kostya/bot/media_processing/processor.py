@@ -87,6 +87,23 @@ class MediaProcessor:
             ProcessedMedia с текстом для дальнейшей обработки
         """
         start_time = asyncio.get_event_loop().time()
+
+        # Group/channel path skips inbound user middleware — ensure FK parent for
+        # media_inbound_files / token_usage / interaction_logs.
+        if user_id and user_id > 0 and message.from_user:
+            try:
+                await self.user_storage.add_or_update_user(
+                    {
+                        "user_id": message.from_user.id,
+                        "username": getattr(message.from_user, "username", None),
+                        "first_name": getattr(message.from_user, "first_name", None),
+                        "last_name": getattr(message.from_user, "last_name", None),
+                        "language_code": getattr(message.from_user, "language_code", None),
+                        "is_premium": getattr(message.from_user, "is_premium", False),
+                    }
+                )
+            except Exception as e:
+                logger.warning("ensure user before media process failed uid=%s: %s", user_id, e)
         
         # ОТПРАВЛЯЕМ УВЕДОМЛЕНИЕ В ЗАВИСИМОСТИ ОТ ТИПА
         #await self._send_processing_notification(message)

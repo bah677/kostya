@@ -350,6 +350,8 @@ class TelegramBotApp:
                 "scheduled_mailing",
                 "scripture_encouragement_mailing",
                 "media_id_helper",
+                "daily_admin_report",
+                "scripture_challenge_scheduler",
             ):
                 f = self.feature_manager.get_optional(_fname)
                 if f is not None and hasattr(f, "teardown"):
