@@ -426,10 +426,6 @@ class PersonalPrayerFeature(BaseFeature):
                 uid,
                 bool(ogg),
             )
-            if uid and await is_admin_or_super(self.user_storage, uid):
-                await self._deliver_admin_tts_compare(
-                    message, bot, prayer_text
-                )
         except Exception as e:
             logger.error("[%s] generate failed uid=%s: %s", self.name, uid, e, exc_info=True)
             try:
@@ -499,10 +495,6 @@ class PersonalPrayerFeature(BaseFeature):
         prayer_text: str,
         *,
         wait_msg: Optional[Message] = None,
-        model_id: Optional[str] = None,
-        voice_id: Optional[str] = None,
-        queue_label: Optional[str] = None,
-        allow_fallback: bool = True,
     ) -> Optional[bytes]:
         """Озвучка молитвы через общую очередь (ElevenLabs → Voicebox/SpeechKit)."""
         # Спец-форматирование для TTS (паузы/SSML), без словаря ударений.
@@ -511,14 +503,13 @@ class PersonalPrayerFeature(BaseFeature):
             logger.warning("[%s] prayer TTS empty after format uid=%s", self.name, uid)
             return None
 
-        mid = (model_id or "").strip() or None
-        vid = (voice_id or "").strip() or (self.elevenlabs_tts.voice_id or "").strip()
+        vid = (self.elevenlabs_tts.voice_id or "").strip()
         logger.info(
             "[%s] prayer TTS input uid=%s chars=%s model=%s voice=%s preview=%r",
             self.name,
             uid,
             len(tts_text),
-            mid or self.elevenlabs_tts.model_id,
+            self.elevenlabs_tts.model_id,
             (vid[:8] + "…") if vid else "—",
             tts_text[:80],
         )
@@ -527,7 +518,7 @@ class PersonalPrayerFeature(BaseFeature):
             await self._notify_tts_queue(wait_msg, ahead)
 
         async with self.tts_queue.hold(
-            label=queue_label or f"prayer:{uid}",
+            label=f"prayer:{uid}",
             on_queued=_on_queued if wait_msg is not None else None,
         ):
             if wait_msg is not None:
@@ -542,7 +533,6 @@ class PersonalPrayerFeature(BaseFeature):
                     raw_mp3 = await self.elevenlabs_tts.synthesize_ogg_opus(
                         tts_text,
                         voice_id=vid,
-                        model_id=mid,
                         as_ogg=False,
                     )
                     mixed = await asyncio.to_thread(
@@ -557,7 +547,7 @@ class PersonalPrayerFeature(BaseFeature):
                             "[%s] prayer TTS ok engine=elevenlabs uid=%s model=%s voice=%s atempo=%.2f bytes=%s",
                             self.name,
                             uid,
-                            mid or self.elevenlabs_tts.model_id,
+                            self.elevenlabs_tts.model_id,
                             vid[:8],
                             tempo,
                             len(mixed),
@@ -580,28 +570,11 @@ class PersonalPrayerFeature(BaseFeature):
                         return ogg
                 except Exception as e:
                     logger.error(
-                        "[%s] prayer ElevenLabs failed uid=%s model=%s voice=%s: %s",
+                        "[%s] prayer ElevenLabs failed uid=%s: %s",
                         self.name,
                         uid,
-                        mid or self.elevenlabs_tts.model_id,
-                        vid[:8],
                         e,
                     )
-
-            # Fallback на Voicebox/SpeechKit — только для основной озвучки юзеров.
-            if not allow_fallback or mid or (
-                voice_id
-                and voice_id.strip()
-                and voice_id.strip() != (self.elevenlabs_tts.voice_id or "").strip()
-            ):
-                logger.warning(
-                    "[%s] prayer TTS unavailable uid=%s model=%s voice=%s",
-                    self.name,
-                    uid,
-                    mid or self.elevenlabs_tts.model_id,
-                    (vid[:8] if vid else "—"),
-                )
-                return None
 
             tts = self.tts
             if tts.configured:
@@ -920,129 +893,6 @@ class PersonalPrayerFeature(BaseFeature):
             logger.info("[%s] prayer voice missing uid=%s — текст без аудио", self.name, uid)
 
         await self._deliver_prayer_text_with_donation(message, body)
-
-    async def _deliver_admin_tts_compare(
-        self,
-        message: Message,
-        bot: Optional[Bot],
-        prayer_text: str,
-    ) -> None:
-        """
-        Админам 4 варианта озвучки (тот же текст):
-        1) prod voice + multilingual — уже ушёл в _deliver_prayer
-        2) prod voice + flash
-        3) compare voice (q5RNAd…) + multilingual
-        4) compare voice + flash
-        """
-        if not (self.elevenlabs_tts.configured and self.elevenlabs_tts.voice_id):
-            return
-
-        primary_voice = (self.elevenlabs_tts.voice_id or "").strip()
-        primary_model = (self.elevenlabs_tts.model_id or "eleven_multilingual_v2").strip()
-        cheap_model = (
-            getattr(self.config, "ELEVENLABS_CHEAP_MODEL_ID", None)
-            or "eleven_flash_v2_5"
-        ).strip() or "eleven_flash_v2_5"
-        compare_voice = (
-            getattr(self.config, "ELEVENLABS_ADMIN_COMPARE_VOICE_ID", None)
-            or "q5RNAd4899271dg9W2K8"
-        ).strip() or "q5RNAd4899271dg9W2K8"
-
-        # (номер, caption, voice_id, model_id|None=primary)
-        extras: list[tuple[int, str, str, Optional[str]]] = []
-        if cheap_model != primary_model:
-            extras.append(
-                (
-                    2,
-                    f"2/4 голос prod ({primary_voice[:8]}…) + {cheap_model}",
-                    primary_voice,
-                    cheap_model,
-                )
-            )
-        if compare_voice and compare_voice != primary_voice:
-            extras.append(
-                (
-                    3,
-                    f"3/4 голос {compare_voice[:8]}… + {primary_model}",
-                    compare_voice,
-                    None,
-                )
-            )
-            if cheap_model != primary_model:
-                extras.append(
-                    (
-                        4,
-                        f"4/4 голос {compare_voice[:8]}… + {cheap_model}",
-                        compare_voice,
-                        cheap_model,
-                    )
-                )
-        if not extras:
-            return
-
-        uid = message.from_user.id if message.from_user else 0
-        try:
-            await message.answer(
-                "🧪 <b>Админ-сравнение TTS (4 варианта)</b>\n"
-                f"1/4 уже выше: prod <code>{html.escape(primary_voice[:8])}…</code> "
-                f"+ <code>{html.escape(primary_model)}</code>\n"
-                f"Ниже ещё {len(extras)} варианта того же текста.",
-                parse_mode=ParseMode.HTML,
-            )
-        except Exception:
-            pass
-
-        for num, caption, vid, mid in extras:
-            ogg = await self._synthesize_prayer_voice(
-                uid,
-                prayer_text,
-                model_id=mid,
-                voice_id=vid,
-                queue_label=f"prayer-cmp{num}:{uid}",
-                allow_fallback=False,
-            )
-            if not ogg:
-                try:
-                    await message.answer(
-                        f"<i>{html.escape(caption)} — не удалось сгенерировать</i>",
-                        parse_mode=ParseMode.HTML,
-                    )
-                except Exception:
-                    pass
-                continue
-            try:
-                voice_file = BufferedInputFile(
-                    ogg, filename=f"prayer_cmp_{num}.ogg"
-                )
-                safe_caption = caption[:1024]
-                if bot:
-                    kwargs = {
-                        "chat_id": message.chat.id,
-                        "voice": voice_file,
-                        "caption": safe_caption,
-                    }
-                    if message.message_thread_id:
-                        kwargs["message_thread_id"] = message.message_thread_id
-                    await bot.send_voice(**kwargs)
-                else:
-                    await message.answer_voice(voice_file, caption=safe_caption)
-                logger.info(
-                    "[%s] admin compare #%s sent uid=%s voice=%s model=%s bytes=%s",
-                    self.name,
-                    num,
-                    uid,
-                    vid[:8],
-                    mid or primary_model,
-                    len(ogg),
-                )
-            except Exception as e:
-                logger.error(
-                    "[%s] admin compare #%s send failed uid=%s: %s",
-                    self.name,
-                    num,
-                    uid,
-                    e,
-                )
 
     async def _deliver_prayer_text_only(
         self,

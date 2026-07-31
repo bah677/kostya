@@ -1,9 +1,13 @@
-"""Ежедневный отчёт Biblia в админскую группу (00:01 Europe/Moscow) и /report в личку админам."""
+"""Ежедневный отчёт Biblia в админскую группу (00:01 Europe/Moscow)
+и /report (вчера), /report_today (сегодня до сейчас) в личку админам.
+"""
 
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from typing import Optional
+from zoneinfo import ZoneInfo
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.enums import ChatType, ParseMode
@@ -20,7 +24,7 @@ from config import config
 
 logger = logging.getLogger(__name__)
 
-_MSK = "Europe/Moscow"
+_MSK = ZoneInfo("Europe/Moscow")
 
 
 class DailyAdminReportFeature(BaseFeature):
@@ -40,6 +44,11 @@ class DailyAdminReportFeature(BaseFeature):
             self._cmd_report,
             F.chat.type == ChatType.PRIVATE,
             Command("report"),
+        )
+        dp.message.register(
+            self._cmd_report_today,
+            F.chat.type == ChatType.PRIVATE,
+            Command("report_today"),
         )
 
     async def initialize(self) -> None:
@@ -63,7 +72,7 @@ class DailyAdminReportFeature(BaseFeature):
 
             self.scheduler.add_job(
                 self._send_scheduled_report,
-                CronTrigger(hour=0, minute=1, timezone=_MSK),
+                CronTrigger(hour=0, minute=1, timezone="Europe/Moscow"),
                 id="biblia_daily_admin_report",
                 replace_existing=True,
                 misfire_grace_time=3600,
@@ -71,9 +80,8 @@ class DailyAdminReportFeature(BaseFeature):
                 max_instances=1,
             )
             logger.info(
-                "[%s] Отчёт запланирован на 00:01 %s → thread_id=%s",
+                "[%s] Отчёт запланирован на 00:01 Europe/Moscow → thread_id=%s",
                 self.name,
-                _MSK,
                 config.BIBLIA_REPORT_THREAD_ID or "(general)",
             )
             # гарантируем таблицу снапшотов (бот — владелец)
@@ -91,20 +99,24 @@ class DailyAdminReportFeature(BaseFeature):
         except Exception as e:
             logger.warning("[%s] scheduler shutdown: %s", self.name, e)
 
-    async def _cmd_report(self, message: Message) -> None:
+    async def _require_admin_pool(self, message: Message) -> bool:
         uid = message.from_user.id if message.from_user else None
         if uid is None or not await is_telegram_admin(self.user_storage, uid):
             await message.reply(
                 "⛔ Нет доступа. Telegram ID должен быть в таблице <code>admins</code>.",
                 parse_mode=ParseMode.HTML,
             )
-            return
-
+            return False
         if self.user_storage.pool is None:
             await message.reply("❌ База данных недоступна.")
-            return
+            return False
+        return True
 
-        wait_msg = await message.reply("⏳ Собираю отчёт…")
+    async def _cmd_report(self, message: Message) -> None:
+        if not await self._require_admin_pool(message):
+            return
+        uid = message.from_user.id if message.from_user else 0
+        wait_msg = await message.reply("⏳ Собираю отчёт за вчера…")
         try:
             report_html = await self.build_report_html(save_snapshot=False)
             await wait_msg.edit_text(
@@ -116,11 +128,44 @@ class DailyAdminReportFeature(BaseFeature):
             logger.error("[%s] /report failed for uid=%s: %s", self.name, uid, e, exc_info=True)
             await wait_msg.edit_text("❌ Не удалось собрать отчёт. Смотрите логи бота.")
 
-    async def build_report_html(self, *, save_snapshot: bool = True) -> str:
+    async def _cmd_report_today(self, message: Message) -> None:
+        if not await self._require_admin_pool(message):
+            return
+        uid = message.from_user.id if message.from_user else 0
+        wait_msg = await message.reply("⏳ Собираю оперативный отчёт за сегодня…")
+        try:
+            report_html = await self.build_report_html(
+                save_snapshot=False,
+                as_of=datetime.now(_MSK),
+            )
+            await wait_msg.edit_text(
+                report_html,
+                parse_mode=ParseMode.HTML,
+                disable_web_page_preview=True,
+            )
+        except Exception as e:
+            logger.error(
+                "[%s] /report_today failed for uid=%s: %s",
+                self.name,
+                uid,
+                e,
+                exc_info=True,
+            )
+            await wait_msg.edit_text("❌ Не удалось собрать отчёт. Смотрите логи бота.")
+
+    async def build_report_html(
+        self,
+        *,
+        save_snapshot: bool = True,
+        as_of: Optional[datetime] = None,
+    ) -> str:
         if self.user_storage.pool is None:
             raise RuntimeError("DB pool is not available")
         collector = BibliaDailyReportCollector(self.user_storage.pool)
-        metrics = await collector.get_all_metrics(save_snapshot=save_snapshot)
+        metrics = await collector.get_all_metrics(
+            save_snapshot=save_snapshot,
+            as_of=as_of,
+        )
         return BibliaDailyReportCollector.format_report(metrics)
 
     async def _send_scheduled_report(self) -> None:

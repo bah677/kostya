@@ -107,7 +107,13 @@ ADMIN_CATALOG: Tuple[AdminEntry, ...] = (
     # —— отчёты (админ) ——
     AdminEntry(
         "/report",
-        "Суточный админ-отчёт в личку",
+        "Суточный админ-отчёт за вчера в личку",
+        "admin",
+        "reports",
+    ),
+    AdminEntry(
+        "/report_today",
+        "Оперативный отчёт за сегодня (на текущий момент)",
         "admin",
         "reports",
     ),

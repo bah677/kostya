@@ -806,10 +806,32 @@ class BibliaDailyReportCollector:
             "donation_proposals": current_proposals,
         }
 
-    async def get_all_metrics(self, *, save_snapshot: bool = True) -> Dict[str, Any]:
+    async def get_all_metrics(
+        self,
+        *,
+        save_snapshot: bool = True,
+        as_of: Optional[datetime] = None,
+    ) -> Dict[str, Any]:
+        """
+        as_of=None — полный вчерашний день (ночной отчёт / /report).
+        as_of=сейчас — оперативный срез с 00:00 МСК до as_of (/report_today).
+        """
         now_msk = datetime.now(_MSK)
-        report_day = now_msk.date() - timedelta(days=1)
-        day_start, day_end = _msk_day_bounds(report_day)
+        if as_of is None:
+            report_day = now_msk.date() - timedelta(days=1)
+            day_start, day_end = _msk_day_bounds(report_day)
+            period = f"Данные за {report_day.strftime('%d.%m.%Y')}"
+            day_label = "за вчера"
+        else:
+            as_of_msk = as_of.astimezone(_MSK) if as_of.tzinfo else as_of.replace(tzinfo=_MSK)
+            report_day = as_of_msk.date()
+            day_start, _ = _msk_day_bounds(report_day)
+            day_end = as_of_msk
+            period = (
+                f"Оперативно за {report_day.strftime('%d.%m.%Y')} "
+                f"до {as_of_msk.strftime('%H:%M')} МСК"
+            )
+            day_label = "за сегодня"
         mau_start = day_end - timedelta(days=30)
         month_start = _msk_month_start(report_day)
         month_end = day_end
@@ -860,7 +882,8 @@ class BibliaDailyReportCollector:
         prayer_30d = await self.get_prayer_generation_stats(users_30d_start, day_end)
 
         metrics: Dict[str, Any] = {
-            "period": f"Данные за {report_day.strftime('%d.%m.%Y')}",
+            "period": period,
+            "day_label": day_label,
             "report_day": report_day.isoformat(),
             "month_period": (
                 f"{report_day.strftime('%B')} "
@@ -986,12 +1009,13 @@ class BibliaDailyReportCollector:
         )
         referrals_referred = int(metrics.get("referrals_unique_referred", 0))
         referrals_paid = int(metrics.get("referrals_paid_referred", 0))
+        day_label = metrics.get("day_label") or "за вчера"
 
         return f"""<b>🤖 БИБЛИЯ</b>
     <i>{metrics['period']}</i>
     • Подписчиков всего: {metrics['subscribers']:,}
 
-    <b>👥 АКТИВНОСТЬ (за вчера)</b>
+    <b>👥 АКТИВНОСТЬ ({day_label})</b>
     • DAU: {metrics['dau']:,}
     • Из них "старых": {metrics.get('dau_without_new', 0):,} ({metrics.get('dau_returning_pct', 0)}%)
     • MAU (30 дней): {metrics['mau']:,}
@@ -1005,7 +1029,7 @@ class BibliaDailyReportCollector:
     • Молитвы за 30 дней: {metrics.get('prayer_generations_30d', 0)} / {metrics.get('prayer_unique_users_30d', 0)} уников
 
     <b>🆕 НОВЫЕ ПОЛЬЗОВАТЕЛИ</b>
-    • За вчера: {metrics['new_users_yesterday']:,}
+    • {day_label.capitalize()}: {metrics['new_users_yesterday']:,}
     • За 30 дней: {metrics['new_users_30d']:,}
 
     <b>🔗 РЕФЕРАЛЬНАЯ ПРОГРАММА</b>
@@ -1014,13 +1038,13 @@ class BibliaDailyReportCollector:
     • Уникальных пригласивших: {metrics.get('referrals_unique_referrers', 0):,}
     • Уникальных приглашённых: {referrals_referred:,}
     • С оплатой среди приглашённых: {referrals_paid:,} ({metrics.get('referrals_paid_pct', 0)}%)
-    • За вчера: {metrics['new_referrals_yesterday']:,}
+    • {day_label.capitalize()}: {metrics['new_referrals_yesterday']:,}
     • За 30 дней: {metrics['new_referrals_30d']:,}
     • Глубина дерева (макс.): {metrics.get('referral_tree_max_depth', 0)}{referral_depth_s}
     • Топ пригласивших:{referral_top_s or chr(10) + '      – нет данных'}
 
     <b>💰 ДОНАТЫ</b>
-    • Сумма за вчера: {metrics['donations_yesterday']:,.0f} ₽
+    • Сумма {day_label}: {metrics['donations_yesterday']:,.0f} ₽
     • Количество донатов: {metrics.get('donations_count', 0)}
     • Уникальных донатеров: {metrics.get('unique_donors', 0)}
     • {metrics['month_period']}: {metrics['donations_month_to_date']:,.0f} ₽{donations_by_month_s}
@@ -1028,7 +1052,7 @@ class BibliaDailyReportCollector:
 
     • Среднее донатов на донатера (всего): {avg_donations_s}{donor_distribution_s}
 
-    <b>🖱️ ВОВЛЕЧЕНИЕ В ДОНАТЫ (за вчера)</b>
+    <b>🖱️ ВОВЛЕЧЕНИЕ В ДОНАТЫ ({day_label})</b>
     • Предложений доната: {metrics.get('donation_proposals_yesterday', 0)}
     • Показов кнопок: {metrics.get('donation_shows_yesterday', 0)}
     • Всего призывов к донатам: {total_calls} ({calls_percent}% от сообщений)
