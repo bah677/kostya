@@ -73,12 +73,13 @@ _PRAYER_VOICE_CAPTION = (
     "так молитва звучит спокойнее и глубже."
 )
 
-_PRAYER_DONATION_FOOTER_HTML = (
-    "Генерация голоса требует много ресурсов и стоит довольно дорого, "
-    "поэтому каждое ваше пожертвование помогает нам сохранять и развивать "
-    "эту функцию.\n\n"
-    "<blockquote>Носите бремена друг друга, и таким образом исполните закон Христов.</blockquote>\n"
-    "<i>Гал. 6:2</i>"
+_PRAYER_DONATION_FOOTER = (
+    "Друзья, голосовая молитва требует времени и ресурсов, но мы с радостью "
+    "вкладываем их в эту функцию, потому что знаем, как она важна для вас. "
+    "Если вы хотите, чтобы она оставалась доступной, поддержите нас "
+    "пожертвованием — любая сумма станет вкладом в общее дело любви.\n\n"
+    "«Носите бремена друг друга, и таким образом исполните закон Христов» "
+    "(Гал. 6:2)"
 )
 
 
@@ -970,27 +971,15 @@ class PersonalPrayerFeature(BaseFeature):
                 logger.error("[%s] prayer text chunks failed uid=%s: %s", self.name, uid, e2)
 
         try:
-            await message.answer(
-                _PRAYER_DONATION_FOOTER_HTML,
-                parse_mode=ParseMode.HTML,
-                reply_markup=kb,
-            )
+            await message.answer(_PRAYER_DONATION_FOOTER, reply_markup=kb)
             logger.info("[%s] donation footer sent uid=%s", self.name, uid)
-        except TelegramBadRequest as e:
-            logger.warning(
-                "[%s] donation HTML failed uid=%s: %s — plain fallback",
+        except Exception as e:
+            logger.error(
+                "[%s] donation footer failed uid=%s: %s",
                 self.name,
                 uid,
                 e,
             )
-            plain = (
-                "Генерация голоса требует много ресурсов и стоит довольно дорого, "
-                "поэтому каждое ваше пожертвование помогает нам сохранять и развивать "
-                "эту функцию.\n\n"
-                "«Носите бремена друг друга, и таким образом исполните закон Христов.»\n"
-                "Гал. 6:2"
-            )
-            await message.answer(plain, reply_markup=kb)
 
     def _prayer_support_kb(self) -> InlineKeyboardMarkup:
         return InlineKeyboardMarkup(

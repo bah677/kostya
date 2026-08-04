@@ -131,14 +131,15 @@ echo "    $CODE_ARCHIVE"
 # ---------- 3. pg_dump ----------
 echo "==> pg_dump $DB_NAME (custom format)"
 sudo mkdir -p "$DB_DUMPS"
-# postgres должен иметь право записи (иначе Permission denied на --file)
-sudo chown postgres:postgres "$DB_DUMPS"
+# Каталог и файл дампа — appuser, чтобы retention (без passwordless sudo -u postgres) мог чистить.
+sudo chown "$APP_USER:$APP_USER" "$DB_DUMPS"
 sudo chmod 755 "$DB_DUMPS"
+# stdout → файл создаёт текущий пользователь (appuser), не postgres.
 sudo -u postgres pg_dump \
   --format=custom \
   --no-owner \
-  --file="$DB_ARCHIVE" \
-  "$DB_NAME"
+  "$DB_NAME" > "$DB_ARCHIVE"
+chmod 644 "$DB_ARCHIVE"
 echo "    $DB_ARCHIVE"
 
 # ---------- 3.0 retention: бэкапы 7д, data 7д, log/arc 30д ----------

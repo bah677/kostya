@@ -15,6 +15,9 @@
 #   DATA_DAYS=7     — файлы в */data/ (кроме chroma*)
 #   LOG_ARC_DAYS=30 — архивы логов (log/arc и ротированные *.log.*)
 #
+# Owner: свои файлы удаляет RUN_USER; дампы postgres — через sudo -u postgres
+# (иначе find -delete даёт Permission denied).
+#
 set -euo pipefail
 
 MODE="${1:-status}"
@@ -40,8 +43,47 @@ CLUB_PROD="${CLUB_PROD:-/home/appuser/club}"
 CLUB_DEV="${CLUB_DEV:-/home/appuser/dev/kostya/club}"
 AVATAR_ROOT="${AVATAR_ROOT:-/home/appuser/dev/kostya/avatar_kostya}"
 
+# Кто запускает retention (обычно appuser).
+RUN_USER="${DEPLOY_RUN_USER:-${SUDO_USER:-$(id -un)}}"
+
 log() { printf '%s\n' "$*"; }
 hr() { df -h / | tail -1; }
+
+_can_sudo_postgres() {
+  command -v sudo >/dev/null 2>&1 || return 1
+  getent passwd postgres >/dev/null 2>&1 || return 1
+  sudo -n -u postgres true 2>/dev/null
+}
+
+# Удаление файлов старше N дней: свои — напрямую; postgres — через sudo -u postgres.
+_delete_old_files() {
+  local dir="$1" days="$2"
+  shift 2 || true
+  local -a find_args=("$@")
+
+  if ((${#find_args[@]})); then
+    find "$dir" -type f "${find_args[@]}" -user "${RUN_USER}" -mtime +"$days" -delete 2>/dev/null || true
+    if _can_sudo_postgres; then
+      sudo -n -u postgres find "$dir" -type f "${find_args[@]}" -user postgres -mtime +"$days" -delete 2>/dev/null || true
+    fi
+  else
+    find "$dir" -type f -user "${RUN_USER}" -mtime +"$days" -delete 2>/dev/null || true
+    if _can_sudo_postgres; then
+      sudo -n -u postgres find "$dir" -type f -user postgres -mtime +"$days" -delete 2>/dev/null || true
+    fi
+  fi
+
+  # Чужие файлы без sudo — предупреждение, без спама Permission denied.
+  local left=0
+  if ((${#find_args[@]})); then
+    left=$(find "$dir" -type f "${find_args[@]}" ! -user "${RUN_USER}" -mtime +"$days" 2>/dev/null | wc -l)
+  else
+    left=$(find "$dir" -type f ! -user "${RUN_USER}" -mtime +"$days" 2>/dev/null | wc -l)
+  fi
+  if (( left > 0 )) && ! _can_sudo_postgres; then
+    log "  WARN: ${left} файл(ов) в ${dir} не удалены (чужой owner, нет passwordless sudo -u postgres)"
+  fi
+}
 
 prune_files_mtime() {
   local dir="$1" days="$2" label="$3"
@@ -62,9 +104,9 @@ prune_files_mtime() {
   log "  $label: >${days}d → $cnt ($sz) in $dir"
   if (( APPLY )) && (( cnt > 0 )); then
     if ((${#find_args[@]})); then
-      find "$dir" -type f "${find_args[@]}" -mtime +"$days" -delete
+      _delete_old_files "$dir" "$days" "${find_args[@]}"
     else
-      find "$dir" -type f -mtime +"$days" -delete
+      _delete_old_files "$dir" "$days"
     fi
     find "$dir" -type d -empty -delete 2>/dev/null || true
   fi
@@ -85,7 +127,8 @@ prune_data_tree() {
   if (( APPLY )) && (( cnt > 0 )); then
     find "$dir" -type f \
       ! -path '*/chroma_data/*' ! -path '*/chroma/*' ! -path '*/.chromadb/*' \
-      -mtime +"$DATA_DAYS" -delete
+      -user "${RUN_USER}" \
+      -mtime +"$DATA_DAYS" -delete 2>/dev/null || true
     find "$dir" -type d -empty \
       ! -path '*/chroma_data*' ! -path '*/chroma*' \
       -delete 2>/dev/null || true
@@ -121,7 +164,8 @@ prune_project_logs() {
       \( -name '*.gz' -o -name '*-*.log' -o -name '*_*.log' -o -name '*.log.[0-9]*' \) \
       ! -name 'bot.log' ! -name 'bot-errors.log' ! -name 'err.log' \
       ! -name 'biblia_bot.log' ! -name 'biblia_bot_errors.log' \
-      -mtime +"$LOG_ARC_DAYS" -delete
+      -user "${RUN_USER}" \
+      -mtime +"$LOG_ARC_DAYS" -delete 2>/dev/null || true
   fi
 }
 
@@ -145,7 +189,7 @@ cmd_status() {
 }
 
 cmd_backups() {
-  log "==> backups retention >${BACKUP_DAYS}d (apply=$APPLY)"
+  log "==> backups retention >${BACKUP_DAYS}d as ${RUN_USER} (apply=$APPLY)"
   mkdir -p "$BACKUPS_ROOT/biblia/db" "$BACKUPS_ROOT/biblia/code" \
            "$BACKUPS_ROOT/club/db" "$BACKUPS_ROOT/club/code" 2>/dev/null || true
 

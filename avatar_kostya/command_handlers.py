@@ -84,6 +84,7 @@ _HELP_TEXT = (
     "<b>Для администраторов проекта</b>\n"
     "<code>/admin_add</code> &lt;id&gt; — добавить админа бота\n"
     "<code>/admin_block</code> &lt;id&gt; — снять админа\n"
+    "<code>/adm</code>, <code>/admin</code> — админ-панель по разделам\n"
     "<code>/rag_topics</code> — список топиков RAG-группы\n"
     "<code>/rag_clear</code> — полная очистка Chroma (материалы + золотой фонд)\n"
     "<code>/rag_backfill</code> — догрузка старых материалов "
