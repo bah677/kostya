@@ -72,19 +72,24 @@ def audio_bytes_to_ogg_opus(
             str(in_path),
             "-vn",
         ]
-        # atempo≈1.0 — только конвертация контейнера/кодека, без замедления.
-        if abs(tempo - 1.0) >= 0.001:
-            cmd.extend(["-filter:a", f"atempo={tempo:.4f}"])
+        # atempo в -af вместе с mono/48k (см. ниже).
         cmd.extend(
             [
+                "-af",
+                f"aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=mono"
+                + (f",atempo={tempo:.4f}" if abs(tempo - 1.0) >= 0.001 else ""),
                 "-c:a",
                 "libopus",
                 "-b:a",
-                "96k",
+                "64k",
                 "-vbr",
                 "on",
                 "-application",
-                "audio",
+                "voip",
+                "-ar",
+                "48000",
+                "-ac",
+                "1",
                 str(ogg_path),
             ]
         )

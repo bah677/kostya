@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 _AUDIO_EXTS = {".mp3", ".m4a", ".ogg", ".opus", ".wav", ".flac", ".webm"}
 _DEFAULT_VOLUME = 0.14
-_DEFAULT_BITRATE = "128k"
+_DEFAULT_BITRATE = "64k"
 # Не начинать слишком близко к концу трека (запас под длинную молитву).
 _TAIL_RESERVE_SEC = 60.0
 _MIN_TRACK_FOR_RANDOM_SEC = 90.0
@@ -131,6 +131,7 @@ def mix_voice_with_bg_music(
         voice_path.write_bytes(voice_audio)
 
         # Голос (опц. atempo) + тихий фон; amix по длине голоса; normalize=0.
+        # application=voip — иначе TG шлёт «voice» с пустой волной без scrub.
         voice_chain = f"atempo={tempo:.4f}," if abs(tempo - 1.0) >= 0.001 else ""
         filter_complex = (
             f"[0:a]{voice_chain}aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=mono[v];"
@@ -157,9 +158,11 @@ def mix_voice_with_bg_music(
             "-vbr",
             "on",
             "-application",
-            "audio",
+            "voip",
             "-ar",
             "48000",
+            "-ac",
+            "1",
             str(out_path),
         ]
         try:

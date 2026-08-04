@@ -540,7 +540,7 @@ class PersonalPrayerFeature(BaseFeature):
                         raw_mp3,
                         atempo=tempo,
                         voice_suffix=".mp3",
-                        bitrate="160k",
+                        bitrate="64k",
                     )
                     if mixed:
                         logger.info(
