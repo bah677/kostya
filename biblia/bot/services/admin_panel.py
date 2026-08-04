@@ -23,10 +23,12 @@ CB_GROUP_PREFIX = f"{CB_PREFIX}:g:"
 CB_QUICK_PREFIX = f"{CB_PREFIX}:q:"
 CB_QUICK_MAIL3 = f"{CB_QUICK_PREFIX}mail3"
 CB_QUICK_PRAYER = f"{CB_QUICK_PREFIX}prayer"
+CB_QUICK_LIVE = f"{CB_QUICK_PREFIX}live"
 
 QUICK_REPORT_KEYS = {
     "mail3": CB_QUICK_MAIL3,
     "prayer": CB_QUICK_PRAYER,
+    "live": CB_QUICK_LIVE,
 }
 
 
@@ -62,6 +64,12 @@ def _format_entries(entries: List[AdminEntry]) -> str:
 
 def _quick_report_rows() -> List[List[InlineKeyboardButton]]:
     return [
+        [
+            InlineKeyboardButton(
+                text="🚦 Статус деплоя",
+                callback_data=CB_QUICK_LIVE,
+            )
+        ],
         [
             InlineKeyboardButton(
                 text="📨 Последние 3 рассылки",

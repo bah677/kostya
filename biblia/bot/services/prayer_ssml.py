@@ -189,12 +189,17 @@ def prepare_prayer_for_engine(text: str, *, engine: str) -> tuple[str, str]:
     Returns:
         (body, mode) где mode in {"ssml", "plain"}.
     """
+    eng = (engine or "").strip().lower()
+    # Prod-путь: только ElevenLabs. Паузы — в format_prayer_for_tts (абзацы/тире),
+    # без лишних «…» из SSML-plain (flash_v2_5 SSML не использует).
+    if eng in {"elevenlabs", "elabs", "11labs"}:
+        return format_prayer_for_tts(text), "plain"
+
     if not prayer_ssml_enabled():
         body = format_prayer_for_tts(text)
         return body, "plain"
 
     markup = build_prayer_speech_markup(text)
-    eng = (engine or "").strip().lower()
     if eng in {"yandex", "speechkit", "yandex_speechkit", "salute", "salutespeech", "sber"}:
         return markup.ssml, "ssml"
     return markup.plain, "plain"

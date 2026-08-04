@@ -14,11 +14,13 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_PRAYER_TTS_INSTRUCT = (
     "Warm natural prayerful speech, gentle rhythm, slight emotional variation, "
-    "not monotone and not robotic. Soft unhurried pace. "
+    "not monotone and not robotic. Clear diction, not dragged. "
+    "Honor paragraph breaks as calm breath pauses; brief pause on em dashes. "
     "The final word амИнь: stress on capital И (a-MÍN), clear and solemn."
 )
 
-DEFAULT_PRAYER_TTS_ATEMPO = 0.92
+# Prod ElevenLabs: было 0.8, +0.05 к скорости произношения → 0.85.
+DEFAULT_PRAYER_TTS_ATEMPO = 0.85
 
 # Bot API не генерирует waveform для voice > 1 МБ (tdlib/telegram-bot-api#354).
 TG_VOICE_WAVEFORM_MAX_BYTES = 1024 * 1024

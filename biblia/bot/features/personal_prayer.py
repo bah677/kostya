@@ -45,10 +45,12 @@ from bot.utils.chat_actions import record_voice_chat_action
 from config import config
 from openai_client.agents_client import AgentsClient
 from openai_client.prayer_prompt import (
+    PRAYER_COMPOSE_MAX_ATTEMPTS,
     PRAYER_INTAKE_SYSTEM_PROMPT,
     pick_prayer_compose_variant,
     prayer_compose_max_tokens,
     prayer_compose_request_kind,
+    prayer_text_looks_complete,
     resolve_prayer_compose_system_prompt,
 )
 
@@ -1027,17 +1029,70 @@ class PersonalPrayerFeature(BaseFeature):
             len(style_examples or ""),
             max_tokens,
         )
-        raw = await self.agents_client.complete(
-            system_prompt=system_prompt,
-            user_content=user_content,
-            user_id=user_id,
-            request_kind=request_kind,
-            temperature=0.55,
-            max_tokens=max_tokens,
+        # DeepSeek V4: thinking+content делят max_tokens. При обрыве (нет амИнь /
+        # finish=length) — retry с ужатым thinking, не больше 3 попыток.
+        retry_nudge = (
+            "\n\nВАЖНО: предыдущий ответ оборвался на середине. "
+            "Напиши молитву ПОЛНОСТЬЮ от начала до финала ровно строкой "
+            "«Во имя Иисуса Христа, амИнь». Без длинных рассуждений — сразу текст молитвы."
         )
-        if not raw:
-            return None
-        return _strip_prayer_text(raw)
+        last_text: Optional[str] = None
+        for attempt in range(1, PRAYER_COMPOSE_MAX_ATTEMPTS + 1):
+            if attempt >= PRAYER_COMPOSE_MAX_ATTEMPTS:
+                thinking = "disabled"
+                effort = None
+            else:
+                thinking = "enabled"
+                effort = "low"
+            prompt_user = user_content if attempt == 1 else (user_content + retry_nudge)
+            result = await self.agents_client.complete_ex(
+                system_prompt=system_prompt,
+                user_content=prompt_user,
+                user_id=user_id,
+                request_kind=request_kind,
+                temperature=0.55,
+                max_tokens=max_tokens,
+                thinking=thinking,
+                reasoning_effort=effort,
+            )
+            text = _strip_prayer_text(result.text or "")
+            if text:
+                last_text = text
+            truncated = (result.finish_reason or "").lower() == "length"
+            looks_ok = bool(text) and prayer_text_looks_complete(text) and not truncated
+            if looks_ok:
+                if attempt > 1:
+                    logger.info(
+                        "[%s] compose ok after retry uid=%s attempt=%s chars=%s",
+                        self.name,
+                        user_id,
+                        attempt,
+                        len(text),
+                    )
+                return text
+            logger.warning(
+                "[%s] compose incomplete uid=%s attempt=%s/%s finish=%s "
+                "chars=%s reasoning_tokens=%s completion_tokens=%s tail=%r",
+                self.name,
+                user_id,
+                attempt,
+                PRAYER_COMPOSE_MAX_ATTEMPTS,
+                result.finish_reason,
+                len(text or ""),
+                result.reasoning_tokens,
+                result.completion_tokens,
+                (text or "")[-80:],
+            )
+            if attempt < PRAYER_COMPOSE_MAX_ATTEMPTS:
+                await asyncio.sleep(0.4 * attempt)
+        logger.error(
+            "[%s] compose still incomplete after %s attempts uid=%s chars=%s",
+            self.name,
+            PRAYER_COMPOSE_MAX_ATTEMPTS,
+            user_id,
+            len(last_text or ""),
+        )
+        return last_text
 
     async def on_prayer_stress_open(
         self, callback: CallbackQuery, state: FSMContext

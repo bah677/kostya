@@ -152,26 +152,106 @@ class VoiceboxPrayerTTS:
             return r.content
 
 
+# Паузы для ElevenLabs (plain): замедляем тишиной между фразами, не растягиванием слов.
+_LONG_SENT_WORDS = 20
+_PAIR_MAX_WORDS = 16
+_BREATH_GAP_RE = re.compile(
+    r"(?i)(?:,\s+|\s+(?:чтобы|ибо|потому что|когда|если)\s+)"
+)
+
+
+def _word_count(s: str) -> int:
+    return len([w for w in (s or "").split() if w])
+
+
+def _insert_breath_in_long_sentence(sent: str) -> str:
+    """В длинной фразе — мягкий выдох через тире (ElevenLabs обычно чуть тормозит на —)."""
+    s = (sent or "").strip()
+    if _word_count(s) < _LONG_SENT_WORDS:
+        return s
+    if " — " in s or " – " in s:
+        return s
+    mid = len(s) // 2
+    best: int | None = None
+    best_dist = 10**9
+    for m in _BREATH_GAP_RE.finditer(s):
+        # не режем слишком близко к краям
+        if m.start() < 12 or m.end() > len(s) - 12:
+            continue
+        dist = abs(m.start() - mid)
+        if dist < best_dist:
+            best_dist = dist
+            best = m.start()
+    if best is None:
+        return s
+    left = s[:best].rstrip(" ,")
+    right = s[best:].lstrip(" ,")
+    if not left or not right:
+        return s
+    return f"{left} — {right}"
+
+
+def _pack_prayer_paragraphs(sentences: list[str]) -> list[str]:
+    """
+    Умная группировка для озвучки:
+    - короткие фразы можно склеить по 2 в абзац (лёгкая связка);
+    - длинные — отдельно (пауза \\n\\n перед/после);
+    - внутри длинных — дыхание через —.
+    """
+    paras: list[str] = []
+    buf: list[str] = []
+    buf_words = 0
+
+    def flush() -> None:
+        nonlocal buf, buf_words
+        if not buf:
+            return
+        paras.append(" ".join(buf).strip())
+        buf = []
+        buf_words = 0
+
+    for raw in sentences:
+        s = _insert_breath_in_long_sentence(raw.strip())
+        if not s:
+            continue
+        w = _word_count(s)
+        # длинная фраза всегда своим абзацем
+        if w >= _LONG_SENT_WORDS:
+            flush()
+            paras.append(s)
+            continue
+        if buf and (buf_words + w > _PAIR_MAX_WORDS or len(buf) >= 2):
+            flush()
+        buf.append(s)
+        buf_words += w
+        if len(buf) >= 2 or buf_words >= _PAIR_MAX_WORDS:
+            flush()
+    flush()
+    return paras
+
+
 def format_prayer_for_tts(text: str) -> str:
-    """Нормализовать текст: мягкие паузы (абзацы по 2 предложения) + амИнь."""
+    """Нормализовать текст под ElevenLabs: смысловые паузы (абзацы/тире) + амИнь."""
     t = (text or "").strip()
     t = re.sub(r"^```(?:\w+)?\s*", "", t)
     t = re.sub(r"\s*```$", "", t)
     t = t.strip().strip('"').strip("«»")
     t = re.sub(r"\+(?=[аАеЕёЁиИоОуУыЫэЭюЮяЯ])", "", t)
     t = re.sub(r"[\u0300\u0301\u0341]", "", t)
+    # убрать наши прошлые маркеры пауз, чтобы повторный format был идемпотентным
+    t = t.replace("…", " ")
+    t = re.sub(r"[ \t]+", " ", t)
+    t = re.sub(r" *\n *", "\n", t)
 
-    # Собрать предложения из абзацев / одной строки.
     if "\n\n" in t:
         raw_parts = [p.strip() for p in re.split(r"\n\s*\n", t) if p.strip()]
     else:
-        flat = re.sub(r"[ \t]+", " ", t)
-        flat = re.sub(r"\n+", " ", flat).strip()
+        flat = re.sub(r"\n+", " ", t).strip()
         raw_parts = [flat] if flat else []
 
     sentences: list[str] = []
     for part in raw_parts:
-        bits = re.split(r"(?<=[.!?…])\s+", part)
+        bits = re.split(r"(?<=[.!?])\s+", part)
         sentences.extend(b.strip() for b in bits if b.strip())
 
     amen = None
@@ -179,14 +259,10 @@ def format_prayer_for_tts(text: str) -> str:
         amen = ensure_amen_stress(sentences[-1])
         sentences = sentences[:-1]
 
-    # По 2 предложения в абзаце — естественнее, чем пауза после каждого.
-    paras: list[str] = []
-    for i in range(0, len(sentences), 2):
-        chunk = " ".join(sentences[i : i + 2]).strip()
-        if chunk:
-            paras.append(chunk)
+    paras = _pack_prayer_paragraphs(sentences)
     out = "\n\n".join(paras)
     if amen:
+        # отдельный абзац перед амИнь — торжественная пауза
         out = f"{out}\n\n{amen}".strip() if out else amen
     return ensure_amen_stress(out) if out else ""
 

@@ -165,3 +165,17 @@ def prayer_compose_max_tokens(variant: PrayerComposeVariant) -> int:
     if variant == "B":
         return max(800, int(getattr(config, "PRAYER_COMPOSE_MAX_TOKENS_B", 8192) or 8192))
     return max(400, int(getattr(config, "PRAYER_COMPOSE_MAX_TOKENS_A", 4096) or 4096))
+
+
+# Сколько раз перегенерировать молитву при обрыве (finish=length / нет «амИнь»).
+PRAYER_COMPOSE_MAX_ATTEMPTS = 3
+
+
+def prayer_text_looks_complete(text: str) -> bool:
+    """Эвристика: молитва доведена до финала (амИнь в хвосте)."""
+    t = (text or "").strip()
+    if len(t) < 120:
+        return False
+    # амИнь / аминь / Аминь; нормализуем і/i → и
+    tail = t[-200:].casefold().replace("і", "и").replace("i", "и")
+    return "аминь" in tail

@@ -11,7 +11,8 @@ import logging
 import os
 import re
 import uuid
-from typing import Dict, List, Optional
+from dataclasses import dataclass
+from typing import Dict, List, Literal, Optional
 
 from openai import AsyncOpenAI
 
@@ -20,6 +21,16 @@ from bot.utils.telegram_html import strip_llm_code_fence
 from storage.db.llm_token_normalize import extract_token_counts_and_extras
 
 logger = logging.getLogger(__name__)
+
+ThinkingMode = Literal["enabled", "disabled"]
+
+
+@dataclass(frozen=True)
+class ChatCompleteResult:
+    text: Optional[str]
+    finish_reason: Optional[str] = None
+    completion_tokens: Optional[int] = None
+    reasoning_tokens: Optional[int] = None
 
 # Таймауты DeepSeek: HTTP-клиент не должен быть короче asyncio.wait_for на запрос.
 _DEEPSEEK_HTTP_TIMEOUT_SEC = 150.0
@@ -364,28 +375,63 @@ class AgentsClient:
         request_kind: str = "chat_completion",
         temperature: float = 0.6,
         max_tokens: int = 2048,
+        thinking: Optional[ThinkingMode] = None,
+        reasoning_effort: Optional[str] = None,
     ) -> Optional[str]:
         """Один изолированный запрос к DeepSeek без истории из БД."""
+        result = await self.complete_ex(
+            system_prompt=system_prompt,
+            user_content=user_content,
+            user_id=user_id,
+            request_kind=request_kind,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            thinking=thinking,
+            reasoning_effort=reasoning_effort,
+        )
+        return result.text if result else None
+
+    async def complete_ex(
+        self,
+        *,
+        system_prompt: str,
+        user_content: str,
+        user_id: int,
+        request_kind: str = "chat_completion",
+        temperature: float = 0.6,
+        max_tokens: int = 2048,
+        thinking: Optional[ThinkingMode] = None,
+        reasoning_effort: Optional[str] = None,
+    ) -> ChatCompleteResult:
+        """Как complete, но с finish_reason / token counts (для retry обрыва молитвы)."""
+        empty = ChatCompleteResult(text=None)
         try:
             logger.info(
-                "DeepSeek complete start kind=%s user=%s max_tokens=%s",
+                "DeepSeek complete start kind=%s user=%s max_tokens=%s thinking=%s effort=%s",
                 request_kind,
                 user_id,
                 max_tokens,
+                thinking,
+                reasoning_effort,
             )
             messages = [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_content},
             ]
+            create_kwargs = {
+                "model": self.CHAT_MODEL,
+                "messages": messages,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+            }
+            if reasoning_effort:
+                create_kwargs["reasoning_effort"] = reasoning_effort
+            if thinking:
+                create_kwargs["extra_body"] = {"thinking": {"type": thinking}}
 
             async def _once():
                 return await asyncio.wait_for(
-                    self.client.chat.completions.create(
-                        model=self.CHAT_MODEL,
-                        messages=messages,
-                        temperature=temperature,
-                        max_tokens=max_tokens,
-                    ),
+                    self.client.chat.completions.create(**create_kwargs),
                     timeout=_DEEPSEEK_CHAT_WAIT_SEC,
                 )
 
@@ -396,13 +442,28 @@ class AgentsClient:
             request_id = str(uuid.uuid4())
             choice = response.choices[0] if response.choices else None
             reply_text = _message_text(choice.message if choice else None)
+            finish_reason = getattr(choice, "finish_reason", None) if choice else None
+            completion_tokens = getattr(usage, "completion_tokens", None) if usage else None
+            reasoning_tokens = None
+            if usage is not None:
+                details = getattr(usage, "completion_tokens_details", None)
+                if details is not None:
+                    reasoning_tokens = getattr(details, "reasoning_tokens", None)
+                if reasoning_tokens is None:
+                    # OpenAI SDK иногда кладёт в model_extra / dict
+                    raw = getattr(usage, "model_extra", None) or {}
+                    if isinstance(raw, dict):
+                        ctd = raw.get("completion_tokens_details") or {}
+                        if isinstance(ctd, dict):
+                            reasoning_tokens = ctd.get("reasoning_tokens")
             if not reply_text:
                 logger.warning(
-                    "DeepSeek complete empty kind=%s user=%s finish=%s completion_tokens=%s",
+                    "DeepSeek complete empty kind=%s user=%s finish=%s completion_tokens=%s reasoning=%s",
                     request_kind,
                     user_id,
-                    getattr(choice, "finish_reason", None),
-                    getattr(usage, "completion_tokens", None),
+                    finish_reason,
+                    completion_tokens,
+                    reasoning_tokens,
                 )
 
             await self.user_storage.log_llm_completion_usage(
@@ -413,16 +474,26 @@ class AgentsClient:
                 request_kind=request_kind,
                 request_id=request_id,
             )
+            text = (reply_text or "").strip() or None
             logger.info(
-                "DeepSeek complete done kind=%s user=%s reply_chars=%s",
+                "DeepSeek complete done kind=%s user=%s reply_chars=%s finish=%s "
+                "completion_tokens=%s reasoning_tokens=%s",
                 request_kind,
                 user_id,
-                len(reply_text or ""),
+                len(text or ""),
+                finish_reason,
+                completion_tokens,
+                reasoning_tokens,
             )
-            return (reply_text or "").strip() or None
+            return ChatCompleteResult(
+                text=text,
+                finish_reason=str(finish_reason) if finish_reason else None,
+                completion_tokens=int(completion_tokens) if completion_tokens is not None else None,
+                reasoning_tokens=int(reasoning_tokens) if reasoning_tokens is not None else None,
+            )
         except Exception as e:
             logger.error("❌ DeepSeek complete (%s) user=%s: %s", request_kind, user_id, e)
-            return None
+            return empty
 
     async def complete_with_messages(
         self,

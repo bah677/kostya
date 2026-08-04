@@ -223,9 +223,9 @@ class AppConfig:
     )
     # Deprecated alias: если задан только он — подхватывается в PRAYER_TTS_INSTRUCT.
     VOICEBOX_INSTRUCT: str = ""
-    VOICEBOX_ATEMPO: float = 0.92
-    # Общий ffmpeg-atempo после синтеза (Voicebox / OpenAI / Yandex).
-    PRAYER_TTS_ATEMPO: float = 0.92
+    VOICEBOX_ATEMPO: float = 0.85
+    # Общий ffmpeg-atempo после синтеза (ElevenLabs и др.). Prod был 0.8 → 0.85.
+    PRAYER_TTS_ATEMPO: float = 0.85
     # SSML-паузы/просодия: Yandex — настоящий SSML; OpenAI/Voicebox — plain+instruct.
     PRAYER_TTS_SSML_ENABLED: bool = True
     PRAYER_TTS_SSML_RATE: str = "85%"

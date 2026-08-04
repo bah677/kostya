@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Any, Optional
 
 from aiogram import Dispatcher, F
 from aiogram.enums import ChatType, ParseMode
@@ -24,6 +25,7 @@ from bot.services.admin_quick_reports import (
     build_last_campaigns_report_html,
     build_prayer_usage_report_html,
 )
+from bot.services.bot_live_status import build_bot_live_status_html
 from bot.texts.admin_panel_catalog import HelpTier
 from bot.utils.admin_channel import resolved_admin_group_id
 
@@ -36,11 +38,17 @@ class AdminPanelFeature(BaseFeature):
     def __init__(self, user_storage) -> None:
         super().__init__()
         self.user_storage = user_storage
+        self._bot_app: Optional[Any] = None
+
+    def set_bot(self, bot_app) -> None:
+        self._bot_app = bot_app
 
     def register_handlers(self, dp: Dispatcher) -> None:
         private = F.chat.type == ChatType.PRIVATE
         dp.message.register(self._cmd_adm, private, Command("adm"))
         dp.message.register(self._cmd_adm, private, Command("admin"))
+        dp.message.register(self._cmd_status, private, Command("status"))
+        dp.message.register(self._cmd_status, private, Command("live"))
         dp.callback_query.register(
             self._cb_panel,
             F.data.startswith(f"{CB_PREFIX}:"),
@@ -50,7 +58,9 @@ class AdminPanelFeature(BaseFeature):
             admin_chat = F.chat.id == gid
             dp.message.register(self._cmd_adm, admin_chat, Command("adm"))
             dp.message.register(self._cmd_adm, admin_chat, Command("admin"))
-        logger.info("[%s] /adm зарегистрирован", self.name)
+            dp.message.register(self._cmd_status, admin_chat, Command("status"))
+            dp.message.register(self._cmd_status, admin_chat, Command("live"))
+        logger.info("[%s] /adm /status зарегистрированы", self.name)
 
     async def _resolve_tier(self, uid: int) -> HelpTier:
         if is_super_admin_user_id(uid):
@@ -66,10 +76,25 @@ class AdminPanelFeature(BaseFeature):
         text, kb = build_admin_panel_home(tier)
         await message.answer(text, parse_mode=ParseMode.HTML, reply_markup=kb)
 
+    async def _cmd_status(self, message: Message) -> None:
+        if message.from_user is None or message.from_user.is_bot:
+            return
+        if not await is_admin_or_super(self.user_storage, message.from_user.id):
+            return
+        text = await self._build_quick_report("live")
+        await message.answer(
+            text,
+            parse_mode=ParseMode.HTML,
+            reply_markup=build_quick_report_keyboard_for("live"),
+            disable_web_page_preview=True,
+        )
+
     async def _build_quick_report(self, key: str) -> str:
         pool = getattr(self.user_storage, "pool", None)
         if pool is None:
             return "❌ База данных недоступна."
+        if key == "live":
+            return await build_bot_live_status_html(pool, self._bot_app)
         if key == "mail3":
             return await build_last_campaigns_report_html(pool)
         if key == "prayer":
