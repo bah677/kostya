@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import math
 import subprocess
 from pathlib import Path
 from typing import List, Sequence
@@ -15,7 +14,6 @@ from telemost_audio.telegram_voice_opus import (
     TG_VOICE_WAVEFORM_MAX_BYTES,
     ffmpeg_bin,
     libopus_voice_args,
-    max_chunk_sec_for_waveform,
     ogg_path_duration_sec,
     opus_bitrate_for_tg_waveform,
     probe_media_duration_sec,
@@ -146,10 +144,11 @@ def _render_segment_sync(
     *,
     start_sec: float,
     duration_sec: float,
+    bitrate: str,
+    enforce_waveform_limit: bool = False,
 ) -> bool:
     if duration_sec < 1.0:
         return False
-    bitrate = opus_bitrate_for_tg_waveform(duration_sec)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     cmd = [
         ffmpeg_bin(),
@@ -170,16 +169,17 @@ def _render_segment_sync(
         )
         if proc.returncode != 0:
             logger.error(
-                "ffmpeg full voice part %s: %s",
+                "ffmpeg full voice %s: %s",
                 out_path.name,
                 (proc.stderr or "")[-800:],
             )
             return False
         if not (out_path.is_file() and out_path.stat().st_size > 5000):
             return False
-        _ensure_under_waveform_limit(out_path, duration_sec)
+        if enforce_waveform_limit:
+            _ensure_under_waveform_limit(out_path, duration_sec)
         logger.info(
-            "full voice part ok %s start=%.1f dur=%.1fs bitrate=%s bytes=%s",
+            "full voice ok %s start=%.1f dur=%.1fs bitrate=%s bytes=%s",
             out_path.name,
             start_sec,
             duration_sec,
@@ -188,8 +188,12 @@ def _render_segment_sync(
         )
         return True
     except Exception as e:
-        logger.exception("ffmpeg full voice part: %s", e)
+        logger.exception("ffmpeg full voice: %s", e)
         return False
+
+
+# Лимит Bot API на upload voice (~50 МиБ); волна для полной записи не цель.
+_TG_VOICE_UPLOAD_MAX_BYTES = 48 * 1024 * 1024
 
 
 def _render_full_voice_parts_sync(
@@ -199,43 +203,45 @@ def _render_full_voice_parts_sync(
     stem: str,
 ) -> List[Path]:
     """
-    Вся запись → один или несколько OGG ≤1 МиБ (волна + scrub в Bot API).
-    Длинные эфиры режутся на чанки ~8–10 мин при 16k.
+    Вся запись → один OGG Opus.
+    Не режем под волну (1 МиБ): приоритет — цельный эфир; duration для scrub.
+    Битрейт снижаем только если упираемся в лимит upload TG (~50 МиБ).
     """
     total = probe_media_duration_sec(audio_path) or 0.0
     if total <= 0:
         logger.error("full voice: unknown duration %s", audio_path)
         return []
 
-    # При floor 12k в ~1 МиБ помещается ~10 мин; берём запас.
-    chunk_sec = max_chunk_sec_for_waveform(bitrate_kbps=14)
-    chunk_sec = max(180.0, min(chunk_sec, 600.0))
-
     out_dir.mkdir(parents=True, exist_ok=True)
-    parts: List[Path] = []
-    if total <= chunk_sec + 1.0:
-        out = out_dir / f"{stem}.ogg"
-        if _render_segment_sync(audio_path, out, start_sec=0.0, duration_sec=total):
-            parts.append(out)
-        return parts
-
-    n = int(math.ceil(total / chunk_sec))
-    logger.info(
-        "full voice split %s: total=%.0fs → %s parts (~%.0fs each)",
-        stem,
-        total,
-        n,
-        chunk_sec,
-    )
-    for i in range(n):
-        start = i * chunk_sec
-        dur = min(chunk_sec, total - start)
-        if dur < 5.0:
-            break
-        out = out_dir / f"{stem}_p{i + 1:02d}.ogg"
-        if _render_segment_sync(audio_path, out, start_sec=start, duration_sec=dur):
-            parts.append(out)
-    return parts
+    out = out_dir / f"{stem}.ogg"
+    for br in ("32k", "24k", "16k"):
+        if not _render_segment_sync(
+            audio_path,
+            out,
+            start_sec=0.0,
+            duration_sec=total,
+            bitrate=br,
+            enforce_waveform_limit=False,
+        ):
+            continue
+        size = out.stat().st_size
+        if size <= _TG_VOICE_UPLOAD_MAX_BYTES:
+            if size > TG_VOICE_WAVEFORM_MAX_BYTES:
+                logger.info(
+                    "full voice %s %s bytes >1MiB — без волны TG, файл цельный",
+                    out.name,
+                    size,
+                )
+            return [out]
+        logger.warning(
+            "full voice %s too large (%s) @%s — retry lower bitrate",
+            out.name,
+            size,
+            br,
+        )
+    if out.is_file() and out.stat().st_size > 5000:
+        return [out]
+    return []
 
 
 async def render_full_voice_ogg(
@@ -244,7 +250,6 @@ async def render_full_voice_ogg(
     work_dir: str | Path,
     stem: str = "full_voice",
 ) -> Path | None:
-    """Обратная совместимость: один файл, если уместился; иначе первый чанк."""
     parts = await render_full_voice_ogg_parts(
         audio_path, work_dir=work_dir, stem=stem
     )
