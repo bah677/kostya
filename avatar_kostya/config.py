@@ -303,10 +303,11 @@ class AppConfig:
     YT_PRAYER_WORK_DIR: str = "data/youtube_prayer"
     # Не повторять темы за последние N дней (used_trends.json + done.json).
     YT_PRAYER_TREND_HISTORY_DAYS: int = 14
-    YT_PRAYER_BROLL_CLIPS: int = 5
+    YT_PRAYER_BROLL_CLIPS: int = 12
     YT_PRAYER_SCENE_SEC: int = 10
+    YT_PRAYER_SCENE_POOL: int = 12
     YT_PRAYER_IMAGE_GEN: bool = True
-    YT_PRAYER_IMAGE_COUNT: int = 2
+    YT_PRAYER_IMAGE_COUNT: int = 3
     YT_PRAYER_SUBTITLE_OFFSET_SEC: float = -0.35
     # EN-пакет: 1×16:9 + 3 шортса, тренды USA, отдельный голос ElevenLabs.
     YT_PRAYER_EN_ENABLED: bool = True
@@ -844,14 +845,17 @@ def load_app_config() -> AppConfig:
             ),
         ),
         YT_PRAYER_BROLL_CLIPS=max(
-            2, min(12, int(os.getenv("YT_PRAYER_BROLL_CLIPS", "5") or 5))
+            4, min(16, int(os.getenv("YT_PRAYER_BROLL_CLIPS", "12") or 12))
         ),
         YT_PRAYER_SCENE_SEC=max(
             5, min(20, int(os.getenv("YT_PRAYER_SCENE_SEC", "10") or 10))
         ),
+        YT_PRAYER_SCENE_POOL=max(
+            8, min(16, int(os.getenv("YT_PRAYER_SCENE_POOL", "12") or 12))
+        ),
         YT_PRAYER_IMAGE_GEN=_env_flag_true("YT_PRAYER_IMAGE_GEN", default=True),
         YT_PRAYER_IMAGE_COUNT=max(
-            0, min(6, int(os.getenv("YT_PRAYER_IMAGE_COUNT", "2") or 2))
+            0, min(6, int(os.getenv("YT_PRAYER_IMAGE_COUNT", "3") or 3))
         ),
         YT_PRAYER_SUBTITLE_OFFSET_SEC=float(
             os.getenv("YT_PRAYER_SUBTITLE_OFFSET_SEC", "-0.35") or -0.35

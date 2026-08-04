@@ -1,10 +1,11 @@
-"""Сток B-roll: несколько клипов Pexels + опционально картинки OpenAI → монтаж."""
+"""Сток B-roll: пул 10–12 сцен (Pexels + картинки), крутим по кругу без цветного фона."""
 
 from __future__ import annotations
 
 import asyncio
 import base64
 import logging
+import math
 import os
 import random
 import shutil
@@ -43,16 +44,19 @@ def _ffmpeg() -> str:
     return shutil.which("ffmpeg") or "ffmpeg"
 
 
-def _probe_dur(path: Path) -> float:
-    from youtube_prayer.audio_pipeline import probe_duration_sec
-
-    return float(probe_duration_sec(path) or 0.0)
-
-
-def _normalize_clip(src: Path, dest: Path, *, seconds: float, width: int, height: int) -> bool:
+def _normalize_clip(
+    src: Path,
+    dest: Path,
+    *,
+    seconds: float,
+    width: int,
+    height: int,
+    start_sec: float = 0.0,
+) -> bool:
     """Привести клип к фиксированному кадру без растягивания (crop + setsar=1)."""
     ffmpeg = _ffmpeg()
     sec = max(2.0, float(seconds))
+    ss = max(0.0, float(start_sec))
     vf = (
         f"scale={width}:{height}:force_original_aspect_ratio=increase,"
         f"crop={width}:{height},"
@@ -61,6 +65,8 @@ def _normalize_clip(src: Path, dest: Path, *, seconds: float, width: int, height
     cmd = [
         ffmpeg,
         "-y",
+        "-ss",
+        f"{ss:.3f}",
         "-stream_loop",
         "-1",
         "-i",
@@ -88,7 +94,6 @@ def _image_ken_burns(img: Path, dest: Path, *, seconds: float, width: int, heigh
     ffmpeg = _ffmpeg()
     sec = max(3.0, float(seconds))
     frames = max(75, int(sec * 25))
-    # медленный zoom; scale/crop держат 16:9
     vf = (
         f"scale={width * 2}:{height * 2}:force_original_aspect_ratio=increase,"
         f"crop={width * 2}:{height * 2},"
@@ -129,7 +134,6 @@ def _concat_normalized(clips: Sequence[Path], dest: Path) -> bool:
     lst = dest.with_suffix(".txt")
     lines = []
     for c in clips:
-        # concat demuxer: escape single quotes
         p = c.resolve().as_posix().replace("'", "'\\''")
         lines.append(f"file '{p}'")
     lst.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -148,7 +152,6 @@ def _concat_normalized(clips: Sequence[Path], dest: Path) -> bool:
     ]
     proc = subprocess.run(cmd, capture_output=True, text=True, timeout=300, check=False)
     if proc.returncode != 0 or not dest.is_file():
-        # re-encode fallback
         cmd2 = [
             ffmpeg,
             "-y",
@@ -202,6 +205,7 @@ def _trim_or_loop_to_duration(src: Path, dest: Path, *, duration_sec: float) -> 
 
 
 def _lavfi_scene(dest: Path, *, seconds: float, width: int, height: int, color: str) -> bool:
+    """Только если совсем нет стока."""
     ffmpeg = _ffmpeg()
     sec = max(2.0, float(seconds))
     cmd = [
@@ -240,14 +244,19 @@ async def _download_pexels_many(
     dest_dir.mkdir(parents=True, exist_ok=True)
     timeout = httpx.Timeout(90.0, connect=15.0)
     headers = {"Authorization": key}
-    # несколько запросов с вариациями
     queries = [
         query or "calm nature",
         f"{query} sky" if query else "soft clouds sky",
         f"{query} ocean" if query else "calm ocean",
-        "peaceful forest light",
-        "candle warm light",
+        f"{query} forest" if query else "peaceful forest light",
+        "candle warm light prayer",
         "mountain sunrise fog",
+        "soft rain window cozy",
+        "golden hour field wind",
+        "church light stained glass soft",
+        "lake reflection dawn mist",
+        "desert sunset calm",
+        "snow forest quiet",
     ]
     out: List[Path] = []
     seen_ids: set[int] = set()
@@ -260,7 +269,7 @@ async def _download_pexels_many(
                     _PEXELS_SEARCH,
                     params={
                         "query": q,
-                        "per_page": 12,
+                        "per_page": 15,
                         "orientation": "landscape",
                         "size": "medium",
                     },
@@ -327,7 +336,6 @@ async def _openai_images(
     out: List[Path] = []
     for i in range(count):
         try:
-            # gpt-image-1 / dall-e-3
             kwargs = {
                 "model": model,
                 "prompt": base_prompt + f" Variation {i + 1}.",
@@ -355,7 +363,6 @@ async def _openai_images(
             logger.info("OpenAI image saved %s", path.name)
         except Exception as e:
             logger.warning("OpenAI image gen failed (%s): %s", model, e)
-            # fallback dall-e-3 once
             if model != "dall-e-3":
                 try:
                     resp = await client.images.generate(
@@ -375,6 +382,89 @@ async def _openai_images(
     return out
 
 
+async def _build_scene_pool(
+    *,
+    videos: Sequence[Path],
+    images: Sequence[Path],
+    pool_dir: Path,
+    pool_size: int,
+    scene_sec: float,
+    width: int,
+    height: int,
+) -> List[Path]:
+    """
+    Собирает 10–12 нормализованных сцен. Крутит видео/картинки по кругу
+    с разными offset'ами. Цветной lavfi — только если источников 0.
+    """
+    pool_dir.mkdir(parents=True, exist_ok=True)
+    pool: List[Path] = []
+    if not videos and not images:
+        colors = ["0x1a2744", "0x243b55", "0x2d4a6f", "0x1e3a2f"]
+        for i in range(min(4, pool_size)):
+            dest = pool_dir / f"scene_{i:02d}.mp4"
+            ok = await asyncio.to_thread(
+                _lavfi_scene,
+                dest,
+                seconds=scene_sec,
+                width=width,
+                height=height,
+                color=colors[i % len(colors)],
+            )
+            if ok:
+                pool.append(dest)
+        return pool
+
+    # чередование: video, video, image, video, ...
+    media_cycle: List[tuple[str, Path]] = []
+    for v in videos:
+        media_cycle.append(("video", v))
+    for im in images:
+        media_cycle.append(("image", im))
+    if not media_cycle:
+        return pool
+
+    for i in range(pool_size):
+        dest = pool_dir / f"scene_{i:02d}.mp4"
+        kind, src = media_cycle[i % len(media_cycle)]
+        ok = False
+        if kind == "image":
+            ok = await asyncio.to_thread(
+                _image_ken_burns,
+                src,
+                dest,
+                seconds=scene_sec,
+                width=width,
+                height=height,
+            )
+        else:
+            # разные точки входа, чтобы повтор клипа не выглядел копипастой
+            start = float((i * 7) % 40)
+            ok = await asyncio.to_thread(
+                _normalize_clip,
+                src,
+                dest,
+                seconds=scene_sec,
+                width=width,
+                height=height,
+                start_sec=start,
+            )
+            if not ok:
+                ok = await asyncio.to_thread(
+                    _normalize_clip,
+                    src,
+                    dest,
+                    seconds=scene_sec,
+                    width=width,
+                    height=height,
+                    start_sec=0.0,
+                )
+        if ok:
+            pool.append(dest)
+        else:
+            logger.warning("scene pool item failed i=%s src=%s", i, src.name)
+    return pool
+
+
 async def build_broll_montage(
     work_dir: Path,
     *,
@@ -384,80 +474,56 @@ async def build_broll_montage(
     height: int = _FULL_H,
 ) -> Path:
     """
-    Несколько сцен (Pexels + опц. OpenAI Ken Burns) → один ролик длиной duration_sec.
+    Пул 10–12 сцен → крутим по кругу на всю длину аудио.
+    Без добивки цветным фоном, если есть хоть один сток/картинка.
     """
     work_dir.mkdir(parents=True, exist_ok=True)
     scene_sec = float(_env_int("YT_PRAYER_SCENE_SEC", 10))
     scene_sec = max(5.0, min(20.0, scene_sec))
-    need_scenes = max(3, int(duration_sec / scene_sec) + 1)
-    pexels_n = _env_int("YT_PRAYER_BROLL_CLIPS", 5)
-    img_n = _env_int("YT_PRAYER_IMAGE_COUNT", 2)
+    pool_size = _env_int("YT_PRAYER_SCENE_POOL", 12)
+    pool_size = max(8, min(16, pool_size))
+    pexels_n = max(pool_size, _env_int("YT_PRAYER_BROLL_CLIPS", 12))
+    img_n = _env_int("YT_PRAYER_IMAGE_COUNT", 3)
 
     raw_dir = work_dir / "broll_raw"
-    norm_dir = work_dir / "broll_norm"
+    pool_dir = work_dir / "broll_pool"
     raw_dir.mkdir(exist_ok=True)
-    norm_dir.mkdir(exist_ok=True)
 
     videos = await _download_pexels_many(query, raw_dir, count=pexels_n)
     images = await _openai_images(query, raw_dir / "images", count=img_n)
+    logger.info(
+        "broll sources videos=%s images=%s pool_size=%s scene_sec=%s dur=%.1f",
+        len(videos),
+        len(images),
+        pool_size,
+        scene_sec,
+        duration_sec,
+    )
 
-    normalized: List[Path] = []
-    # чередуем video / image
-    v_i = 0
-    im_i = 0
-    colors = ["0x1a2744", "0x243b55", "0x2d4a6f", "0x1e3a2f", "0x3a2f1e"]
-    for si in range(need_scenes):
-        dest = norm_dir / f"scene_{si:02d}.mp4"
-        ok = False
-        # предпочитаем чередование
-        prefer_img = images and (si % 3 == 2)
-        if prefer_img and im_i < len(images):
-            ok = await asyncio.to_thread(
-                _image_ken_burns,
-                images[im_i],
-                dest,
-                seconds=scene_sec,
-                width=width,
-                height=height,
-            )
-            im_i += 1
-        if not ok and v_i < len(videos):
-            ok = await asyncio.to_thread(
-                _normalize_clip,
-                videos[v_i % len(videos)],
-                dest,
-                seconds=scene_sec,
-                width=width,
-                height=height,
-            )
-            v_i += 1
-        if not ok and im_i < len(images):
-            ok = await asyncio.to_thread(
-                _image_ken_burns,
-                images[im_i],
-                dest,
-                seconds=scene_sec,
-                width=width,
-                height=height,
-            )
-            im_i += 1
-        if not ok:
-            ok = await asyncio.to_thread(
-                _lavfi_scene,
-                dest,
-                seconds=scene_sec,
-                width=width,
-                height=height,
-                color=colors[si % len(colors)],
-            )
-        if ok:
-            normalized.append(dest)
+    pool = await _build_scene_pool(
+        videos=videos,
+        images=images,
+        pool_dir=pool_dir,
+        pool_size=pool_size,
+        scene_sec=scene_sec,
+        width=width,
+        height=height,
+    )
+    if not pool:
+        raise RuntimeError("не удалось собрать пул b-roll сцен")
 
-    if not normalized:
-        raise RuntimeError("не удалось собрать ни одной b-roll сцены")
+    need_scenes = max(1, int(math.ceil(float(duration_sec) / scene_sec)))
+    # крутим пул по кругу
+    timeline: List[Path] = [pool[i % len(pool)] for i in range(need_scenes)]
+    logger.info(
+        "broll timeline scenes=%s (pool=%s, loops≈%.1f)",
+        need_scenes,
+        len(pool),
+        need_scenes / max(1, len(pool)),
+    )
 
     concat_path = work_dir / "broll_concat.mp4"
-    ok = await asyncio.to_thread(_concat_normalized, normalized, concat_path)
+    ok = await asyncio.to_thread(_concat_normalized, timeline, concat_path)
     if not ok:
         raise RuntimeError("concat b-roll failed")
 
@@ -468,15 +534,15 @@ async def build_broll_montage(
     if not ok:
         raise RuntimeError("trim b-roll montage failed")
     logger.info(
-        "broll montage ok scenes=%s dur≈%.1f bytes=%s",
-        len(normalized),
+        "broll montage ok pool=%s timeline=%s dur≈%.1f bytes=%s",
+        len(pool),
+        need_scenes,
         duration_sec,
         final.stat().st_size,
     )
     return final
 
 
-# backward-compat
 async def obtain_broll(
     work_dir: Path,
     *,

@@ -15,6 +15,7 @@ from zoneinfo import ZoneInfo
 
 from youtube_prayer.audio_pipeline import synthesize_prayer_audio
 from youtube_prayer.compose import compose_prayer_for_topic, deepseek_complete
+from youtube_prayer.covers import generate_cover_pack
 from youtube_prayer.deliver import deliver_run_summary, deliver_topic_pack
 from youtube_prayer.render import render_all_shorts, render_horizontal
 from youtube_prayer.stock_broll import build_broll_montage
@@ -68,13 +69,16 @@ def _apply_broll_env() -> None:
         from config import config as _cfg
 
         os.environ.setdefault(
-            "YT_PRAYER_BROLL_CLIPS", str(getattr(_cfg, "YT_PRAYER_BROLL_CLIPS", 5))
+            "YT_PRAYER_BROLL_CLIPS", str(getattr(_cfg, "YT_PRAYER_BROLL_CLIPS", 12))
         )
         os.environ.setdefault(
             "YT_PRAYER_SCENE_SEC", str(getattr(_cfg, "YT_PRAYER_SCENE_SEC", 10))
         )
         os.environ.setdefault(
-            "YT_PRAYER_IMAGE_COUNT", str(getattr(_cfg, "YT_PRAYER_IMAGE_COUNT", 2))
+            "YT_PRAYER_SCENE_POOL", str(getattr(_cfg, "YT_PRAYER_SCENE_POOL", 12))
+        )
+        os.environ.setdefault(
+            "YT_PRAYER_IMAGE_COUNT", str(getattr(_cfg, "YT_PRAYER_IMAGE_COUNT", 3))
         )
         if getattr(_cfg, "YT_PRAYER_IMAGE_GEN", True):
             os.environ.setdefault("YT_PRAYER_IMAGE_GEN", "1")
@@ -149,10 +153,18 @@ async def _run_lang_pack(
             voice_id=voice_id,
             lang=lang,
         )
-        await notify(f"🖼 [{label} {i}/{len(topics)}] b-roll + рендер ({dur:.0f}с)…")
+        await notify(f"🖼 [{label} {i}/{len(topics)}] b-roll + обложки + рендер ({dur:.0f}с)…")
 
         broll = await build_broll_montage(
             item_dir, query=topic.broll_query, duration_sec=dur
+        )
+        covers = await generate_cover_pack(
+            item_dir,
+            trend=topic.trend,
+            brief=topic.brief,
+            lang=lang,
+            complete_fn=complete_fn,
+            broll_query=topic.broll_query,
         )
         horizontal = item_dir / "full_16x9.mp4"
         await asyncio.to_thread(
@@ -182,6 +194,7 @@ async def _run_lang_pack(
             shorts=shorts,
             ogg=ogg,
             lang=lang,
+            covers=covers,
         )
         theme_names.append(topic.trend)
         summary_lines.append(
