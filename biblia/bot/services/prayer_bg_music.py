@@ -10,11 +10,17 @@ import tempfile
 from pathlib import Path
 from typing import Optional, Sequence
 
+from bot.services.prayer_tts_style import (
+    TG_VOICE_WAVEFORM_MAX_BYTES,
+    libopus_voice_args,
+    opus_bitrate_for_tg_waveform,
+    probe_media_duration_sec,
+)
+
 logger = logging.getLogger(__name__)
 
 _AUDIO_EXTS = {".mp3", ".m4a", ".ogg", ".opus", ".wav", ".flac", ".webm"}
 _DEFAULT_VOLUME = 0.14
-_DEFAULT_BITRATE = "64k"
 # Не начинать слишком близко к концу трека (запас под длинную молитву).
 _TAIL_RESERVE_SEC = 60.0
 _MIN_TRACK_FOR_RANDOM_SEC = 90.0
@@ -52,37 +58,11 @@ def list_bg_tracks(music_dir: Optional[Path] = None) -> list[Path]:
     return files
 
 
-def _probe_duration_sec(path: Path) -> Optional[float]:
-    ffprobe = shutil.which("ffprobe") or "ffprobe"
-    try:
-        proc = subprocess.run(
-            [
-                ffprobe,
-                "-v",
-                "error",
-                "-show_entries",
-                "format=duration",
-                "-of",
-                "default=noprint_wrappers=1:nokey=1",
-                str(path),
-            ],
-            capture_output=True,
-            text=True,
-            timeout=30,
-            check=False,
-        )
-        if proc.returncode != 0:
-            return None
-        return float((proc.stdout or "").strip())
-    except Exception:
-        return None
-
-
 def _pick_track_and_start(
     tracks: Sequence[Path],
 ) -> tuple[Path, float]:
     track = random.choice(list(tracks))
-    duration = _probe_duration_sec(track) or 0.0
+    duration = probe_media_duration_sec(track) or 0.0
     if duration < _MIN_TRACK_FOR_RANDOM_SEC:
         return track, 0.0
     max_start = max(0.0, duration - _TAIL_RESERVE_SEC)
@@ -96,12 +76,13 @@ def mix_voice_with_bg_music(
     music_dir: Optional[Path] = None,
     volume: Optional[float] = None,
     atempo: float = 1.0,
-    bitrate: str = _DEFAULT_BITRATE,
+    bitrate: Optional[str] = None,
     voice_suffix: str = ".bin",
 ) -> Optional[bytes]:
     """
     Накладывает тихий фон под голос. Длина = длина голоса.
     Один проход ffmpeg (atempo + mix → libopus VBR), без двойного перекодирования.
+    Битрейт целится в <1 МБ — иначе Bot API отдаёт voice без волны/scrub.
     При ошибке/отсутствии треков возвращает None.
     """
     if not voice_audio:
@@ -130,8 +111,11 @@ def mix_voice_with_bg_music(
         out_path = root / "mixed.ogg"
         voice_path.write_bytes(voice_audio)
 
+        in_dur = probe_media_duration_sec(voice_path) or 0.0
+        out_dur = in_dur / tempo if tempo > 0 and in_dur > 0 else in_dur
+        mix_bitrate = bitrate or opus_bitrate_for_tg_waveform(out_dur)
+
         # Голос (опц. atempo) + тихий фон; amix по длине голоса; normalize=0.
-        # application=voip — иначе TG шлёт «voice» с пустой волной без scrub.
         voice_chain = f"atempo={tempo:.4f}," if abs(tempo - 1.0) >= 0.001 else ""
         filter_complex = (
             f"[0:a]{voice_chain}aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=mono[v];"
@@ -151,18 +135,7 @@ def mix_voice_with_bg_music(
             filter_complex,
             "-map",
             "[aout]",
-            "-c:a",
-            "libopus",
-            "-b:a",
-            bitrate,
-            "-vbr",
-            "on",
-            "-application",
-            "voip",
-            "-ar",
-            "48000",
-            "-ac",
-            "1",
+            *libopus_voice_args(bitrate=mix_bitrate),
             str(out_path),
         ]
         try:
@@ -180,12 +153,20 @@ def mix_voice_with_bg_music(
             if not out_path.is_file() or out_path.stat().st_size < 200:
                 return None
             mixed = out_path.read_bytes()
+            if len(mixed) > TG_VOICE_WAVEFORM_MAX_BYTES:
+                logger.warning(
+                    "prayer bg mix %s bytes >1MiB (bitrate=%s dur≈%.1fs) — TG waveform пустая",
+                    len(mixed),
+                    mix_bitrate,
+                    out_dur,
+                )
             logger.info(
-                "prayer bg mix ok track=%s start=%.1fs vol=%.3f atempo=%.2f in=%s out=%s",
+                "prayer bg mix ok track=%s start=%.1fs vol=%.3f atempo=%.2f bitrate=%s in=%s out=%s",
                 track.name,
                 start_sec,
                 vol,
                 tempo,
+                mix_bitrate,
                 len(voice_audio),
                 len(mixed),
             )

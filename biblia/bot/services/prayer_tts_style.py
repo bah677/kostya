@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import shutil
 import subprocess
 import tempfile
@@ -18,6 +19,9 @@ DEFAULT_PRAYER_TTS_INSTRUCT = (
 )
 
 DEFAULT_PRAYER_TTS_ATEMPO = 0.92
+
+# Bot API не генерирует waveform для voice > 1 МБ (tdlib/telegram-bot-api#354).
+TG_VOICE_WAVEFORM_MAX_BYTES = 1024 * 1024
 
 
 def resolve_prayer_tts_instruct() -> str:
@@ -45,6 +49,83 @@ def resolve_prayer_tts_atempo() -> float:
     return max(0.5, min(1.2, v))
 
 
+def probe_media_duration_sec(path: Path) -> Optional[float]:
+    ffprobe = shutil.which("ffprobe") or "ffprobe"
+    try:
+        proc = subprocess.run(
+            [
+                ffprobe,
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "default=noprint_wrappers=1:nokey=1",
+                str(path),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+        if proc.returncode != 0:
+            return None
+        return float((proc.stdout or "").strip())
+    except Exception:
+        return None
+
+
+def ogg_opus_duration_sec(ogg: bytes) -> Optional[int]:
+    """Длительность OGG для sendVoice(duration=…); без неё у TG часто duration=0 и нет scrub."""
+    if not ogg or len(ogg) < 200:
+        return None
+    with tempfile.TemporaryDirectory(prefix="ogg_dur_") as tmp:
+        path = Path(tmp) / "v.ogg"
+        path.write_bytes(ogg)
+        sec = probe_media_duration_sec(path)
+    if sec is None or sec <= 0:
+        return None
+    return max(1, int(math.ceil(sec)))
+
+
+def opus_bitrate_for_tg_waveform(
+    duration_sec: float,
+    *,
+    max_bytes: int = TG_VOICE_WAVEFORM_MAX_BYTES,
+    floor_kbps: int = 16,
+    ceil_kbps: int = 48,
+) -> str:
+    """Битрейт под лимит ~1 МБ, чтобы Bot API мог нарисовать волну."""
+    if duration_sec <= 0:
+        return f"{ceil_kbps}k"
+    budget_bits = max_bytes * 0.90 * 8.0
+    kbps = int(budget_bits / duration_sec / 1000.0)
+    kbps = max(floor_kbps, min(ceil_kbps, kbps))
+    return f"{kbps}k"
+
+
+def libopus_voice_args(*, bitrate: str) -> list[str]:
+    """Флаги libopus, совместимые с TG voice (волна + scrub)."""
+    return [
+        "-c:a",
+        "libopus",
+        "-b:a",
+        bitrate,
+        "-vbr",
+        "on",
+        "-compression_level",
+        "10",
+        "-frame_duration",
+        "60",
+        "-application",
+        "voip",
+        "-ar",
+        "48000",
+        "-ac",
+        "1",
+    ]
+
+
 def audio_bytes_to_ogg_opus(
     audio_bytes: bytes,
     *,
@@ -65,34 +146,21 @@ def audio_bytes_to_ogg_opus(
         in_path = root / "in.bin"
         ogg_path = root / "out.ogg"
         in_path.write_bytes(audio_bytes)
+        in_dur = probe_media_duration_sec(in_path) or 0.0
+        out_dur = in_dur / tempo if tempo > 0 and in_dur > 0 else in_dur
+        bitrate = opus_bitrate_for_tg_waveform(out_dur)
         cmd = [
             ffmpeg,
             "-y",
             "-i",
             str(in_path),
             "-vn",
+            "-af",
+            f"aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=mono"
+            + (f",atempo={tempo:.4f}" if abs(tempo - 1.0) >= 0.001 else ""),
+            *libopus_voice_args(bitrate=bitrate),
+            str(ogg_path),
         ]
-        # atempo в -af вместе с mono/48k (см. ниже).
-        cmd.extend(
-            [
-                "-af",
-                f"aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=mono"
-                + (f",atempo={tempo:.4f}" if abs(tempo - 1.0) >= 0.001 else ""),
-                "-c:a",
-                "libopus",
-                "-b:a",
-                "64k",
-                "-vbr",
-                "on",
-                "-application",
-                "voip",
-                "-ar",
-                "48000",
-                "-ac",
-                "1",
-                str(ogg_path),
-            ]
-        )
         try:
             proc = subprocess.run(
                 cmd, capture_output=True, text=True, timeout=180, check=False
@@ -102,7 +170,15 @@ def audio_bytes_to_ogg_opus(
                 return None
             if not ogg_path.is_file() or ogg_path.stat().st_size < 200:
                 return None
-            return ogg_path.read_bytes()
+            data = ogg_path.read_bytes()
+            if len(data) > TG_VOICE_WAVEFORM_MAX_BYTES:
+                logger.warning(
+                    "prayer ogg %s bytes >1MiB (bitrate=%s dur≈%.1fs) — TG waveform пустая",
+                    len(data),
+                    bitrate,
+                    out_dur,
+                )
+            return data
         except Exception as e:
             logger.exception("ffmpeg prayer tts convert: %s", e)
             return None

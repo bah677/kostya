@@ -33,7 +33,7 @@ from bot.services.prayer_stress import (
     parse_prayer_stress_words,
 )
 from bot.services.prayer_bg_music import mix_voice_with_bg_music
-from bot.services.prayer_tts_style import resolve_prayer_tts_atempo
+from bot.services.prayer_tts_style import ogg_opus_duration_sec, resolve_prayer_tts_atempo
 from bot.services.prayer_tts_queue import PrayerTtsQueue, get_prayer_tts_queue
 from bot.services.prayer_rag import build_compose_user_content, fetch_prayer_style_examples
 from bot.services.salute_tts import SaluteSpeechTTS
@@ -825,17 +825,15 @@ class PersonalPrayerFeature(BaseFeature):
                     continue
                 any_voice = True
                 safe_name = f"{variant}_{key}".replace(":", "_")[:40]
+                duration = ogg_opus_duration_sec(ogg)
+                voice_file = BufferedInputFile(ogg, filename=f"prayer_{safe_name}.ogg")
+                send_kwargs: dict[str, Any] = {"caption": caption[:1024]}
+                if duration is not None:
+                    send_kwargs["duration"] = duration
                 if bot:
-                    await bot.send_voice(
-                        chat_id,
-                        BufferedInputFile(ogg, filename=f"prayer_{safe_name}.ogg"),
-                        caption=caption[:1024],
-                    )
+                    await bot.send_voice(chat_id, voice_file, **send_kwargs)
                 else:
-                    await message.answer_voice(
-                        BufferedInputFile(ogg, filename=f"prayer_{safe_name}.ogg"),
-                        caption=caption[:1024],
-                    )
+                    await message.answer_voice(voice_file, **send_kwargs)
 
         if not any_voice:
             await message.answer(
@@ -857,9 +855,18 @@ class PersonalPrayerFeature(BaseFeature):
             intro_caption = intro_caption[: _TG_CAPTION_MAX - 1].rstrip() + "…"
 
         if ogg:
-            logger.info("[%s] sending prayer voice uid=%s bytes=%s", self.name, uid, len(ogg))
+            duration = ogg_opus_duration_sec(ogg)
+            logger.info(
+                "[%s] sending prayer voice uid=%s bytes=%s duration=%s",
+                self.name,
+                uid,
+                len(ogg),
+                duration,
+            )
             try:
                 # Аудио = молитва; подпись = короткая инструкция.
+                # duration обязателен: без него Bot API часто ставит 0 → нет scrub;
+                # файл >1MiB → пустая волна (см. prayer_tts_style / tg-bot-api#354).
                 voice_file = BufferedInputFile(ogg, filename="prayer.ogg")
                 if bot:
                     kwargs = {
@@ -867,11 +874,16 @@ class PersonalPrayerFeature(BaseFeature):
                         "voice": voice_file,
                         "caption": intro_caption,
                     }
+                    if duration is not None:
+                        kwargs["duration"] = duration
                     if message.message_thread_id:
                         kwargs["message_thread_id"] = message.message_thread_id
                     await bot.send_voice(**kwargs)
                 else:
-                    await message.answer_voice(voice_file, caption=intro_caption)
+                    voice_kwargs = {"caption": intro_caption}
+                    if duration is not None:
+                        voice_kwargs["duration"] = duration
+                    await message.answer_voice(voice_file, **voice_kwargs)
                 logger.info("[%s] prayer voice sent uid=%s", self.name, uid)
             except TelegramBadRequest as e:
                 if not _is_voice_forbidden_error(e):
@@ -1169,9 +1181,13 @@ class PersonalPrayerFeature(BaseFeature):
                         ogg = await self.voicebox.synthesize_ogg_opus(ctx.sample_text)
                 else:
                     ogg = await tts.synthesize_ogg_opus(ctx.sample_text)
+                stress_kwargs = dict(kwargs)
+                dur = ogg_opus_duration_sec(ogg)
+                if dur is not None:
+                    stress_kwargs["duration"] = dur
                 msg = await self.bot.send_voice(
                     voice=BufferedInputFile(ogg, filename=f"stress_{ctx.proposal_id}.ogg"),
-                    **kwargs,
+                    **stress_kwargs,
                 )
                 voice_msg_id = int(msg.message_id)
             except Exception as e:
@@ -1183,11 +1199,15 @@ class PersonalPrayerFeature(BaseFeature):
                 ):
                     try:
                         ogg = await self.speechkit.synthesize_ogg_opus(ctx.sample_text)
+                        stress_kwargs = dict(kwargs)
+                        dur = ogg_opus_duration_sec(ogg)
+                        if dur is not None:
+                            stress_kwargs["duration"] = dur
                         msg = await self.bot.send_voice(
                             voice=BufferedInputFile(
                                 ogg, filename=f"stress_{ctx.proposal_id}.ogg"
                             ),
-                            **kwargs,
+                            **stress_kwargs,
                         )
                         voice_msg_id = int(msg.message_id)
                         logger.info(
