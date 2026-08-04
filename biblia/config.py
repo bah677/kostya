@@ -264,8 +264,8 @@ class AppConfig:
     # Compose A/B: A = короткий baseline, B = длинная + RAG-структура, AB = sticky split.
     PRAYER_COMPOSE_PROMPT_VARIANT: str = "A"
     PRAYER_COMPOSE_AB_B_PERCENT: int = 50
-    PRAYER_COMPOSE_MAX_TOKENS_A: int = 1200
-    PRAYER_COMPOSE_MAX_TOKENS_B: int = 2800
+    PRAYER_COMPOSE_MAX_TOKENS_A: int = 4096
+    PRAYER_COMPOSE_MAX_TOKENS_B: int = 8192
     # RAG-примеры утренних молитв (Chroma avatar expert_materials) — только для варианта B.
     PRAYER_RAG_ENABLED: bool = True
     PRAYER_RAG_CHROMA_DIR: str = ""
@@ -480,10 +480,10 @@ def load_app_config() -> AppConfig:
             min(100, int(os.getenv("PRAYER_COMPOSE_AB_B_PERCENT", "50") or "50")),
         ),
         PRAYER_COMPOSE_MAX_TOKENS_A=max(
-            400, int(os.getenv("PRAYER_COMPOSE_MAX_TOKENS_A", "1200") or "1200")
+            400, int(os.getenv("PRAYER_COMPOSE_MAX_TOKENS_A", "4096") or "4096")
         ),
         PRAYER_COMPOSE_MAX_TOKENS_B=max(
-            800, int(os.getenv("PRAYER_COMPOSE_MAX_TOKENS_B", "2800") or "2800")
+            800, int(os.getenv("PRAYER_COMPOSE_MAX_TOKENS_B", "8192") or "8192")
         ),
         PRAYER_RAG_ENABLED=_parse_bool_env(os.getenv("PRAYER_RAG_ENABLED"), True),
         PRAYER_RAG_CHROMA_DIR=(os.getenv("PRAYER_RAG_CHROMA_DIR") or "").strip(),

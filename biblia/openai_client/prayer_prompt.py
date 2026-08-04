@@ -163,5 +163,5 @@ def prayer_compose_max_tokens(variant: PrayerComposeVariant) -> int:
     from config import config
 
     if variant == "B":
-        return max(800, int(getattr(config, "PRAYER_COMPOSE_MAX_TOKENS_B", 2800) or 2800))
-    return max(400, int(getattr(config, "PRAYER_COMPOSE_MAX_TOKENS_A", 1200) or 1200))
+        return max(800, int(getattr(config, "PRAYER_COMPOSE_MAX_TOKENS_B", 8192) or 8192))
+    return max(400, int(getattr(config, "PRAYER_COMPOSE_MAX_TOKENS_A", 4096) or 4096))

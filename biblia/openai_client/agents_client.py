@@ -92,6 +92,13 @@ async def _deepseek_with_retry(coro_factory, *, label: str, user_id: int):
     raise last_exc
 
 
+def _message_text(message) -> str:
+    """Текст ответа; у v4 thinking может съесть весь budget → content пустой."""
+    if message is None:
+        return ""
+    return (getattr(message, "content", None) or "").strip()
+
+
 def _format_context_tail(history: List[dict], *, max_turns: int = 8, max_chars_per: int = 1200) -> str:
     lines = []
     for msg in history[-max_turns:]:
@@ -181,9 +188,14 @@ class AgentsClient:
 
             usage = getattr(response, "usage", None)
             request_id = str(uuid.uuid4())
-            reply_text: Optional[str] = None
-            if response.choices and response.choices[0].message:
-                reply_text = response.choices[0].message.content
+            choice = response.choices[0] if response.choices else None
+            reply_text = _message_text(choice.message if choice else None)
+            if not reply_text:
+                logger.warning(
+                    "DeepSeek chat empty content user=%s finish=%s",
+                    user_id,
+                    getattr(choice, "finish_reason", None),
+                )
 
             await self.user_storage.log_llm_completion_usage(
                 user_id=user_id,
@@ -382,9 +394,16 @@ class AgentsClient:
             )
             usage = getattr(response, "usage", None)
             request_id = str(uuid.uuid4())
-            reply_text: Optional[str] = None
-            if response.choices and response.choices[0].message:
-                reply_text = response.choices[0].message.content
+            choice = response.choices[0] if response.choices else None
+            reply_text = _message_text(choice.message if choice else None)
+            if not reply_text:
+                logger.warning(
+                    "DeepSeek complete empty kind=%s user=%s finish=%s completion_tokens=%s",
+                    request_kind,
+                    user_id,
+                    getattr(choice, "finish_reason", None),
+                    getattr(usage, "completion_tokens", None),
+                )
 
             await self.user_storage.log_llm_completion_usage(
                 user_id=user_id,
@@ -438,9 +457,15 @@ class AgentsClient:
             )
             usage = getattr(response, "usage", None)
             request_id = str(uuid.uuid4())
-            reply_text: Optional[str] = None
-            if response.choices and response.choices[0].message:
-                reply_text = response.choices[0].message.content
+            choice = response.choices[0] if response.choices else None
+            reply_text = _message_text(choice.message if choice else None)
+            if not reply_text:
+                logger.warning(
+                    "DeepSeek complete_msgs empty kind=%s user=%s finish=%s",
+                    request_kind,
+                    user_id,
+                    getattr(choice, "finish_reason", None),
+                )
 
             await self.user_storage.log_llm_completion_usage(
                 user_id=user_id,
