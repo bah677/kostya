@@ -16,7 +16,10 @@ from aiogram.types import FSInputFile
 
 from bot.utils.rag_admin_context import rag_shorts_chat_topic
 from config import config
-from telemost_audio.ffmpeg_render import render_full_voice_ogg
+from telemost_audio.ffmpeg_render import (
+    ogg_path_duration_sec,
+    render_full_voice_ogg_parts,
+)
 from telemost_audio.full_voice_caption import build_full_voice_caption_parts
 from telemost_audio.recording_kind import (
     KIND_EFIR,
@@ -257,12 +260,12 @@ async def _run_full_voice_pipeline(
                 getattr(config, "TELEMOST_AUDIO_WORK_DIR", "data/telemost_audio_clips")
             )
             work_dir = work_root / f"full_{pid[:8]}"
-            voice_path = await render_full_voice_ogg(
+            voice_parts = await render_full_voice_ogg_parts(
                 audio_path,
                 work_dir=work_dir,
                 stem=f"{recording_kind}_{meeting_id or pid[:8]}",
             )
-            if not voice_path:
+            if not voice_parts:
                 logger.error("telemost_full_voice: ffmpeg failed pending=%s", pid)
                 return
 
@@ -283,38 +286,63 @@ async def _run_full_voice_pipeline(
                 if len(caption) > 1024:
                     caption = caption[:1021].rstrip() + "…"
 
-            sent = await bot.send_voice(
-                chat_id,
-                FSInputFile(str(voice_path)),
-                caption=caption,
-                parse_mode=ParseMode.HTML,
-                message_thread_id=topic_id,
-            )
-            try:
-                await storage.create_caption_edit_session(
-                    entity_type="full_voice",
-                    chat_id=int(chat_id),
-                    root_message_id=int(sent.message_id),
-                    caption_html=caption,
-                    title=title_plain,
-                    description=desc_plain,
-                    media_kind="voice",
-                    topic_id=int(topic_id or 0),
-                    pending_id=pending_id,
-                    meeting_id=str(meeting_id or ""),
-                    context={
-                        "meeting_title": str(title),
-                        "recording_kind": recording_kind,
-                        "kind_label": kind_label,
-                        "transcript_excerpt": transcript[:8000],
-                        "summary": summary[:1500],
-                    },
+            first_msg = None
+            for idx, voice_path in enumerate(voice_parts, start=1):
+                part_caption = caption
+                if len(voice_parts) > 1:
+                    tag = f"({idx}/{len(voice_parts)}) "
+                    if idx == 1:
+                        part_caption = (tag + (caption or "")).strip()
+                        if len(part_caption) > 1024:
+                            part_caption = part_caption[:1021].rstrip() + "…"
+                    else:
+                        part_caption = f"{tag}продолжение · {kind_label}"
+                voice_kwargs: Dict[str, Any] = {
+                    "caption": part_caption,
+                    "parse_mode": ParseMode.HTML,
+                    "message_thread_id": topic_id,
+                }
+                dur = ogg_path_duration_sec(voice_path)
+                if dur is not None:
+                    voice_kwargs["duration"] = dur
+                sent = await bot.send_voice(
+                    chat_id,
+                    FSInputFile(str(voice_path)),
+                    **voice_kwargs,
                 )
-            except Exception as e:
-                logger.warning("full_voice caption session: %s", e)
+                if first_msg is None:
+                    first_msg = sent
+                if idx < len(voice_parts):
+                    await asyncio.sleep(0.6)
+
+            if first_msg is not None:
+                try:
+                    await storage.create_caption_edit_session(
+                        entity_type="full_voice",
+                        chat_id=int(chat_id),
+                        root_message_id=int(first_msg.message_id),
+                        caption_html=caption,
+                        title=title_plain,
+                        description=desc_plain,
+                        media_kind="voice",
+                        topic_id=int(topic_id or 0),
+                        pending_id=pending_id,
+                        meeting_id=str(meeting_id or ""),
+                        context={
+                            "meeting_title": str(title),
+                            "recording_kind": recording_kind,
+                            "kind_label": kind_label,
+                            "transcript_excerpt": transcript[:8000],
+                            "summary": summary[:1500],
+                            "voice_parts": len(voice_parts),
+                        },
+                    )
+                except Exception as e:
+                    logger.warning("full_voice caption session: %s", e)
             logger.info(
-                "telemost_full_voice sent kind=%s chat=%s topic=%s pending=%s dest=%s",
+                "telemost_full_voice sent kind=%s parts=%s chat=%s topic=%s pending=%s dest=%s",
                 recording_kind,
+                len(voice_parts),
                 chat_id,
                 topic_id,
                 pid,

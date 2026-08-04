@@ -19,7 +19,7 @@ from telemost_mail.classifier_llm import TelemostClassification
 from telemost_mail.imap_client import YandexImapClient
 from telemost_mail.timestamped_speech import parse_expert_segments
 from telemost_audio.caption_llm import build_audio_captions
-from telemost_audio.ffmpeg_render import render_audio_clips
+from telemost_audio.ffmpeg_render import render_audio_clips, ogg_path_duration_sec
 from telemost_audio.moments_llm import AudioClipMoment, pick_audio_moments
 from telemost_audio.recording_resolver import wait_and_download_audio
 
@@ -358,13 +358,19 @@ async def _run_audio_pipeline(
             zip(clips, moments, captions), start=1
         ):
             try:
+                voice_kwargs = {
+                    "caption": cap.html_text,
+                    "parse_mode": ParseMode.HTML,
+                    "reply_markup": cap.keyboard,
+                    "message_thread_id": topic_id,
+                }
+                dur = ogg_path_duration_sec(clip_path)
+                if dur is not None:
+                    voice_kwargs["duration"] = dur
                 msg = await bot.send_voice(
                     chat_id,
                     FSInputFile(str(clip_path)),
-                    caption=cap.html_text,
-                    parse_mode=ParseMode.HTML,
-                    reply_markup=cap.keyboard,
-                    message_thread_id=topic_id,
+                    **voice_kwargs,
                 )
                 sent += 1
                 if storage is not None:

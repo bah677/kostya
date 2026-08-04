@@ -4,25 +4,52 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import shutil
+import math
 import subprocess
 from pathlib import Path
 from typing import List, Sequence
 
 from config import config
 from telemost_audio.moments_llm import AudioClipMoment
+from telemost_audio.telegram_voice_opus import (
+    TG_VOICE_WAVEFORM_MAX_BYTES,
+    ffmpeg_bin,
+    libopus_voice_args,
+    max_chunk_sec_for_waveform,
+    ogg_path_duration_sec,
+    opus_bitrate_for_tg_waveform,
+    probe_media_duration_sec,
+    shrink_ogg_under_limit,
+)
 
 logger = logging.getLogger(__name__)
-
-
-def _ffmpeg_bin() -> str:
-    return shutil.which("ffmpeg") or "ffmpeg"
 
 
 def _timing_offset_sec() -> float:
     return float(
         getattr(config, "TELEMOST_AUDIO_CLIPS_OFFSET_SEC", -0.5) or -0.5
     )
+
+
+def _ensure_under_waveform_limit(path: Path, duration_sec: float) -> Path:
+    if not path.is_file() or path.stat().st_size <= TG_VOICE_WAVEFORM_MAX_BYTES:
+        return path
+    shrunk = path.with_name(path.stem + "_1m.ogg")
+    if shrink_ogg_under_limit(path, shrunk, duration_sec=duration_sec):
+        if shrunk.stat().st_size < path.stat().st_size:
+            try:
+                path.unlink(missing_ok=True)
+            except Exception:
+                pass
+            shrunk.rename(path)
+            return path
+    if path.stat().st_size > TG_VOICE_WAVEFORM_MAX_BYTES:
+        logger.warning(
+            "voice ogg %s still %s bytes >1MiB — TG без волны",
+            path.name,
+            path.stat().st_size,
+        )
+    return path
 
 
 def _render_one_sync(
@@ -39,9 +66,10 @@ def _render_one_sync(
     if duration < 35:
         return False
 
+    bitrate = opus_bitrate_for_tg_waveform(duration)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     cmd = [
-        _ffmpeg_bin(),
+        ffmpeg_bin(),
         "-y",
         "-ss",
         f"{start:.3f}",
@@ -50,16 +78,7 @@ def _render_one_sync(
         "-t",
         f"{duration:.3f}",
         "-vn",
-        "-c:a",
-        "libopus",
-        "-b:a",
-        "64k",
-        "-vbr",
-        "on",
-        "-application",
-        "voip",
-        "-compression_level",
-        "10",
+        *libopus_voice_args(bitrate=bitrate),
         str(out_path),
     ]
     try:
@@ -77,7 +96,17 @@ def _render_one_sync(
                 (proc.stderr or "")[-600:],
             )
             return False
-        return out_path.is_file() and out_path.stat().st_size > 5000
+        if not (out_path.is_file() and out_path.stat().st_size > 5000):
+            return False
+        _ensure_under_waveform_limit(out_path, duration)
+        logger.info(
+            "audio clip ok %s dur=%.1fs bitrate=%s bytes=%s",
+            out_path.name,
+            duration,
+            bitrate,
+            out_path.stat().st_size,
+        )
+        return True
     except Exception as e:
         logger.exception("ffmpeg audio render: %s", e)
         return False
@@ -111,61 +140,102 @@ async def render_audio_clips(
     return out_paths
 
 
-def _render_full_voice_sync(
+def _render_segment_sync(
     audio_path: Path,
     out_path: Path,
     *,
-    bitrate: str = "48k",
-    max_bytes: int = 48 * 1024 * 1024,
+    start_sec: float,
+    duration_sec: float,
 ) -> bool:
-    """Конвертирует всю запись в OGG Opus для голосового Telegram."""
+    if duration_sec < 1.0:
+        return False
+    bitrate = opus_bitrate_for_tg_waveform(duration_sec)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    for br in (bitrate, "32k", "24k"):
-        cmd = [
-            _ffmpeg_bin(),
-            "-y",
-            "-i",
-            str(audio_path),
-            "-vn",
-            "-c:a",
-            "libopus",
-            "-b:a",
-            br,
-            "-vbr",
-            "on",
-            "-application",
-            "voip",
-            "-compression_level",
-            "10",
-            str(out_path),
-        ]
-        try:
-            proc = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=3600,
-                check=False,
+    cmd = [
+        ffmpeg_bin(),
+        "-y",
+        "-ss",
+        f"{start_sec:.3f}",
+        "-i",
+        str(audio_path),
+        "-t",
+        f"{duration_sec:.3f}",
+        "-vn",
+        *libopus_voice_args(bitrate=bitrate),
+        str(out_path),
+    ]
+    try:
+        proc = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=3600, check=False
+        )
+        if proc.returncode != 0:
+            logger.error(
+                "ffmpeg full voice part %s: %s",
+                out_path.name,
+                (proc.stderr or "")[-800:],
             )
-            if proc.returncode != 0:
-                logger.error(
-                    "ffmpeg full voice %s @%s: %s",
-                    out_path.name,
-                    br,
-                    (proc.stderr or "")[-800:],
-                )
-                continue
-            if out_path.is_file() and out_path.stat().st_size > 5000:
-                if out_path.stat().st_size <= max_bytes:
-                    return True
-                logger.warning(
-                    "full voice %s too large (%s bytes), retry lower bitrate",
-                    out_path.name,
-                    out_path.stat().st_size,
-                )
-        except Exception as e:
-            logger.exception("ffmpeg full voice render: %s", e)
-    return out_path.is_file() and out_path.stat().st_size > 5000
+            return False
+        if not (out_path.is_file() and out_path.stat().st_size > 5000):
+            return False
+        _ensure_under_waveform_limit(out_path, duration_sec)
+        logger.info(
+            "full voice part ok %s start=%.1f dur=%.1fs bitrate=%s bytes=%s",
+            out_path.name,
+            start_sec,
+            duration_sec,
+            bitrate,
+            out_path.stat().st_size,
+        )
+        return True
+    except Exception as e:
+        logger.exception("ffmpeg full voice part: %s", e)
+        return False
+
+
+def _render_full_voice_parts_sync(
+    audio_path: Path,
+    out_dir: Path,
+    *,
+    stem: str,
+) -> List[Path]:
+    """
+    Вся запись → один или несколько OGG ≤1 МиБ (волна + scrub в Bot API).
+    Длинные эфиры режутся на чанки ~8–10 мин при 16k.
+    """
+    total = probe_media_duration_sec(audio_path) or 0.0
+    if total <= 0:
+        logger.error("full voice: unknown duration %s", audio_path)
+        return []
+
+    # При floor 12k в ~1 МиБ помещается ~10 мин; берём запас.
+    chunk_sec = max_chunk_sec_for_waveform(bitrate_kbps=14)
+    chunk_sec = max(180.0, min(chunk_sec, 600.0))
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    parts: List[Path] = []
+    if total <= chunk_sec + 1.0:
+        out = out_dir / f"{stem}.ogg"
+        if _render_segment_sync(audio_path, out, start_sec=0.0, duration_sec=total):
+            parts.append(out)
+        return parts
+
+    n = int(math.ceil(total / chunk_sec))
+    logger.info(
+        "full voice split %s: total=%.0fs → %s parts (~%.0fs each)",
+        stem,
+        total,
+        n,
+        chunk_sec,
+    )
+    for i in range(n):
+        start = i * chunk_sec
+        dur = min(chunk_sec, total - start)
+        if dur < 5.0:
+            break
+        out = out_dir / f"{stem}_p{i + 1:02d}.ogg"
+        if _render_segment_sync(audio_path, out, start_sec=start, duration_sec=dur):
+            parts.append(out)
+    return parts
 
 
 async def render_full_voice_ogg(
@@ -174,11 +244,33 @@ async def render_full_voice_ogg(
     work_dir: str | Path,
     stem: str = "full_voice",
 ) -> Path | None:
+    """Обратная совместимость: один файл, если уместился; иначе первый чанк."""
+    parts = await render_full_voice_ogg_parts(
+        audio_path, work_dir=work_dir, stem=stem
+    )
+    return parts[0] if parts else None
+
+
+async def render_full_voice_ogg_parts(
+    audio_path: str,
+    *,
+    work_dir: str | Path,
+    stem: str = "full_voice",
+) -> List[Path]:
     src = Path(audio_path)
     if not src.is_file():
-        return None
+        return []
     root = Path(work_dir)
     root.mkdir(parents=True, exist_ok=True)
-    out = root / f"{stem}.ogg"
-    ok = await asyncio.to_thread(_render_full_voice_sync, src, out)
-    return out if ok else None
+    return await asyncio.to_thread(
+        _render_full_voice_parts_sync, src, root, stem=stem
+    )
+
+
+# re-export for callers that need duration on sendVoice
+__all__ = [
+    "render_audio_clips",
+    "render_full_voice_ogg",
+    "render_full_voice_ogg_parts",
+    "ogg_path_duration_sec",
+]
