@@ -113,7 +113,16 @@ def mix_voice_with_bg_music(
 
         in_dur = probe_media_duration_sec(voice_path) or 0.0
         out_dur = in_dur / tempo if tempo > 0 and in_dur > 0 else in_dur
-        mix_bitrate = bitrate or opus_bitrate_for_tg_waveform(out_dur)
+        safe_br = opus_bitrate_for_tg_waveform(out_dur)
+        if bitrate:
+            try:
+                req_k = int(str(bitrate).strip().lower().rstrip("k"))
+                safe_k = int(safe_br.rstrip("k"))
+                mix_bitrate = f"{min(req_k, safe_k)}k"
+            except ValueError:
+                mix_bitrate = safe_br
+        else:
+            mix_bitrate = safe_br
 
         # Голос (опц. atempo) + тихий фон; amix по длине голоса; normalize=0.
         voice_chain = f"atempo={tempo:.4f}," if abs(tempo - 1.0) >= 0.001 else ""
@@ -153,6 +162,33 @@ def mix_voice_with_bg_music(
             if not out_path.is_file() or out_path.stat().st_size < 200:
                 return None
             mixed = out_path.read_bytes()
+            # VBR может вылезти за 1MiB — дожимаем вторым проходом.
+            if len(mixed) > TG_VOICE_WAVEFORM_MAX_BYTES and out_dur > 0:
+                shrink_br = opus_bitrate_for_tg_waveform(
+                    out_dur,
+                    max_bytes=int(TG_VOICE_WAVEFORM_MAX_BYTES * 0.82),
+                    floor_kbps=12,
+                    ceil_kbps=24,
+                )
+                shrink_path = root / "shrunk.ogg"
+                shrink_cmd = [
+                    ffmpeg,
+                    "-y",
+                    "-i",
+                    str(out_path),
+                    *libopus_voice_args(bitrate=shrink_br),
+                    str(shrink_path),
+                ]
+                sp = subprocess.run(
+                    shrink_cmd, capture_output=True, text=True, timeout=240, check=False
+                )
+                if (
+                    sp.returncode == 0
+                    and shrink_path.is_file()
+                    and shrink_path.stat().st_size >= 200
+                ):
+                    mixed = shrink_path.read_bytes()
+                    mix_bitrate = f"{mix_bitrate}->{shrink_br}"
             if len(mixed) > TG_VOICE_WAVEFORM_MAX_BYTES:
                 logger.warning(
                     "prayer bg mix %s bytes >1MiB (bitrate=%s dur≈%.1fs) — TG waveform пустая",

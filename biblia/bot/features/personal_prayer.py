@@ -535,12 +535,12 @@ class PersonalPrayerFeature(BaseFeature):
                         voice_id=vid,
                         as_ogg=False,
                     )
+                    # bitrate не фиксируем: mix сам целится в <1MiB (иначе TG без волны).
                     mixed = await asyncio.to_thread(
                         mix_voice_with_bg_music,
                         raw_mp3,
                         atempo=tempo,
                         voice_suffix=".mp3",
-                        bitrate="64k",
                     )
                     if mixed:
                         logger.info(
