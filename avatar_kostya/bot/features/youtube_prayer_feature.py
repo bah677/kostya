@@ -140,6 +140,9 @@ class YoutubePrayerFeature(BaseFeature):
             if not work.is_absolute():
                 work = Path(__file__).resolve().parents[2] / work
             count = int(getattr(config, "YT_PRAYER_COUNT", 3) or 3)
+            history_days = int(
+                getattr(config, "YT_PRAYER_TREND_HISTORY_DAYS", 14) or 14
+            )
             result = await run_daily_youtube_prayer_pipeline(
                 self._app.bot,
                 chat_id=chat_id,
@@ -148,6 +151,7 @@ class YoutubePrayerFeature(BaseFeature):
                 count=count,
                 force=force,
                 progress_chat_id=progress_chat_id,
+                history_days=history_days,
             )
             if progress_chat_id:
                 if result.skipped:

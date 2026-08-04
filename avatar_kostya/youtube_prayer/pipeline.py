@@ -22,6 +22,7 @@ from youtube_prayer.trends import (
     fetch_google_trends_ru,
     select_prayer_topics,
 )
+from youtube_prayer.topic_history import append_used_trends, load_recent_trends
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +69,7 @@ async def run_daily_youtube_prayer_pipeline(
     count: int = 3,
     force: bool = False,
     progress_chat_id: Optional[int] = None,
+    history_days: int = 14,
 ) -> PipelineResult:
     day = datetime.now(_MSK).strftime("%Y-%m-%d")
     day_dir = run_dir_for_day(work_root, day)
@@ -92,8 +94,20 @@ async def run_daily_youtube_prayer_pipeline(
         return text
 
     try:
-        trends = await fetch_google_trends_ru(limit=12)
-        topics = await select_prayer_topics(trends, n=count, complete_fn=_complete)
+        recent = load_recent_trends(work_root, history_days=history_days)
+        if recent:
+            await _notify(
+                f"История {history_days}д ({len(recent)} тем), не повторяем:\n"
+                + "\n".join(f"· {t}" for t in recent[:15])
+                + ("\n…" if len(recent) > 15 else "")
+            )
+        trends = await fetch_google_trends_ru(limit=24)
+        topics = await select_prayer_topics(
+            trends,
+            n=count,
+            complete_fn=_complete,
+            recent_themes=recent,
+        )
         await _notify(
             "Темы:\n" + "\n".join(f"• {t.trend}" for t in topics)
         )
@@ -173,6 +187,7 @@ async def run_daily_youtube_prayer_pipeline(
                 "finished_at": datetime.now(_MSK).isoformat(),
             },
         )
+        append_used_trends(work_root, day=day, themes=theme_names)
         await _notify(f"✅ Готово: {len(theme_names)} пакетов за {day}")
         return PipelineResult(day=day, ok=True, themes=theme_names)
     except Exception as e:

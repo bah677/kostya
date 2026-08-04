@@ -301,6 +301,8 @@ class AppConfig:
     YT_PRAYER_HOUR_MSK: int = 3
     YT_PRAYER_COUNT: int = 3
     YT_PRAYER_WORK_DIR: str = "data/youtube_prayer"
+    # Не повторять темы за последние N дней (used_trends.json + done.json).
+    YT_PRAYER_TREND_HISTORY_DAYS: int = 14
     # Опционально: сток Pexels; без ключа — lavfi-фон.
     PEXELS_API_KEY: str = ""
 
@@ -825,6 +827,13 @@ def load_app_config() -> AppConfig:
             os.getenv("YT_PRAYER_WORK_DIR") or "data/youtube_prayer"
         ).strip()
         or "data/youtube_prayer",
+        YT_PRAYER_TREND_HISTORY_DAYS=max(
+            1,
+            min(
+                90,
+                int(os.getenv("YT_PRAYER_TREND_HISTORY_DAYS", "14") or 14),
+            ),
+        ),
         PEXELS_API_KEY=(os.getenv("PEXELS_API_KEY") or "").strip(),
     )
 

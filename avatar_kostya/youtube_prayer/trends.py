@@ -68,7 +68,7 @@ async def fetch_google_trends_ru(*, limit: int = 12) -> List[str]:
     return titles[:limit]
 
 
-def _fallback_topics(n: int) -> List[PrayerTopic]:
+def _fallback_topics(n: int, *, exclude: Sequence[str] = ()) -> List[PrayerTopic]:
     seeds = [
         PrayerTopic(
             "тревога и беспокойство",
@@ -95,8 +95,35 @@ def _fallback_topics(n: int) -> List[PrayerTopic]:
             "Молитва о силе веры и свете в тяжёлый день.",
             "golden hour sky clouds slow",
         ),
+        PrayerTopic(
+            "благодарность за малые радости",
+            "Молитва благодарности за простой день и Божью заботу.",
+            "sunlight through leaves gentle",
+        ),
+        PrayerTopic(
+            "прощение и примирение",
+            "Молитва о силе простить и восстановить мир в сердце.",
+            "quiet lake reflection dawn",
+        ),
+        PrayerTopic(
+            "страх неизвестности",
+            "Молитва о доверии Богу, когда будущее неясно.",
+            "mountain path fog soft light",
+        ),
     ]
-    return seeds[: max(1, n)]
+    from youtube_prayer.topic_history import trends_similar
+
+    out: List[PrayerTopic] = []
+    for s in seeds:
+        if any(trends_similar(s.trend, r) for r in exclude):
+            continue
+        out.append(s)
+        if len(out) >= n:
+            break
+    # если всё исключили — всё равно вернуть что-то
+    if not out:
+        out = seeds[:n]
+    return out[: max(1, n)]
 
 
 def _parse_topics_json(raw: str, *, n: int) -> List[PrayerTopic]:
@@ -136,31 +163,72 @@ async def select_prayer_topics(
     *,
     n: int,
     complete_fn,
+    recent_themes: Sequence[str] = (),
 ) -> List[PrayerTopic]:
     """
     complete_fn(system, user) -> Optional[str]
+    recent_themes — уже брали недавно (вчера / N дней), не повторять.
     """
-    n = max(1, min(5, int(n)))
-    if not trends:
-        logger.warning("trends empty — fallback topics")
-        return _fallback_topics(n)
+    from youtube_prayer.topic_history import filter_out_recent, trends_similar
 
-    listed = "\n".join(f"{i}. {t}" for i, t in enumerate(trends[:12], 1))
+    n = max(1, min(5, int(n)))
+    recent = [str(x).strip() for x in recent_themes if str(x).strip()]
+    fresh = filter_out_recent(trends, recent)
+    pool = fresh if fresh else list(trends)
+
+    if not pool and not trends:
+        logger.warning("trends empty — fallback topics (respecting recent)")
+        return _fallback_topics(n, exclude=recent)
+
+    listed = "\n".join(f"{i}. {t}" for i, t in enumerate(pool[:20], 1))
+    recent_block = (
+        "\n".join(f"- {t}" for t in recent[:40])
+        if recent
+        else "(пока пусто)"
+    )
     user = (
-        f"N={n}\nТренды (RU):\n{listed}\n\n"
-        f"Выбери ровно {n} тем для молитв."
+        f"N={n}\n"
+        f"Недавно уже использовали (не повторять близкие темы):\n{recent_block}\n\n"
+        f"Тренды (RU), предпочтительно свежие:\n{listed}\n\n"
+        f"Выбери ровно {n} тем для молитв. Разные по смыслу между собой."
     )
     raw = await complete_fn(TREND_FILTER_SYSTEM, user)
-    topics = _parse_topics_json(raw or "", n=n)
+    topics = _parse_topics_json(raw or "", n=n * 2)  # запас, потом отфильтруем
+
+    filtered: List[PrayerTopic] = []
+    for t in topics:
+        if any(trends_similar(t.trend, r) for r in recent):
+            continue
+        if any(trends_similar(t.trend, x.trend) for x in filtered):
+            continue
+        filtered.append(t)
+        if len(filtered) >= n:
+            break
+    topics = filtered
+
     if len(topics) < n:
         logger.warning(
-            "trend filter returned %s/%s — дополняем fallback",
+            "trend filter returned %s/%s after history filter — дополняем",
             len(topics),
             n,
         )
-        for fb in _fallback_topics(n):
+        # сначала оставшиеся тренды из пула без LLM
+        for cand in pool:
             if len(topics) >= n:
                 break
-            if all(fb.trend != t.trend for t in topics):
-                topics.append(fb)
+            if any(trends_similar(cand, t.trend) for t in topics):
+                continue
+            if any(trends_similar(cand, r) for r in recent):
+                continue
+            topics.append(
+                PrayerTopic(
+                    trend=cand,
+                    brief=f"Молитва о переживаниях человека в теме «{cand}».",
+                    broll_query="calm nature soft light",
+                )
+            )
+        for fb in _fallback_topics(n + 3, exclude=list(recent) + [t.trend for t in topics]):
+            if len(topics) >= n:
+                break
+            topics.append(fb)
     return topics[:n]
