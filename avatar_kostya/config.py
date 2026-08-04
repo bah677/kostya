@@ -294,6 +294,16 @@ class AppConfig:
     VOICEBOX_MODEL_SIZE: str = "1.7B"
     VOICEBOX_LANGUAGE: str = "ru"
 
+    # Ежедневные YouTube-молитвы (тренды → TTS как в Библии → сток → TG-топик).
+    YT_PRAYER_ENABLED: bool = True
+    YT_PRAYER_CHAT_ID: int = -1003756916561
+    YT_PRAYER_TOPIC_ID: int = 1021
+    YT_PRAYER_HOUR_MSK: int = 3
+    YT_PRAYER_COUNT: int = 3
+    YT_PRAYER_WORK_DIR: str = "data/youtube_prayer"
+    # Опционально: сток Pexels; без ключа — lavfi-фон.
+    PEXELS_API_KEY: str = ""
+
     @property
     def club_mail_database_url(self) -> str:
         if not (self.CLUB_DB_NAME and self.CLUB_DB_USER and self.CLUB_DB_PASSWORD):
@@ -802,6 +812,20 @@ def load_app_config() -> AppConfig:
         ).strip()
         or "1.7B",
         VOICEBOX_LANGUAGE=(os.getenv("VOICEBOX_LANGUAGE") or "ru").strip() or "ru",
+        YT_PRAYER_ENABLED=_env_flag_true("YT_PRAYER_ENABLED", default=True),
+        YT_PRAYER_CHAT_ID=_normalize_supergroup_chat_id(
+            int(os.getenv("YT_PRAYER_CHAT_ID", "-1003756916561") or -1003756916561)
+        ),
+        YT_PRAYER_TOPIC_ID=int(os.getenv("YT_PRAYER_TOPIC_ID", "1021") or 1021),
+        YT_PRAYER_HOUR_MSK=int(os.getenv("YT_PRAYER_HOUR_MSK", "3") or 3) % 24,
+        YT_PRAYER_COUNT=max(
+            1, min(5, int(os.getenv("YT_PRAYER_COUNT", "3") or 3))
+        ),
+        YT_PRAYER_WORK_DIR=(
+            os.getenv("YT_PRAYER_WORK_DIR") or "data/youtube_prayer"
+        ).strip()
+        or "data/youtube_prayer",
+        PEXELS_API_KEY=(os.getenv("PEXELS_API_KEY") or "").strip(),
     )
 
 

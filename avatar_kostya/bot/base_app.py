@@ -210,6 +210,10 @@ class TelegramBotApp:
             if tm is not None:
                 await tm.start_background_tasks()
 
+            yt = self.feature_manager.get_optional("youtube_prayer")
+            if yt is not None:
+                await yt.start_background_tasks()
+
         except Exception as e:
             logger.error(f"❌ Ошибка запуска фоновых задач: {e}")
 
@@ -226,6 +230,10 @@ class TelegramBotApp:
             tm = self.feature_manager.get_optional("telemost_mail")
             if tm is not None:
                 await tm.stop_background_tasks()
+
+            yt = self.feature_manager.get_optional("youtube_prayer")
+            if yt is not None:
+                await yt.stop_background_tasks()
 
             if self.payment_checker:
                 await self.payment_checker.stop()

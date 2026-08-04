@@ -20,6 +20,7 @@ from bot.features.caption_editor_feature import CaptionEditorFeature
 from bot.features.support import SupportFeature
 from bot.features.voicebox_admin import VoiceboxAdminFeature
 from bot.features.admin_panel import AdminPanelFeature
+from bot.features.youtube_prayer_feature import YoutubePrayerFeature
 from bot.handlers.messages import MessageHandlers
 
 from command_handlers import AppCommandHandlers
@@ -71,6 +72,7 @@ class BotApplication(TelegramBotApp):
         rag_source_visibility = RagSourceVisibilityFeature()
         voicebox_admin = VoiceboxAdminFeature()
         admin_panel = AdminPanelFeature(user_storage=self.user_storage)
+        youtube_prayer = YoutubePrayerFeature()
 
         features = [
             admin_panel,
@@ -91,6 +93,7 @@ class BotApplication(TelegramBotApp):
             payment_feature,
             media_id_helper,
             voicebox_admin,
+            youtube_prayer,
         ]
         for feature in features:
             self.feature_manager.register(feature)
