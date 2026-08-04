@@ -26,10 +26,13 @@ async def deliver_topic_pack(
     horizontal: Path,
     shorts: Sequence[ShortClip],
     ogg: Optional[Path] = None,
+    lang: str = "ru",
 ) -> None:
     """Шлёт текст + горизонталь + 3 шортса (+ опц. voice) в forum topic."""
+    lang_l = (lang or "ru").lower()
+    lang_tag = "EN · US" if lang_l == "en" else "RU"
     header = (
-        f"🙏 <b>YouTube-молитва</b> · {day} · #{index}\n"
+        f"🙏 <b>YouTube-молитва</b> · {lang_tag} · {day} · #{index}\n"
         f"<b>Тренд:</b> { _esc(topic.trend) }\n"
         f"<b>Бриф:</b> { _esc(topic.brief) }\n"
         f"<b>B-roll:</b> <code>{_esc(topic.broll_query)}</code>"

@@ -98,9 +98,14 @@ def list_bg_tracks(music_dir: Optional[Path] = None) -> list[Path]:
     ]
 
 
-async def _elevenlabs_mp3(text: str) -> bytes:
+async def _elevenlabs_mp3(
+    text: str,
+    *,
+    voice_id: Optional[str] = None,
+    lang: str = "ru",
+) -> bytes:
     api_key = _env("ELEVENLABS_API_KEY")
-    voice_id = _env("ELEVENLABS_VOICE_ID")
+    vid = (voice_id or _env("ELEVENLABS_VOICE_ID")).strip()
     model_id = _env("ELEVENLABS_MODEL_ID") or "eleven_flash_v2_5"
     output_format = _env("ELEVENLABS_OUTPUT_FORMAT") or "mp3_44100_128"
     try:
@@ -112,16 +117,16 @@ async def _elevenlabs_mp3(text: str) -> bytes:
     except ValueError:
         similarity = 0.75
 
-    if not api_key or not voice_id:
-        raise RuntimeError("ELEVENLABS_API_KEY / ELEVENLABS_VOICE_ID не заданы")
+    if not api_key or not vid:
+        raise RuntimeError("ELEVENLABS_API_KEY / voice_id не заданы")
 
-    body = format_prayer_for_tts(text)
+    body = format_prayer_for_tts(text, lang=lang)
     if not body:
         raise ValueError("empty prayer text after format")
     if len(body) > _MAX_CHARS:
         body = body[:_MAX_CHARS]
 
-    url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}"
+    url = f"https://api.elevenlabs.io/v1/text-to-speech/{vid}"
     payload = {
         "text": body,
         "model_id": model_id,
@@ -137,10 +142,11 @@ async def _elevenlabs_mp3(text: str) -> bytes:
     }
     timeout = aiohttp.ClientTimeout(total=_TIMEOUT_SEC)
     logger.info(
-        "ElevenLabs TTS chars=%s model=%s voice=%s",
+        "ElevenLabs TTS chars=%s model=%s voice=%s lang=%s",
         len(body),
         model_id,
-        voice_id[:8],
+        vid[:8],
+        lang,
     )
     async with aiohttp.ClientSession(timeout=timeout) as session:
         async with session.post(
@@ -257,13 +263,15 @@ async def synthesize_prayer_audio(
     prayer_text: str,
     *,
     work_dir: Path,
+    voice_id: Optional[str] = None,
+    lang: str = "ru",
 ) -> Tuple[Path, Optional[Path], float, str]:
     """
     Returns: (wav_path, ogg_path|None, duration_sec, tts_text)
     """
     work_dir.mkdir(parents=True, exist_ok=True)
-    tts_text = format_prayer_for_tts(prayer_text)
-    mp3 = await _elevenlabs_mp3(prayer_text)
+    tts_text = format_prayer_for_tts(prayer_text, lang=lang)
+    mp3 = await _elevenlabs_mp3(prayer_text, voice_id=voice_id, lang=lang)
     wav_path = work_dir / "prayer_mixed.wav"
     ogg_path = work_dir / "prayer_mixed.ogg"
     dur = await asyncio.to_thread(

@@ -164,7 +164,9 @@ def build_compose_user_content(turns_block: str, *, style_examples: str = "") ->
     examples = (style_examples or "").strip()
     if examples:
         parts.append(
-            "ПРИМЕР СТРУКТУРЫ И СТИЛЯ (только ритм/манера; содержание бери из диалога выше):\n"
+            "ПРИМЕР СТРУКТУРЫ И СТИЛЯ (только ритм/манера; содержание бери из диалога выше; "
+            "не копируй утренние формулировки вроде «этим утром / начало дня», "
+            "если пользователь сам об утре не говорил):\n"
             + examples
         )
     return "\n\n".join(parts)

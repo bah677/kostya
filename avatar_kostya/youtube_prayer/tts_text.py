@@ -9,10 +9,11 @@ _AMEN_FLEX_RE = re.compile(
     r"(?iu)\bа[\u0300\u0301\u0341]?м[\u0300\u0301\u0341]?и[\u0300\u0301\u0341]?"
     r"н[\u0300\u0301\u0341]?ь\b"
 )
+_AMEN_EN_RE = re.compile(r"(?i)\bamen\.?\b")
 _LONG_SENT_WORDS = 20
 _PAIR_MAX_WORDS = 16
 _BREATH_GAP_RE = re.compile(
-    r"(?i)(?:,\s+|\s+(?:чтобы|ибо|потому что|когда|если)\s+)"
+    r"(?i)(?:,\s+|\s+(?:чтобы|ибо|потому что|когда|если|because|when|if|so that)\s+)"
 )
 
 
@@ -81,12 +82,12 @@ def _pack_prayer_paragraphs(sentences: list[str]) -> list[str]:
     return paras
 
 
-def format_prayer_for_tts(text: str) -> str:
+def format_prayer_for_tts(text: str, *, lang: str = "ru") -> str:
     t = (text or "").strip()
     t = re.sub(r"^```(?:\w+)?\s*", "", t)
     t = re.sub(r"\s*```$", "", t)
     t = t.strip().strip('"').strip("«»")
-    t = re.sub(r"\+(?=[аАеЕёЁиИоОуУыЫэЭюЮяЯ])", "", t)
+    t = re.sub(r"\+(?=[аАеЕёЁиИоОуУыЫэЭюЮяЯaAeEiIoOuU])", "", t)
     t = re.sub(r"[\u0300\u0301\u0341]", "", t)
     t = t.replace("…", " ")
     t = re.sub(r"[ \t]+", " ", t)
@@ -104,22 +105,33 @@ def format_prayer_for_tts(text: str) -> str:
         sentences.extend(b.strip() for b in bits if b.strip())
 
     amen = None
-    if sentences and _AMEN_FLEX_RE.search(sentences[-1]):
-        amen = ensure_amen_stress(sentences[-1])
-        sentences = sentences[:-1]
+    if sentences:
+        last = sentences[-1]
+        if lang == "en":
+            if _AMEN_EN_RE.search(last):
+                amen = last if "Amen" in last else _AMEN_EN_RE.sub("Amen", last)
+                sentences = sentences[:-1]
+        elif _AMEN_FLEX_RE.search(last):
+            amen = ensure_amen_stress(last)
+            sentences = sentences[:-1]
 
     paras = _pack_prayer_paragraphs(sentences)
     out = "\n\n".join(paras)
     if amen:
         out = f"{out}\n\n{amen}".strip() if out else amen
+    if lang == "en":
+        return out
     return ensure_amen_stress(out) if out else ""
 
 
-def prayer_text_looks_complete(text: str) -> bool:
+def prayer_text_looks_complete(text: str, *, lang: str = "ru") -> bool:
     t = (text or "").strip()
     if len(t) < 120:
         return False
-    tail = t[-200:].casefold().replace("і", "и").replace("i", "и")
+    tail = t[-200:].casefold()
+    if lang == "en":
+        return "amen" in tail
+    tail = tail.replace("і", "и").replace("i", "и")
     return "аминь" in tail
 
 

@@ -13,6 +13,7 @@ from youtube_prayer.prompts import (
     PRAYER_COMPOSE_MAX_ATTEMPTS,
     PRAYER_COMPOSE_MAX_TOKENS_B,
     PRAYER_COMPOSE_SYSTEM_PROMPT_B,
+    PRAYER_COMPOSE_SYSTEM_PROMPT_B_EN,
 )
 from youtube_prayer.tts_text import (
     prayer_text_looks_complete,
@@ -79,19 +80,41 @@ async def deepseek_complete(
     return text, str(finish) if finish else None
 
 
-async def compose_prayer_for_topic(topic: PrayerTopic) -> Optional[str]:
+async def compose_prayer_for_topic(
+    topic: PrayerTopic,
+    *,
+    lang: str = "ru",
+) -> Optional[str]:
     """Молитва variant B + retry при обрыве (как personal_prayer)."""
-    user_base = (
-        "Составь личную молитву по этому запросу человека. "
-        "Только текст молитвы, без преамбулы.\n\n"
-        f"Тема тренда: {topic.trend}\n"
-        f"О чём молиться: {topic.brief}"
-    )
-    retry_nudge = (
-        "\n\nВАЖНО: предыдущий ответ оборвался на середине. "
-        "Напиши молитву ПОЛНОСТЬЮ до финала "
-        "«Во имя Иисуса Христа, амИнь». Без длинных рассуждений — сразу текст молитвы."
-    )
+    lang = (lang or "ru").lower()
+    if lang == "en":
+        system = PRAYER_COMPOSE_SYSTEM_PROMPT_B_EN
+        user_base = (
+            "Write a personal prayer for this person's need. "
+            "Prayer text only, no preamble. "
+            "Do not tie the prayer to morning or the start of the day.\n\n"
+            f"Trend topic: {topic.trend}\n"
+            f"What to pray about: {topic.brief}"
+        )
+        retry_nudge = (
+            "\n\nIMPORTANT: the previous answer was cut off. "
+            "Write the prayer FULLY from the start through the closing line "
+            "«In the name of Jesus Christ, Amen». No long reasoning — prayer text only."
+        )
+    else:
+        system = PRAYER_COMPOSE_SYSTEM_PROMPT_B
+        user_base = (
+            "Составь личную молитву по этому запросу человека. "
+            "Только текст молитвы, без преамбулы. "
+            "Не привязывай текст к утру или началу дня.\n\n"
+            f"Тема тренда: {topic.trend}\n"
+            f"О чём молиться: {topic.brief}"
+        )
+        retry_nudge = (
+            "\n\nВАЖНО: предыдущий ответ оборвался на середине. "
+            "Напиши молитву ПОЛНОСТЬЮ до финала "
+            "«Во имя Иисуса Христа, амИнь». Без длинных рассуждений — сразу текст молитвы."
+        )
     last: Optional[str] = None
     for attempt in range(1, PRAYER_COMPOSE_MAX_ATTEMPTS + 1):
         if attempt >= PRAYER_COMPOSE_MAX_ATTEMPTS:
@@ -100,7 +123,7 @@ async def compose_prayer_for_topic(topic: PrayerTopic) -> Optional[str]:
             thinking, effort = "enabled", "low"
         prompt_user = user_base if attempt == 1 else (user_base + retry_nudge)
         raw, finish = await deepseek_complete(
-            PRAYER_COMPOSE_SYSTEM_PROMPT_B,
+            system,
             prompt_user,
             temperature=0.55,
             max_tokens=PRAYER_COMPOSE_MAX_TOKENS_B,
@@ -111,17 +134,23 @@ async def compose_prayer_for_topic(topic: PrayerTopic) -> Optional[str]:
         if text:
             last = text
         truncated = (finish or "").lower() == "length"
-        ok = bool(text) and prayer_text_looks_complete(text) and not truncated
+        ok = (
+            bool(text)
+            and prayer_text_looks_complete(text, lang=lang)
+            and not truncated
+        )
         if ok:
             logger.info(
-                "compose ok trend=%r attempt=%s chars=%s",
+                "compose ok lang=%s trend=%r attempt=%s chars=%s",
+                lang,
                 topic.trend,
                 attempt,
                 len(text),
             )
             return text
         logger.warning(
-            "compose incomplete trend=%r attempt=%s finish=%s chars=%s",
+            "compose incomplete lang=%s trend=%r attempt=%s finish=%s chars=%s",
+            lang,
             topic.trend,
             attempt,
             finish,

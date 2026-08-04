@@ -13,7 +13,11 @@ from zoneinfo import ZoneInfo
 logger = logging.getLogger(__name__)
 
 _MSK = ZoneInfo("Europe/Moscow")
-_HISTORY_FILE = "used_trends.json"
+
+
+def _history_filename(lang: str = "ru") -> str:
+    lang = (lang or "ru").lower()
+    return "used_trends_en.json" if lang == "en" else "used_trends.json"
 
 
 def normalize_trend_key(text: str) -> str:
@@ -53,16 +57,18 @@ def load_recent_trends(
     *,
     history_days: int = 14,
     as_of: date | None = None,
+    lang: str = "ru",
 ) -> List[str]:
     """
-    Темы из used_trends.json + done.json за последние history_days.
-    Возвращает список строк (как сохраняли), без жёсткой дедупликации по смыслу.
+    Темы из used_trends*.json + done.json за последние history_days.
     """
     days = max(1, min(90, int(history_days)))
     as_of = as_of or datetime.now(_MSK).date()
     cutoff = as_of - timedelta(days=days)
     collected: List[str] = []
     seen_keys: Set[str] = set()
+    hist_name = _history_filename(lang)
+    lang_l = (lang or "ru").lower()
 
     def _add(theme: str, day_s: str | None = None) -> None:
         theme = (theme or "").strip()
@@ -78,13 +84,12 @@ def load_recent_trends(
         key = normalize_trend_key(theme)
         if not key or key in seen_keys:
             return
-        # отсев почти-дублей внутри окна
         if any(trends_similar(theme, x) for x in collected):
             return
         seen_keys.add(key)
         collected.append(theme)
 
-    hist_path = work_root / _HISTORY_FILE
+    hist_path = work_root / hist_name
     if hist_path.is_file():
         try:
             data = json.loads(hist_path.read_text(encoding="utf-8"))
@@ -97,31 +102,43 @@ def load_recent_trends(
                     for th in ent.get("themes") or []:
                         _add(str(th), day_s)
         except Exception as e:
-            logger.warning("used_trends.json read failed: %s", e)
+            logger.warning("%s read failed: %s", hist_name, e)
 
     if work_root.is_dir():
         for child in sorted(work_root.iterdir()):
             if not child.is_dir():
                 continue
-            done = child / "done.json"
-            if not done.is_file():
-                continue
-            day_s = child.name
-            try:
-                payload = json.loads(done.read_text(encoding="utf-8"))
-            except Exception:
-                continue
-            themes = payload.get("themes") if isinstance(payload, dict) else None
-            if not isinstance(themes, list):
-                continue
-            for th in themes:
-                _add(str(th), day_s)
+            # EN пакеты лежат в day/en/…
+            done_candidates = [child / "done.json"]
+            if lang_l == "en":
+                done_candidates.append(child / "en" / "done.json")
+            else:
+                done_candidates.append(child / "ru" / "done.json")
+            for done in done_candidates:
+                if not done.is_file():
+                    continue
+                day_s = child.name
+                try:
+                    payload = json.loads(done.read_text(encoding="utf-8"))
+                except Exception:
+                    continue
+                key_themes = "themes_en" if lang_l == "en" else "themes"
+                themes = payload.get(key_themes) if isinstance(payload, dict) else None
+                if themes is None and isinstance(payload, dict):
+                    themes = payload.get("themes")
+                if not isinstance(themes, list):
+                    continue
+                # для корневого done.json с обеими локалями
+                if lang_l == "en" and "themes_en" not in (payload or {}) and done.parent == child:
+                    continue
+                for th in themes:
+                    _add(str(th), day_s)
 
     logger.info(
-        "trend history: %s themes in last %s days (as_of=%s)",
+        "trend history lang=%s: %s themes in last %s days",
+        lang_l,
         len(collected),
         days,
-        as_of.isoformat(),
     )
     return collected
 
@@ -131,10 +148,11 @@ def append_used_trends(
     *,
     day: str,
     themes: Sequence[str],
+    lang: str = "ru",
 ) -> None:
-    """Дописывает день в used_trends.json (перезаписывает запись того же day)."""
+    """Дописывает день в used_trends*.json."""
     work_root.mkdir(parents=True, exist_ok=True)
-    path = work_root / _HISTORY_FILE
+    path = work_root / _history_filename(lang)
     entries: List[dict] = []
     if path.is_file():
         try:
@@ -149,10 +167,11 @@ def append_used_trends(
         {
             "day": day,
             "themes": clean,
+            "lang": (lang or "ru").lower(),
             "saved_at": datetime.now(_MSK).isoformat(),
         }
     )
-    # храним ~90 дней
+
     def _day_key(e: dict) -> str:
         return str(e.get("day") or "")
 

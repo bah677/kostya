@@ -303,6 +303,15 @@ class AppConfig:
     YT_PRAYER_WORK_DIR: str = "data/youtube_prayer"
     # Не повторять темы за последние N дней (used_trends.json + done.json).
     YT_PRAYER_TREND_HISTORY_DAYS: int = 14
+    YT_PRAYER_BROLL_CLIPS: int = 5
+    YT_PRAYER_SCENE_SEC: int = 10
+    YT_PRAYER_IMAGE_GEN: bool = True
+    YT_PRAYER_IMAGE_COUNT: int = 2
+    YT_PRAYER_SUBTITLE_OFFSET_SEC: float = -0.35
+    # EN-пакет: 1×16:9 + 3 шортса, тренды USA, отдельный голос ElevenLabs.
+    YT_PRAYER_EN_ENABLED: bool = True
+    YT_PRAYER_EN_COUNT: int = 1
+    YT_PRAYER_EN_VOICE_ID: str = "a4CnuaYbALRvW39mDitg"
     # Опционально: сток Pexels; без ключа — lavfi-фон.
     PEXELS_API_KEY: str = ""
 
@@ -834,6 +843,27 @@ def load_app_config() -> AppConfig:
                 int(os.getenv("YT_PRAYER_TREND_HISTORY_DAYS", "14") or 14),
             ),
         ),
+        YT_PRAYER_BROLL_CLIPS=max(
+            2, min(12, int(os.getenv("YT_PRAYER_BROLL_CLIPS", "5") or 5))
+        ),
+        YT_PRAYER_SCENE_SEC=max(
+            5, min(20, int(os.getenv("YT_PRAYER_SCENE_SEC", "10") or 10))
+        ),
+        YT_PRAYER_IMAGE_GEN=_env_flag_true("YT_PRAYER_IMAGE_GEN", default=True),
+        YT_PRAYER_IMAGE_COUNT=max(
+            0, min(6, int(os.getenv("YT_PRAYER_IMAGE_COUNT", "2") or 2))
+        ),
+        YT_PRAYER_SUBTITLE_OFFSET_SEC=float(
+            os.getenv("YT_PRAYER_SUBTITLE_OFFSET_SEC", "-0.35") or -0.35
+        ),
+        YT_PRAYER_EN_ENABLED=_env_flag_true("YT_PRAYER_EN_ENABLED", default=True),
+        YT_PRAYER_EN_COUNT=max(
+            0, min(3, int(os.getenv("YT_PRAYER_EN_COUNT", "1") or 1))
+        ),
+        YT_PRAYER_EN_VOICE_ID=(
+            os.getenv("YT_PRAYER_EN_VOICE_ID") or "a4CnuaYbALRvW39mDitg"
+        ).strip()
+        or "a4CnuaYbALRvW39mDitg",
         PEXELS_API_KEY=(os.getenv("PEXELS_API_KEY") or "").strip(),
     )
 

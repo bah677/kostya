@@ -143,6 +143,12 @@ class YoutubePrayerFeature(BaseFeature):
             history_days = int(
                 getattr(config, "YT_PRAYER_TREND_HISTORY_DAYS", 14) or 14
             )
+            en_enabled = bool(getattr(config, "YT_PRAYER_EN_ENABLED", True))
+            en_count = int(getattr(config, "YT_PRAYER_EN_COUNT", 1) or 1)
+            en_voice = (
+                getattr(config, "YT_PRAYER_EN_VOICE_ID", None)
+                or "a4CnuaYbALRvW39mDitg"
+            )
             result = await run_daily_youtube_prayer_pipeline(
                 self._app.bot,
                 chat_id=chat_id,
@@ -152,12 +158,20 @@ class YoutubePrayerFeature(BaseFeature):
                 force=force,
                 progress_chat_id=progress_chat_id,
                 history_days=history_days,
+                en_enabled=en_enabled,
+                en_count=en_count,
+                en_voice_id=str(en_voice),
             )
             if progress_chat_id:
                 if result.skipped:
                     msg = f"Уже есть готовый прогон за {result.day}. Добавьте force: /yt_prayer force"
                 elif result.ok:
-                    msg = f"Готово за {result.day}: {', '.join(result.themes)}"
+                    parts = []
+                    if result.themes:
+                        parts.append("RU: " + ", ".join(result.themes))
+                    if result.themes_en:
+                        parts.append("EN: " + ", ".join(result.themes_en))
+                    msg = f"Готово за {result.day}. " + (" | ".join(parts) if parts else "ok")
                 else:
                     msg = f"Ошибка: {result.error}"
                 try:
