@@ -14,10 +14,19 @@ from typing import Any, List, Optional
 from zoneinfo import ZoneInfo
 
 from youtube_prayer.audio_pipeline import synthesize_prayer_audio
-from youtube_prayer.compose import compose_prayer_for_topic, deepseek_complete
+from youtube_prayer.compose import (
+    PrayerComposeIncompleteError,
+    compose_prayer_for_topic,
+    deepseek_complete,
+)
 from youtube_prayer.covers import generate_cover_pack
-from youtube_prayer.deliver import deliver_run_summary, deliver_topic_pack
-from youtube_prayer.render import render_all_shorts, render_horizontal
+from youtube_prayer.deliver import (
+    deliver_pipeline_stopped,
+    deliver_run_summary,
+    deliver_topic_pack,
+)
+from youtube_prayer.metadata import generate_video_metadata
+from youtube_prayer.render import render_horizontal
 from youtube_prayer.stock_broll import build_broll_montage
 from youtube_prayer.trends import (
     PrayerTopic,
@@ -105,6 +114,7 @@ async def _run_lang_pack(
     voice_id: Optional[str],
     complete_fn,
     notify,
+    metadata_complete_fn=None,
 ) -> List[str]:
     lang = (lang or "ru").lower()
     label = "EN/US" if lang == "en" else "RU"
@@ -125,6 +135,9 @@ async def _run_lang_pack(
     )
     await notify(f"[{label}] темы:\n" + "\n".join(f"• {t.trend}" for t in topics))
 
+    trend_pool = list(trends)
+    meta_fn = metadata_complete_fn or complete_fn
+
     pack_root = day_dir / lang
     pack_root.mkdir(parents=True, exist_ok=True)
     theme_names: List[str] = []
@@ -141,10 +154,49 @@ async def _run_lang_pack(
         )
         await notify(f"⏳ [{label} {i}/{len(topics)}] compose: {topic.trend}")
 
-        prayer = await compose_prayer_for_topic(topic, lang=lang)
-        if not prayer:
-            raise RuntimeError(f"[{label}] не удалось сочинить молитву для «{topic.trend}»")
+        try:
+            prayer = await compose_prayer_for_topic(topic, lang=lang)
+        except PrayerComposeIncompleteError as exc:
+            err_text = exc.info.telegram_text(
+                label=label, index=i, total=len(topics), day=day
+            )
+            (item_dir / "compose_error.json").write_text(
+                json.dumps(
+                    {
+                        "error": "prayer_incomplete",
+                        "lang": exc.info.lang,
+                        "trend": exc.info.trend,
+                        "brief": exc.info.brief,
+                        "reason": exc.info.human_reason(),
+                        "attempts": exc.info.attempts,
+                        "last_chars": exc.info.last_chars,
+                        "last_finish": exc.info.last_finish,
+                        "stopped_at": datetime.now(_MSK).isoformat(),
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+            await deliver_pipeline_stopped(
+                bot, chat_id=chat_id, topic_id=topic_id, text=err_text
+            )
+            await notify(
+                f"⛔ [{label}] остановлено: молитва неполная «{topic.trend}» "
+                f"({exc.info.human_reason()})"
+            )
+            raise
         (item_dir / "prayer.txt").write_text(prayer, encoding="utf-8")
+
+        await notify(f"📝 [{label} {i}/{len(topics)}] название + описание…")
+        meta = await generate_video_metadata(
+            trend=topic.trend,
+            brief=topic.brief,
+            lang=lang,
+            complete_fn=meta_fn,
+            trend_pool=trend_pool,
+            work_dir=item_dir,
+        )
 
         await notify(f"🎙 [{label} {i}/{len(topics)}] TTS+фон…")
         wav, ogg, dur, _tts = await synthesize_prayer_audio(
@@ -153,19 +205,35 @@ async def _run_lang_pack(
             voice_id=voice_id,
             lang=lang,
         )
-        await notify(f"🖼 [{label} {i}/{len(topics)}] b-roll + обложки + рендер ({dur:.0f}с)…")
+        await notify(f"🖼 [{label} {i}/{len(topics)}] b-roll + обложка + рендер ({dur:.0f}с)…")
 
         broll = await build_broll_montage(
             item_dir, query=topic.broll_query, duration_sec=dur
         )
         covers = await generate_cover_pack(
             item_dir,
+            title=meta.title,
+            thumbnail_title=meta.thumbnail_title,
             trend=topic.trend,
             brief=topic.brief,
-            lang=lang,
-            complete_fn=complete_fn,
             broll_query=topic.broll_query,
         )
+        if not covers:
+            err = (
+                f"⛔ <b>Пайплайн остановлен — ошибка</b>\n"
+                f"{label} · {day} · ролик {i}/{len(topics)}\n\n"
+                f"<b>Тема:</b> {topic.trend}\n"
+                f"<b>Причина:</b> не удалось сгенерировать AI-обложку.\n\n"
+                f"TTS мог быть готов, видео <b>не собрано</b>.\n"
+                f"Перезапуск: <code>/yt_prayer force</code>"
+            )
+            await deliver_pipeline_stopped(
+                bot, chat_id=chat_id, topic_id=topic_id, text=err
+            )
+            await notify(f"⛔ [{label}] остановлено: нет AI-обложки «{topic.trend}»")
+            raise RuntimeError(
+                f"[{label}] не удалось сгенерировать AI-обложку для «{topic.trend}»"
+            )
         horizontal = item_dir / "full_16x9.mp4"
         await asyncio.to_thread(
             render_horizontal,
@@ -173,13 +241,6 @@ async def _run_lang_pack(
             audio_wav=wav,
             out_path=horizontal,
             duration_sec=dur,
-        )
-        shorts = await asyncio.to_thread(
-            render_all_shorts,
-            horizontal_path=horizontal,
-            prayer_text=prayer,
-            duration_sec=dur,
-            work_dir=item_dir,
         )
 
         await deliver_topic_pack(
@@ -191,14 +252,14 @@ async def _run_lang_pack(
             index=i,
             prayer_text=prayer,
             horizontal=horizontal,
-            shorts=shorts,
             ogg=ogg,
             lang=lang,
             covers=covers,
+            metadata=meta,
         )
         theme_names.append(topic.trend)
         summary_lines.append(
-            f"{label} {i}. {_esc_plain(topic.trend)} — 1×16:9 + {len(shorts)}×9:16"
+            f"{label} {i}. {_esc_plain(topic.trend)} — 16:9 · {_esc_plain(meta.title)[:60]}"
         )
         logger.info("yt_prayer %s item %s done trend=%r", lang, i, topic.trend)
 
@@ -263,6 +324,10 @@ async def run_daily_youtube_prayer_pipeline(
         text, _ = await deepseek_complete(system, user, temperature=0.3, max_tokens=1200)
         return text
 
+    async def _complete_metadata(system: str, user: str) -> Optional[str]:
+        text, _ = await deepseek_complete(system, user, temperature=0.35, max_tokens=2500)
+        return text
+
     try:
         themes_ru = await _run_lang_pack(
             bot,
@@ -278,6 +343,7 @@ async def run_daily_youtube_prayer_pipeline(
             voice_id=None,
             complete_fn=_complete,
             notify=_notify,
+            metadata_complete_fn=_complete_metadata,
         )
 
         themes_en: List[str] = []
@@ -296,6 +362,7 @@ async def run_daily_youtube_prayer_pipeline(
                 voice_id=(en_voice_id or _DEFAULT_EN_VOICE).strip() or _DEFAULT_EN_VOICE,
                 complete_fn=_complete,
                 notify=_notify,
+                metadata_complete_fn=_complete_metadata,
             )
 
         mark_done(
@@ -315,9 +382,53 @@ async def run_daily_youtube_prayer_pipeline(
         return PipelineResult(
             day=day, ok=True, themes=themes_ru, themes_en=themes_en
         )
+    except PrayerComposeIncompleteError as e:
+        logger.exception("yt_prayer pipeline stopped (incomplete prayer): %s", e)
+        (day_dir / "pipeline_error.json").write_text(
+            json.dumps(
+                {
+                    "error": "prayer_incomplete",
+                    "day": day,
+                    "message": str(e),
+                    "trend": e.info.trend,
+                    "reason": e.info.human_reason(),
+                    "stopped_at": datetime.now(_MSK).isoformat(),
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        await _notify(f"⛔ Пайплайн остановлен: {e}")
+        return PipelineResult(day=day, ok=False, error=str(e))
     except Exception as e:
         logger.exception("yt_prayer pipeline failed: %s", e)
-        await _notify(f"❌ Ошибка пайплайна: {e}")
+        err_generic = (
+            f"⛔ <b>Пайплайн остановлен — ошибка</b>\n"
+            f"{day}\n\n"
+            f"<code>{_esc_plain(str(e))[:500]}</code>\n\n"
+            f"Перезапуск: <code>/yt_prayer force</code>"
+        )
+        try:
+            await deliver_pipeline_stopped(
+                bot, chat_id=chat_id, topic_id=topic_id, text=err_generic
+            )
+        except Exception:
+            pass
+        (day_dir / "pipeline_error.json").write_text(
+            json.dumps(
+                {
+                    "error": "pipeline_failed",
+                    "day": day,
+                    "message": str(e),
+                    "stopped_at": datetime.now(_MSK).isoformat(),
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        await _notify(f"⛔ Пайплайн остановлен: {e}")
         return PipelineResult(day=day, ok=False, error=str(e))
 
 

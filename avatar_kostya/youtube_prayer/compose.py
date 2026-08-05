@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from dataclasses import dataclass
 from typing import Optional
 
 from openai import AsyncOpenAI
@@ -24,6 +25,66 @@ from youtube_prayer.trends import PrayerTopic
 logger = logging.getLogger(__name__)
 
 _WAIT_SEC = 120.0
+
+
+@dataclass(frozen=True)
+class ComposeFailureInfo:
+    lang: str
+    trend: str
+    brief: str
+    attempts: int
+    last_chars: int
+    last_finish: Optional[str]
+    missing_amen: bool
+    truncated: bool
+
+    def human_reason(self) -> str:
+        parts: list[str] = []
+        if self.truncated:
+            parts.append("ответ оборвался по лимиту токенов")
+        if self.missing_amen:
+            parts.append("нет финала «амИнь» / Amen")
+        if self.last_chars < 120:
+            parts.append("текст слишком короткий")
+        if not parts:
+            parts.append("молитва не прошла проверку полноты")
+        return "; ".join(parts)
+
+    def telegram_text(self, *, label: str, index: int, total: int, day: str) -> str:
+        trend = _esc_html(self.trend)
+        brief = _esc_html(self.brief)
+        reason = _esc_html(self.human_reason())
+        return (
+            f"⛔ <b>Пайплайн остановлен — ошибка</b>\n"
+            f"{label} · {day} · ролик {index}/{total}\n\n"
+            f"<b>Тема:</b> {trend}\n"
+            f"<b>Бриф:</b> {brief}\n\n"
+            f"Молитва не сгенерирована полностью после {self.attempts} попыток.\n"
+            f"<b>Причина:</b> {reason}.\n"
+            f"Последний ответ: {self.last_chars} симв., finish={self.last_finish or '?'}\n\n"
+            f"TTS и видео для этого ролика <b>не собирались</b>.\n"
+            f"Проверьте логи и перезапустите: <code>/yt_prayer force</code>"
+        )
+
+
+def _esc_html(s: str) -> str:
+    return (
+        (s or "")
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+    )
+
+
+class PrayerComposeIncompleteError(RuntimeError):
+    """Молитва не доведена до «амИнь» после всех попыток."""
+
+    def __init__(self, info: ComposeFailureInfo):
+        self.info = info
+        super().__init__(
+            f"[{'EN' if info.lang == 'en' else 'RU'}] молитва неполная: "
+            f"«{info.trend}» — {info.human_reason()}"
+        )
 
 
 def _client() -> AsyncOpenAI:
@@ -116,6 +177,9 @@ async def compose_prayer_for_topic(
             "«Во имя Иисуса Христа, амИнь». Без длинных рассуждений — сразу текст молитвы."
         )
     last: Optional[str] = None
+    last_finish: Optional[str] = None
+    last_truncated = False
+    last_missing_amen = True
     for attempt in range(1, PRAYER_COMPOSE_MAX_ATTEMPTS + 1):
         if attempt >= PRAYER_COMPOSE_MAX_ATTEMPTS:
             thinking, effort = "disabled", None
@@ -134,6 +198,10 @@ async def compose_prayer_for_topic(
         if text:
             last = text
         truncated = (finish or "").lower() == "length"
+        if text:
+            last_finish = finish
+            last_truncated = truncated
+            last_missing_amen = not prayer_text_looks_complete(text, lang=lang)
         ok = (
             bool(text)
             and prayer_text_looks_complete(text, lang=lang)
@@ -158,4 +226,22 @@ async def compose_prayer_for_topic(
         )
         if attempt < PRAYER_COMPOSE_MAX_ATTEMPTS:
             await asyncio.sleep(0.4 * attempt)
-    return last
+    info = ComposeFailureInfo(
+        lang=lang,
+        trend=topic.trend,
+        brief=topic.brief,
+        attempts=PRAYER_COMPOSE_MAX_ATTEMPTS,
+        last_chars=len(last or ""),
+        last_finish=last_finish,
+        missing_amen=last_missing_amen,
+        truncated=last_truncated,
+    )
+    logger.error(
+        "compose failed after %s attempts lang=%s trend=%r reason=%s chars=%s",
+        PRAYER_COMPOSE_MAX_ATTEMPTS,
+        lang,
+        topic.trend,
+        info.human_reason(),
+        len(last or ""),
+    )
+    raise PrayerComposeIncompleteError(info)

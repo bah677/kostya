@@ -173,7 +173,7 @@ class YoutubePrayerFeature(BaseFeature):
                         parts.append("EN: " + ", ".join(result.themes_en))
                     msg = f"Готово за {result.day}. " + (" | ".join(parts) if parts else "ok")
                 else:
-                    msg = f"Ошибка: {result.error}"
+                    msg = f"⛔ Пайплайн остановлен по ошибке.\n{result.error}"
                 try:
                     await self._app.bot.send_message(progress_chat_id, msg)
                 except Exception:

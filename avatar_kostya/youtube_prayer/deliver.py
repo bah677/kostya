@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any, List, Optional, Sequence
+from typing import Any, List, Optional
 
 from aiogram.types import FSInputFile
 
 from youtube_prayer.covers import CoverPack
-from youtube_prayer.render import ShortClip
+from youtube_prayer.metadata import VideoMetadata
 from youtube_prayer.trends import PrayerTopic
 
 logger = logging.getLogger(__name__)
@@ -25,46 +25,60 @@ async def deliver_topic_pack(
     index: int,
     prayer_text: str,
     horizontal: Path,
-    shorts: Sequence[ShortClip],
     ogg: Optional[Path] = None,
     lang: str = "ru",
     covers: Optional[CoverPack] = None,
+    metadata: Optional[VideoMetadata] = None,
 ) -> None:
-    """Шлёт текст + обложки + горизонталь + 3 шортса (+ опц. voice) в forum topic."""
+    """Шлёт метаданные + текст + обложку + горизонталь (+ опц. voice) в forum topic."""
     lang_l = (lang or "ru").lower()
     lang_tag = "EN · US" if lang_l == "en" else "RU"
-    cover_title = covers.title if covers else ""
+    yt_title = (metadata.title if metadata else "") or (covers.title if covers else "")
+    thumb_title = ""
+    if metadata is not None:
+        thumb_title = metadata.thumbnail_title
+    elif covers is not None:
+        thumb_title = covers.thumbnail_title
     header = (
         f"🙏 <b>YouTube-молитва</b> · {lang_tag} · {day} · #{index}\n"
-        f"<b>Тренд:</b> { _esc(topic.trend) }\n"
-        f"<b>Бриф:</b> { _esc(topic.brief) }\n"
-        + (f"<b>Обложка:</b> {_esc(cover_title)}\n" if cover_title else "")
+        f"<b>Тренд:</b> {_esc(topic.trend)}\n"
+        f"<b>Бриф:</b> {_esc(topic.brief)}\n"
+        + (f"<b>Название:</b> {_esc(yt_title)}\n" if yt_title else "")
+        + (
+            f"<b>Обложка:</b> {_esc(thumb_title)}\n"
+            if thumb_title and thumb_title != yt_title
+            else ""
+        )
         + f"<b>B-roll:</b> <code>{_esc(topic.broll_query)}</code>"
     )
     kwargs = {"message_thread_id": int(topic_id)} if topic_id else {}
 
     await bot.send_message(chat_id, header, parse_mode="HTML", **kwargs)
 
+    if metadata is not None:
+        desc = metadata.description_with_hashtags
+        if len(desc) > 3900:
+            desc = desc[:3800] + "…"
+        await bot.send_message(
+            chat_id,
+            f"<b>Описание для YouTube</b>\n\n<pre>{_esc_pre(desc)}</pre>",
+            parse_mode="HTML",
+            **kwargs,
+        )
+
     if covers is not None:
         try:
             if covers.horizontal.is_file():
+                cap = covers.thumbnail_title or covers.title
                 await bot.send_photo(
                     chat_id,
                     FSInputFile(str(covers.horizontal), filename="cover_16x9.jpg"),
-                    caption=f"🖼 Обложка 16:9 · {_esc(covers.title)[:200]}",
-                    **kwargs,
-                )
-            if covers.vertical.is_file():
-                await bot.send_photo(
-                    chat_id,
-                    FSInputFile(str(covers.vertical), filename="cover_9x16.jpg"),
-                    caption=f"🖼 Обложка 9:16 · {_esc(covers.title)[:200]}",
+                    caption=f"🖼 Обложка 16:9 · {_esc(cap)[:200]}",
                     **kwargs,
                 )
         except Exception as e:
             logger.warning("send covers failed: %s", e)
 
-    # текст молитвы (обрезать если очень длинный)
     body = (prayer_text or "").strip()
     if len(body) > 3500:
         body = body[:3400] + "…"
@@ -86,24 +100,14 @@ async def deliver_topic_pack(
         except Exception as e:
             logger.warning("send_voice failed: %s", e)
 
+    cap_title = yt_title[:80] if yt_title else topic.trend[:80]
     await _send_video_or_doc(
         bot,
         chat_id,
         horizontal,
-        caption=f"16:9 полная · #{index} · {_esc(topic.trend)[:80]}",
+        caption=f"16:9 · #{index} · {_esc(cap_title)}",
         kwargs=kwargs,
     )
-    for sc in shorts:
-        await _send_video_or_doc(
-            bot,
-            chat_id,
-            sc.path,
-            caption=(
-                f"9:16 шорт {sc.index}/3 · #{index} · "
-                f"{sc.start_sec:.0f}–{sc.end_sec:.0f}с"
-            ),
-            kwargs=kwargs,
-        )
 
 
 def _esc(s: str) -> str:
@@ -113,6 +117,10 @@ def _esc(s: str) -> str:
         .replace("<", "&lt;")
         .replace(">", "&gt;")
     )
+
+
+def _esc_pre(s: str) -> str:
+    return _esc(s)
 
 
 async def _send_video_or_doc(
@@ -157,3 +165,18 @@ async def deliver_run_summary(
     kwargs = {"message_thread_id": int(topic_id)} if topic_id else {}
     text = f"✅ <b>YouTube-молитвы за {day}</b>\n" + "\n".join(lines)
     await bot.send_message(chat_id, text, parse_mode="HTML", **kwargs)
+
+
+async def deliver_pipeline_stopped(
+    bot: Any,
+    *,
+    chat_id: int,
+    topic_id: int,
+    text: str,
+) -> None:
+    """Сообщение в топик YouTube-молитв: пайплайн остановлен по ошибке."""
+    kwargs = {"message_thread_id": int(topic_id)} if topic_id else {}
+    try:
+        await bot.send_message(chat_id, text, parse_mode="HTML", **kwargs)
+    except Exception as e:
+        logger.error("deliver_pipeline_stopped failed: %s", e)
