@@ -3,13 +3,17 @@
 Создать черновик рассылки (planned, scheduled через 7 дней) + превью SUPER_ADMIN в личку.
 Кнопки: mdraft_ok_<id> / mdraft_no_<id> (обработчик в admin_mailing).
 
+В аудиторию всегда добавляются SUPER_ADMIN_ID и все из таблицы admins (контроль).
+
 Пример:
   cd /home/appuser/dev/kostya/biblia
   ./venv/bin/python scripts/create_mailing_draft_preview.py \\
     --env /home/appuser/biblia/.env \\
     --name "Сбой ответов 2026-07-24" \\
     --users-file /tmp/biblia_ds_users.txt \\
-    --text-file /tmp/outage_mail.txt
+    --text-file /tmp/outage_mail.txt \\
+    --button-text "🙏 Попробовать ещё раз" \\
+    --button-callback prayer_start
 """
 from __future__ import annotations
 
@@ -41,6 +45,16 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--text-file", required=True)
     p.add_argument("--token-env", default="BIBLIA_BOT_TOKEN",
                    help="Имя переменной с токеном бота")
+    p.add_argument(
+        "--button-text",
+        default="",
+        help="Текст inline-кнопки у получателя (вместе с --button-callback)",
+    )
+    p.add_argument(
+        "--button-callback",
+        default="",
+        help="callback_data кнопки, напр. prayer_start",
+    )
     return p.parse_args()
 
 
@@ -65,8 +79,8 @@ async def main() -> None:
         line = line.strip()
         if line.isdigit():
             uids.append(int(line))
-    uids = sorted(set(uids))
-    if not uids:
+    base_n = len(set(uids))
+    if base_n == 0:
         raise SystemExit("Пустой список получателей")
 
     db_url = (
@@ -78,6 +92,27 @@ async def main() -> None:
     await storage.initialize()
     mstore = MailingStorage(storage)
 
+    # Контроль: всегда добавляем SUPER_ADMIN + всех из таблицы admins
+    admin_ids: list[int] = []
+    try:
+        rows = await storage.list_telegram_admin_ids()
+        for r in rows or []:
+            tid = int(r.get("telegram_user_id") or 0)
+            if tid > 0:
+                admin_ids.append(tid)
+    except Exception as e:
+        print(f"WARN list_telegram_admin_ids: {e}", file=sys.stderr)
+    if super_id > 0:
+        admin_ids.append(super_id)
+    admin_ids = sorted(set(admin_ids))
+    uids = sorted(set(uids) | set(admin_ids))
+
+    buttons: list[dict] = []
+    btn_text = (args.button_text or "").strip()
+    btn_cb = (args.button_callback or "").strip()
+    if btn_text and btn_cb:
+        buttons = [{"text": btn_text, "style": "success", "callback": btn_cb}]
+
     scheduled_at = datetime.now(timezone.utc) + timedelta(days=7)
     campaign_row = {
         "name": args.name,
@@ -85,7 +120,7 @@ async def main() -> None:
         "parse_mode": "HTML",
         "scheduled_at": scheduled_at,
         "has_ref_link": False,
-        "buttons": [],
+        "buttons": buttons,
         "created_by": super_id,
         "media_type": None,
         "media_file_id": None,
@@ -112,10 +147,18 @@ async def main() -> None:
             ]
         ]
     )
+    btn_line = ""
+    if buttons:
+        b0 = buttons[0]
+        btn_line = (
+            f"Кнопка у юзера: <b>{b0['text']}</b> → <code>{b0['callback']}</code>\n"
+        )
     preview = (
         f"📧 <b>Черновик рассылки</b> <code>{cid}</code>\n"
         f"Имя: <code>{args.name}</code>\n"
-        f"Получателей в аудитории: <b>{added}</b> (из {len(uids)})\n"
+        f"Получателей в аудитории: <b>{added}</b> "
+        f"(база {base_n} + админы {len(admin_ids)})\n"
+        f"{btn_line}"
         f"Отправка: <i>сразу после «Запустить»</i>\n\n"
         f"——— текст ——-\n\n"
         f"{text}"

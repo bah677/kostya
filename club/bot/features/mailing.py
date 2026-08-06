@@ -1,6 +1,7 @@
 # bot/features/mailing.py
 import logging
 import asyncio
+import re
 from typing import Dict, Optional, Set, Tuple, List, Any, cast
 
 from aiogram.enums import ParseMode
@@ -432,6 +433,23 @@ class MailingFeature(BaseFeature):
         rest = text[limit:]
         return (chunk or None), rest
 
+    @staticmethod
+    def _split_last_paragraph(text: str) -> Tuple[str, str]:
+        """
+        Отделяет последний абзац (разделитель — пустая строка).
+
+        Несколько абзацев → (текст без последнего, последний).
+        Один абзац / пусто → (весь текст, "") — второе сообщение с кнопкой будет
+        «пустым» (как раньше, через ZWNB).
+        """
+        t = (text or "").strip()
+        if not t:
+            return "", ""
+        parts = [p.strip() for p in re.split(r"\n\s*\n+", t) if p.strip()]
+        if len(parts) <= 1:
+            return t, ""
+        return "\n\n".join(parts[:-1]), parts[-1]
+
     async def _send_text_parts(
         self,
         *,
@@ -479,9 +497,17 @@ class MailingFeature(BaseFeature):
             )
             return
 
+        # Медиа + inline-кнопки: кнопки нельзя повесить на video/photo/album —
+        # отделяем последний абзац во второе сообщение с клавиатурой.
+        # Один абзац → второе сообщение пустое (как раньше).
+        media_body = text
+        button_body = ""
+        if keyboard is not None:
+            media_body, button_body = self._split_last_paragraph(text)
+
         parcels = self._split_parcels(attachments)
         use_caption = len(parcels) == 1 and self._parcel_supports_caption(parcels[0])
-        remaining = text
+        remaining = media_body
         caption_text: Optional[str] = None
         if use_caption and remaining:
             caption_text, remaining = self._take_text_chunk(remaining, 1024)
@@ -551,14 +577,24 @@ class MailingFeature(BaseFeature):
                     parse_mode=pm if cap else None,
                 )
 
-        if not use_caption and text:
-            remaining = text
-        await self._send_text_parts(
-            user_id=user_id,
-            text=remaining,
-            parse_mode=pm,
-            keyboard=keyboard,
-        )
+        if not use_caption:
+            remaining = media_body
+
+        if (remaining or "").strip():
+            await self._send_text_parts(
+                user_id=user_id,
+                text=remaining,
+                parse_mode=pm,
+                keyboard=None,
+            )
+
+        if keyboard is not None:
+            await self._send_text_parts(
+                user_id=user_id,
+                text=button_body,
+                parse_mode=pm,
+                keyboard=keyboard,
+            )
 
     async def _deactivate_user(self, user_id: int):
         """Помечает пользователя неактивным после блокировки бота."""
