@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import calendar
 import html as html_mod
 import logging
 import os
@@ -11,7 +12,12 @@ from datetime import date, datetime, time, timedelta
 from typing import Any, Dict, List, Literal, Optional, Tuple
 from zoneinfo import ZoneInfo
 
-from bot.services.biblia_daily_report import _EXCLUDED_STATS_USER_IDS
+from bot.services.biblia_daily_report import (
+    _EXCLUDED_DONORS_FILTER,
+    _EXCLUDED_STATS_USER_IDS,
+    _EXCLUDED_USERS_FILTER_M,
+    _USER_MSG_FILTER,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +34,7 @@ POWER_USER_MIN_PRAYERS = max(
 )
 _USD_RUB_FALLBACK = 90.0
 
-PrayerScreen = Literal["ov", "dn", "an", "pw"]
+PrayerScreen = Literal["ov", "dn", "an", "pw", "cmp"]
 PrayerPeriod = Literal["7", "30", "all"]
 
 SCREEN_TITLES = {
@@ -36,6 +42,7 @@ SCREEN_TITLES = {
     "dn": "Донаты",
     "an": "Аномалии",
     "pw": f"≥{POWER_USER_MIN_PRAYERS}",
+    "cmp": "Сравнение",
 }
 PERIOD_LABELS = {
     "7": "7 дней",
@@ -1051,6 +1058,306 @@ def format_power_users(data: Dict[str, Any], period_label: str) -> str:
     return "\n".join(parts).rstrip()
 
 
+def _add_calendar_months(d: date, months: int) -> date:
+    y = d.year + (d.month - 1 + months) // 12
+    m = (d.month - 1 + months) % 12 + 1
+    last = calendar.monthrange(y, m)[1]
+    return date(y, m, min(d.day, last))
+
+
+def _shift_window_by_months(
+    start: datetime, end: datetime, months: int
+) -> Tuple[datetime, datetime]:
+    """Сдвигает [start, end) на N календарных месяцев (сохраняет длину по датам)."""
+    s_d = (start.astimezone(_MSK) if start.tzinfo else start.replace(tzinfo=_MSK)).date()
+    e_d = (end.astimezone(_MSK) if end.tzinfo else end.replace(tzinfo=_MSK)).date()
+    # end exclusive → last inclusive day
+    last_incl = e_d - timedelta(days=1)
+    new_start_d = _add_calendar_months(s_d, months)
+    new_last_d = _add_calendar_months(last_incl, months)
+    new_start = _msk_day_start(new_start_d)
+    new_end = _msk_day_start(new_last_d + timedelta(days=1))
+    return new_start, new_end
+
+
+def _fmt_range(start: datetime, end: datetime) -> str:
+    s = start.astimezone(_MSK) if start.tzinfo else start.replace(tzinfo=_MSK)
+    e = end.astimezone(_MSK) if end.tzinfo else end.replace(tzinfo=_MSK)
+    last = (e - timedelta(seconds=1)).date()
+    return f"{s.strftime('%d.%m')}–{last.strftime('%d.%m.%Y')}"
+
+
+def _delta_pct(cur: float, base: float) -> str:
+    if base == 0:
+        return "—" if cur == 0 else "+∞"
+    pct = 100.0 * (cur - base) / base
+    sign = "+" if pct >= 0 else ""
+    return f"{sign}{pct:.1f}%"
+
+
+@dataclass(frozen=True)
+class EraMetrics:
+    label: str
+    start: datetime
+    end: datetime
+    days: int
+    avg_dau: float
+    mau: int
+    revenue_rub: float
+    donations_n: int
+    prayer_gens: int = 0
+    cost_rub: float = 0.0
+
+    @property
+    def net_revenue_rub(self) -> float:
+        return float(self.revenue_rub) - float(self.cost_rub)
+
+
+async def _fetch_first_prayer_day(pool) -> Optional[date]:
+    async with pool.acquire() as conn:
+        row = await conn.fetchval(
+            f"""
+            SELECT MIN((created_at AT TIME ZONE 'Europe/Moscow')::date)
+            FROM token_usage
+            WHERE {_COMPOSE_KIND}
+              AND {_USER_OK}
+            """
+        )
+    return row
+
+
+async def _fetch_era_metrics(
+    pool, start: datetime, end: datetime, *, label: str
+) -> EraMetrics:
+    s_msk = start.astimezone(_MSK) if start.tzinfo else start.replace(tzinfo=_MSK)
+    e_msk = end.astimezone(_MSK) if end.tzinfo else end.replace(tzinfo=_MSK)
+    d0 = s_msk.date()
+    d1 = (e_msk - timedelta(seconds=1)).date()
+    if d1 < d0:
+        d1 = d0
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            f"""
+            WITH days AS (
+                SELECT generate_series($3::date, $4::date, '1 day'::interval)::date AS d
+            ),
+            daily AS (
+                SELECT
+                    (m.created_at AT TIME ZONE 'Europe/Moscow')::date AS d,
+                    COUNT(DISTINCT m.user_id)::int AS dau
+                FROM messages m
+                WHERE {_USER_MSG_FILTER}
+                  {_EXCLUDED_USERS_FILTER_M}
+                  AND m.created_at >= $1
+                  AND m.created_at < $2
+                GROUP BY 1
+            ),
+            mau AS (
+                SELECT COUNT(DISTINCT m.user_id)::int AS n
+                FROM messages m
+                WHERE {_USER_MSG_FILTER}
+                  {_EXCLUDED_USERS_FILTER_M}
+                  AND m.created_at >= $1
+                  AND m.created_at < $2
+            ),
+            rev AS (
+                SELECT
+                    COUNT(*)::int AS n,
+                    COALESCE(SUM(
+                        COALESCE(
+                            amount_rub,
+                            CASE WHEN UPPER(currency) = 'RUB' THEN amount ELSE NULL END
+                        )
+                    ), 0)::float AS rub
+                FROM payments
+                WHERE status = 'succeeded'
+                  AND order_id IS NULL
+                  {_EXCLUDED_DONORS_FILTER}
+                  AND COALESCE(completed_at, created_at) >= $1
+                  AND COALESCE(completed_at, created_at) < $2
+            )
+            SELECT
+                (SELECT COUNT(*)::int FROM days) AS days,
+                COALESCE(
+                    (SELECT AVG(COALESCE(daily.dau, 0))::float
+                     FROM days
+                     LEFT JOIN daily ON daily.d = days.d),
+                    0
+                ) AS avg_dau,
+                COALESCE((SELECT n FROM mau), 0)::int AS mau,
+                COALESCE((SELECT rub FROM rev), 0)::float AS revenue_rub,
+                COALESCE((SELECT n FROM rev), 0)::int AS donations_n
+            """,
+            start,
+            end,
+            d0,
+            d1,
+        )
+    return EraMetrics(
+        label=label,
+        start=start,
+        end=end,
+        days=int((row or {}).get("days") or 0),
+        avg_dau=float((row or {}).get("avg_dau") or 0),
+        mau=int((row or {}).get("mau") or 0),
+        revenue_rub=float((row or {}).get("revenue_rub") or 0),
+        donations_n=int((row or {}).get("donations_n") or 0),
+    )
+
+
+async def _count_prayer_gens(pool, start: datetime, end: datetime) -> int:
+    async with pool.acquire() as conn:
+        n = await conn.fetchval(
+            f"""
+            SELECT COUNT(*)::int
+            FROM token_usage
+            WHERE {_COMPOSE_KIND}
+              AND {_USER_OK}
+              AND created_at >= $1
+              AND created_at < $2
+            """,
+            start,
+            end,
+        )
+    return int(n or 0)
+
+
+async def _fetch_era_comparison(pool) -> Dict[str, Any]:
+    first_day = await _fetch_first_prayer_day(pool)
+    if first_day is None:
+        return {"empty": True}
+    now = _msk_now()
+    start = _msk_day_start(first_day)
+    end_aligned = _msk_day_start(now.date() + timedelta(days=1))
+
+    cur = await _fetch_era_metrics(
+        pool, start, end_aligned, label="С молитвами"
+    )
+    gens = await _count_prayer_gens(pool, start, end_aligned)
+    usd_rub, rate_src = await _usd_to_rub_rate()
+    cost_usd = gens * PRAYER_COST_USD
+    cost_rub = cost_usd * usd_rub
+    cur = EraMetrics(
+        label=cur.label,
+        start=cur.start,
+        end=cur.end,
+        days=cur.days,
+        avg_dau=cur.avg_dau,
+        mau=cur.mau,
+        revenue_rub=cur.revenue_rub,
+        donations_n=cur.donations_n,
+        prayer_gens=gens,
+        cost_rub=cost_rub,
+    )
+
+    m1_start, m1_end = _shift_window_by_months(start, end_aligned, -1)
+    m2_start, m2_end = _shift_window_by_months(start, end_aligned, -2)
+    prev1 = await _fetch_era_metrics(
+        pool, m1_start, m1_end, label="−1 мес (без молитв)"
+    )
+    prev2 = await _fetch_era_metrics(
+        pool, m2_start, m2_end, label="−2 мес (без молитв)"
+    )
+    return {
+        "empty": False,
+        "first_day": first_day,
+        "current": cur,
+        "prev1": prev1,
+        "prev2": prev2,
+        "usd_rub": usd_rub,
+        "rate_src": rate_src,
+        "cost_usd": cost_usd,
+    }
+
+
+def format_era_comparison(data: Dict[str, Any]) -> str:
+    parts = _header("cmp", "эпоха с молитвами", _msk_now())
+    if data.get("empty"):
+        parts.append("Нет данных о генерациях молитв.")
+        return "\n".join(parts)
+
+    first_day: date = data["first_day"]
+    cur: EraMetrics = data["current"]
+    prev1: EraMetrics = data["prev1"]
+    prev2: EraMetrics = data["prev2"]
+    usd_rub = float(data.get("usd_rub") or _USD_RUB_FALLBACK)
+    rate_src = str(data.get("rate_src") or "fallback")
+    cost_usd = float(data.get("cost_usd") or 0)
+
+    parts.extend(
+        [
+            (
+                f"<i>Окно = с первой голосовой молитвы "
+                f"({first_day.strftime('%d.%m.%Y')}) по сегодня, "
+                f"<b>{cur.days}</b> дн. Те же даты −1/−2 календарных месяца "
+                f"(до запуска функции).</i>"
+            ),
+            (
+                f"<i>Себестоимость молитв: {_fmt_usd(PRAYER_COST_USD)} $/шт · "
+                f"курс {usd_rub:.2f} ₽ ({html_mod.escape(rate_src)}).</i>"
+            ),
+            "",
+        ]
+    )
+
+    def _block(e: EraMetrics, *, is_current: bool = False, show_delta: bool = False) -> List[str]:
+        lines = [
+            f"<b>{html_mod.escape(e.label)}</b> · {_fmt_range(e.start, e.end)}",
+            (
+                f"• ср. DAU: <b>{e.avg_dau:.1f}</b> · "
+                f"MAU (уники окна): <b>{e.mau}</b>"
+            ),
+            (
+                f"• выручка: <b>{_fmt_money(e.revenue_rub)} ₽</b> "
+                f"({e.donations_n} дон.)"
+            ),
+        ]
+        if is_current:
+            lines.append(
+                (
+                    f"• себест. {e.prayer_gens} молитв: "
+                    f"<b>{_fmt_money(e.cost_rub)} ₽</b> "
+                    f"(~${_fmt_usd(cost_usd)})"
+                )
+            )
+            lines.append(
+                (
+                    f"• чистая выручка (выручка − себест.): "
+                    f"<b>{_fmt_money(e.net_revenue_rub)} ₽</b>"
+                )
+            )
+        if show_delta:
+            lines.append(
+                (
+                    f"• Δ «с молитвами» vs это окно: "
+                    f"DAU {_delta_pct(cur.avg_dau, e.avg_dau)} · "
+                    f"MAU {_delta_pct(float(cur.mau), float(e.mau))} · "
+                    f"выручка {_delta_pct(cur.revenue_rub, e.revenue_rub)}"
+                )
+            )
+            lines.append(
+                (
+                    f"• Δ чистая выручка vs это окно: "
+                    f"<b>{_delta_pct(cur.net_revenue_rub, e.revenue_rub)}</b> "
+                    f"({_fmt_money(cur.net_revenue_rub - e.revenue_rub)} ₽)"
+                )
+            )
+        return lines
+
+    parts.extend(_block(cur, is_current=True))
+    parts.append("")
+    parts.extend(_block(prev1, show_delta=True))
+    parts.append("")
+    parts.extend(_block(prev2, show_delta=True))
+    parts.append("")
+    parts.append(
+        "<i>DAU — ср. уников в день по user-сообщениям; "
+        "MAU — уники за всё окно; выручка — succeeded-донаты (order_id IS NULL); "
+        "чистая — только для эпохи с молитвами (минус себестоимость compose).</i>"
+    )
+    return "\n".join(parts)
+
+
 async def build_prayer_stats_html(
     pool,
     *,
@@ -1094,6 +1401,9 @@ async def build_prayer_stats_html(
                 pool, start, end, min_prayers=POWER_USER_MIN_PRAYERS
             )
             return format_power_users(data, label)
+        if screen == "cmp":
+            data = await _fetch_era_comparison(pool)
+            return format_era_comparison(data)
         data = await _fetch_anomalies(pool, start, end)
         return format_anomalies(data, label)
     except Exception as e:

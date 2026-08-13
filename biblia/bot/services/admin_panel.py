@@ -34,7 +34,7 @@ QUICK_REPORT_KEYS = {
     "live": CB_QUICK_LIVE,
 }
 
-_PRAYER_SCREENS = ("ov", "dn", "an", "pw")
+_PRAYER_SCREENS = ("ov", "dn", "an", "pw", "cmp")
 _PRAYER_PERIODS = ("7", "30", "all")
 
 
@@ -184,6 +184,7 @@ def build_prayer_stats_keyboard(screen: str, period: str) -> InlineKeyboardMarku
         "dn": "Донаты",
         "an": "Аномалии",
         "pw": f"≥{POWER_USER_MIN_PRAYERS}",
+        "cmp": "Сравн.",
     }
     period_labels = {"7": "7 дн", "30": "30 дн", "all": "Всё"}
     row1 = [
@@ -191,7 +192,7 @@ def build_prayer_stats_keyboard(screen: str, period: str) -> InlineKeyboardMarku
             text=("• " if s == screen else "") + screen_labels[s],
             callback_data=prayer_stats_cb(s, period),
         )
-        for s in ("ov", "dn")
+        for s in ("ov", "dn", "cmp")
     ]
     row2 = [
         InlineKeyboardButton(
@@ -200,24 +201,25 @@ def build_prayer_stats_keyboard(screen: str, period: str) -> InlineKeyboardMarku
         )
         for s in ("an", "pw")
     ]
-    period_row = [
-        InlineKeyboardButton(
-            text=("• " if p == period else "") + period_labels[p],
-            callback_data=prayer_stats_cb(screen, p),
-        )
-        for p in _PRAYER_PERIODS
-    ]
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            row1,
-            row2,
-            period_row,
+    # для сравнения эпох период 7/30/all не влияет — прячем ряд, чтобы не путать
+    rows: list = [row1, row2]
+    if screen != "cmp":
+        rows.append(
             [
                 InlineKeyboardButton(
-                    text="🔄 Обновить",
-                    callback_data=prayer_stats_cb(screen, period),
+                    text=("• " if p == period else "") + period_labels[p],
+                    callback_data=prayer_stats_cb(screen, p),
                 )
-            ],
-            [InlineKeyboardButton(text="« Назад", callback_data=CB_HOME)],
+                for p in _PRAYER_PERIODS
+            ]
+        )
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text="🔄 Обновить",
+                callback_data=prayer_stats_cb(screen, period),
+            )
         ]
     )
+    rows.append([InlineKeyboardButton(text="« Назад", callback_data=CB_HOME)])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
