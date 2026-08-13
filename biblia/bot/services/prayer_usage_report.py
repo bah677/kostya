@@ -1287,75 +1287,102 @@ def format_era_comparison(data: Dict[str, Any]) -> str:
     parts.extend(
         [
             (
-                f"<i>Окно = с первой голосовой молитвы "
-                f"({first_day.strftime('%d.%m.%Y')}) по сегодня, "
-                f"<b>{cur.days}</b> дн. Те же даты −1/−2 календарных месяца "
-                f"(до запуска функции).</i>"
+                f"<i>{cur.days} дн. с {first_day.strftime('%d.%m.%Y')} · "
+                f"те же даты −1/−2 мес. "
+                f"Δ = текущий − прошлое, % от прошлого.</i>"
             ),
             (
-                f"<i>Себестоимость молитв: {_fmt_usd(PRAYER_COST_USD)} $/шт · "
-                f"курс {usd_rub:.2f} ₽ ({html_mod.escape(rate_src)}).</i>"
+                f"<i>Окна: тек. {_fmt_range(cur.start, cur.end)} · "
+                f"−1 {_fmt_range(prev1.start, prev1.end)} · "
+                f"−2 {_fmt_range(prev2.start, prev2.end)}</i>"
+            ),
+            (
+                f"<i>Себест. молитв: {cur.prayer_gens}×{_fmt_usd(PRAYER_COST_USD)}$ "
+                f"= {_fmt_money(cur.cost_rub)} ₽ "
+                f"(~${_fmt_usd(cost_usd)}, курс {usd_rub:.2f} / {html_mod.escape(rate_src)})</i>"
             ),
             "",
         ]
     )
 
-    def _block(e: EraMetrics, *, is_current: bool = False, show_delta: bool = False) -> List[str]:
-        lines = [
-            f"<b>{html_mod.escape(e.label)}</b> · {_fmt_range(e.start, e.end)}",
-            (
-                f"• ср. DAU: <b>{e.avg_dau:.1f}</b> · "
-                f"MAU (уники окна): <b>{e.mau}</b>"
-            ),
-            (
-                f"• выручка: <b>{_fmt_money(e.revenue_rub)} ₽</b> "
-                f"({e.donations_n} дон.)"
-            ),
-        ]
-        if is_current:
-            lines.append(
-                (
-                    f"• себест. {e.prayer_gens} молитв: "
-                    f"<b>{_fmt_money(e.cost_rub)} ₽</b> "
-                    f"(~${_fmt_usd(cost_usd)})"
-                )
-            )
-            lines.append(
-                (
-                    f"• чистая выручка (выручка − себест.): "
-                    f"<b>{_fmt_money(e.net_revenue_rub)} ₽</b>"
-                )
-            )
-        if show_delta:
-            lines.append(
-                (
-                    f"• Δ «с молитвами» vs это окно: "
-                    f"DAU {_delta_pct(cur.avg_dau, e.avg_dau)} · "
-                    f"MAU {_delta_pct(float(cur.mau), float(e.mau))} · "
-                    f"выручка {_delta_pct(cur.revenue_rub, e.revenue_rub)}"
-                )
-            )
-            lines.append(
-                (
-                    f"• Δ чистая выручка vs это окно: "
-                    f"<b>{_delta_pct(cur.net_revenue_rub, e.revenue_rub)}</b> "
-                    f"({_fmt_money(cur.net_revenue_rub - e.revenue_rub)} ₽)"
-                )
-            )
-        return lines
+    def _vs(cur_v: float, past_v: float, *, kind: str = "int") -> str:
+        diff = cur_v - past_v
+        sign = "+" if diff >= 0 else ""
+        if kind == "dau":
+            diff_s = f"{sign}{diff:.1f}"
+        elif kind == "money":
+            diff_s = f"{sign}{_fmt_money(diff)}"
+        else:
+            diff_s = f"{sign}{int(round(diff))}"
+        return f"{diff_s} ({_delta_pct(cur_v, past_v)})"
 
-    parts.extend(_block(cur, is_current=True))
-    parts.append("")
-    parts.extend(_block(prev1, show_delta=True))
-    parts.append("")
-    parts.extend(_block(prev2, show_delta=True))
-    parts.append("")
-    parts.append(
-        "<i>DAU — ср. уников в день по user-сообщениям; "
-        "MAU — уники за всё окно; выручка — succeeded-донаты (order_id IS NULL); "
-        "чистая — только для эпохи с молитвами (минус себестоимость compose).</i>"
+    def _metric(
+        title: str,
+        cur_s: str,
+        p1_s: str,
+        p2_s: str,
+        cur_v: float,
+        p1_v: float,
+        p2_v: float,
+        *,
+        kind: str = "int",
+    ) -> None:
+        parts.append(f"<b>{title}</b>")
+        parts.append(f"• с молитвами: <b>{cur_s}</b>")
+        parts.append(f"• −1 мес: {p1_s} · Δ {_vs(cur_v, p1_v, kind=kind)}")
+        parts.append(f"• −2 мес: {p2_s} · Δ {_vs(cur_v, p2_v, kind=kind)}")
+        parts.append("")
+
+    _metric(
+        "ср. DAU",
+        f"{cur.avg_dau:.1f}",
+        f"{prev1.avg_dau:.1f}",
+        f"{prev2.avg_dau:.1f}",
+        cur.avg_dau,
+        prev1.avg_dau,
+        prev2.avg_dau,
+        kind="dau",
     )
-    return "\n".join(parts)
+    _metric(
+        "MAU (уники окна)",
+        str(cur.mau),
+        str(prev1.mau),
+        str(prev2.mau),
+        float(cur.mau),
+        float(prev1.mau),
+        float(prev2.mau),
+        kind="int",
+    )
+    _metric(
+        "Выручка, ₽",
+        f"{_fmt_money(cur.revenue_rub)} ({cur.donations_n} дон.)",
+        f"{_fmt_money(prev1.revenue_rub)} ({prev1.donations_n})",
+        f"{_fmt_money(prev2.revenue_rub)} ({prev2.donations_n})",
+        cur.revenue_rub,
+        prev1.revenue_rub,
+        prev2.revenue_rub,
+        kind="money",
+    )
+    _metric(
+        "Чистая выручка, ₽",
+        (
+            f"{_fmt_money(cur.net_revenue_rub)} "
+            f"(выручка {_fmt_money(cur.revenue_rub)} − себест. {_fmt_money(cur.cost_rub)})"
+        ),
+        f"{_fmt_money(prev1.revenue_rub)} (себест. 0)",
+        f"{_fmt_money(prev2.revenue_rub)} (себест. 0)",
+        cur.net_revenue_rub,
+        prev1.revenue_rub,
+        prev2.revenue_rub,
+        kind="money",
+    )
+
+    parts.append(
+        "<i>DAU — ср. уников/день (user-сообщения). "
+        "Чистая — только эпоха с молитвами: выручка минус себестоимость compose.</i>"
+    )
+    return "\n".join(parts).rstrip()
+
 
 
 async def build_prayer_stats_html(
