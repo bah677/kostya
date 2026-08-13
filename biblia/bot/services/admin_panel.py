@@ -16,6 +16,7 @@ from bot.texts.admin_panel_catalog import (
     entries_for_tier,
     groups_for_tier,
 )
+from bot.services.prayer_usage_report import POWER_USER_MIN_PRAYERS
 
 CB_PREFIX = "apnl"
 CB_HOME = f"{CB_PREFIX}:h"
@@ -33,7 +34,7 @@ QUICK_REPORT_KEYS = {
     "live": CB_QUICK_LIVE,
 }
 
-_PRAYER_SCREENS = ("ov", "dn", "an")
+_PRAYER_SCREENS = ("ov", "dn", "an", "pw")
 _PRAYER_PERIODS = ("7", "30", "all")
 
 
@@ -182,14 +183,22 @@ def build_prayer_stats_keyboard(screen: str, period: str) -> InlineKeyboardMarku
         "ov": "Обзор",
         "dn": "Донаты",
         "an": "Аномалии",
+        "pw": f"≥{POWER_USER_MIN_PRAYERS}",
     }
     period_labels = {"7": "7 дн", "30": "30 дн", "all": "Всё"}
-    screen_row = [
+    row1 = [
         InlineKeyboardButton(
             text=("• " if s == screen else "") + screen_labels[s],
             callback_data=prayer_stats_cb(s, period),
         )
-        for s in _PRAYER_SCREENS
+        for s in ("ov", "dn")
+    ]
+    row2 = [
+        InlineKeyboardButton(
+            text=("• " if s == screen else "") + screen_labels[s],
+            callback_data=prayer_stats_cb(s, period),
+        )
+        for s in ("an", "pw")
     ]
     period_row = [
         InlineKeyboardButton(
@@ -200,7 +209,8 @@ def build_prayer_stats_keyboard(screen: str, period: str) -> InlineKeyboardMarku
     ]
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            screen_row,
+            row1,
+            row2,
             period_row,
             [
                 InlineKeyboardButton(
