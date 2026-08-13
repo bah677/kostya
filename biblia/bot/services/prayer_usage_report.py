@@ -856,6 +856,8 @@ def format_donations(
     rate_src: str,
 ) -> str:
     parts = _header("dn", period_label, _msk_now())
+    cost_usd = generations * PRAYER_COST_USD
+    cost_rub = cost_usd * usd_rub if usd_rub else 0.0
     w24 = next((w for w in windows if w.hours == 24), None)
     don_after = float(w24.rub_sum) if w24 else 0.0
     don_all = float((w24.rub_sum + w24.other_rub) if w24 else 0.0)
@@ -871,22 +873,35 @@ def format_donations(
     parts.append("")
     parts.append(
         "<i>«После молитвы» = успешный донат в окне после compose того же user_id. "
-        "Это корреляция по времени, не доказанная причинность.</i>"
+        "Это корреляция по времени, не доказанная причинность. "
+        f"Затраты периода фиксированы: {_fmt_money(cost_rub)} ₽ "
+        f"(${_fmt_usd(cost_usd)}).</i>"
     )
     parts.append("")
     for w in windows:
         total_d = w.donations + w.other_donations
         total_rub = w.rub_sum + w.other_rub
+        net_after = w.rub_sum - cost_rub
+        cover_after = _pct(w.rub_sum, cost_rub) if cost_rub else "—"
+        cover_all = _pct(total_rub, cost_rub) if cost_rub else "—"
+        after_usd = (w.rub_sum / usd_rub) if usd_rub else 0.0
         parts.extend(
             [
                 f"<b>Окно {w.hours} ч</b>",
                 (
                     f"• после молитвы: <b>{w.donations}</b> дон. / "
                     f"<b>{w.users}</b> чел. / {_fmt_money(w.rub_sum)} ₽"
+                    f" (~${_fmt_usd(after_usd)})"
                 ),
                 (
                     f"• остальные донаты периода: <b>{w.other_donations}</b> / "
                     f"{_fmt_money(w.other_rub)} ₽"
+                ),
+                (
+                    f"• vs затраты: покрытие <b>{cover_after}</b> "
+                    f"(после молитвы) · <b>{cover_all}</b> (все донаты периода) · "
+                    f"баланс после−затраты: <b>{_fmt_money(net_after)} ₽</b>"
+                    f"{' ✅' if net_after >= 0 else ' ⚠️'}"
                 ),
                 (
                     f"• доля донатов после молитвы: "
