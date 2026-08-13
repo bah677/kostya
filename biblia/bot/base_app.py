@@ -182,8 +182,10 @@ class TelegramBotApp:
                     order_fulfillment=getattr(self, "order_fulfillment", None),
                     payment_feature=self.payment_feature,
                     feature_manager=self.feature_manager,
+                    check_interval=int(
+                        getattr(config, "PAYMENT_CHECK_LOOP_SEC", 60) or 60
+                    ),
                 )
-                self.payment_checker.check_interval = 60
                 await self.payment_checker.start()
                 logger.info("✅ PaymentChecker запущен")
 

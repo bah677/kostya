@@ -110,6 +110,7 @@ class PaymentsMixin:
             return False
 
     async def get_pending_payments(self, after_date: datetime) -> List[Dict[str, Any]]:
+        """Pending с created_at >= after_date (legacy / совместимость)."""
         try:
             async with self.get_connection() as conn:
                 rows = await conn.fetch(
@@ -125,6 +126,64 @@ class PaymentsMixin:
         except Exception as e:
             logger.error(f"❌ Failed to get pending payments: {e}")
             return []
+
+    async def get_pending_payments_for_poll(
+        self, *, max_age_days: int
+    ) -> List[Dict[str, Any]]:
+        """Все pending со ссылкой у провайдера, не старше max_age_days."""
+        try:
+            async with self.get_connection() as conn:
+                rows = await conn.fetch(
+                    """
+                    SELECT * FROM payments
+                    WHERE status = 'pending'
+                      AND provider_payment_id IS NOT NULL
+                      AND TRIM(provider_payment_id) <> ''
+                      AND created_at >= NOW() - ($1::text || ' days')::interval
+                    ORDER BY created_at ASC
+                    """,
+                    int(max_age_days),
+                )
+                return [dict(row) for row in rows]
+        except Exception as e:
+            logger.error("❌ Failed to get pending payments for poll: %s", e)
+            return []
+
+    async def touch_payment_checked_at(self, payment_id: int) -> None:
+        """Фиксирует момент опроса статуса у агрегатора."""
+        try:
+            async with self.get_connection() as conn:
+                await conn.execute(
+                    """
+                    UPDATE payments
+                       SET last_checked_at = NOW(),
+                           updated_at = NOW()
+                     WHERE id = $1
+                    """,
+                    payment_id,
+                )
+        except Exception as e:
+            logger.debug("touch_payment_checked_at %s: %s", payment_id, e)
+
+    async def expire_stale_pending_payments(self, *, max_age_days: int) -> int:
+        """pending старше max_age_days → expired. Возвращает число строк."""
+        try:
+            async with self.get_connection() as conn:
+                rows = await conn.fetch(
+                    """
+                    UPDATE payments
+                       SET status = 'expired',
+                           updated_at = NOW()
+                     WHERE status = 'pending'
+                       AND created_at < NOW() - ($1::text || ' days')::interval
+                 RETURNING id
+                    """,
+                    int(max_age_days),
+                )
+                return len(rows or [])
+        except Exception as e:
+            logger.error("❌ expire_stale_pending_payments failed: %s", e)
+            return 0
 
     async def update_payment_with_conversion(
         self,
