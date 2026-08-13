@@ -860,20 +860,37 @@ class PaymentFeature(BaseFeature):
         await self._show_currency_choice(callback, state, tariff)
     
     async def _handle_currency_selection(self, callback: CallbackQuery, state: FSMContext, currency: str, tariff_id: int):
-        """Обрабатывает выбор валюты и создает заказ."""
+        """Обрабатывает выбор валюты и создает заказ.
+
+        Цену и тариф всегда берём из БД по ``tariff_id`` из callback — не из FSM.
+        Иначе устаревшая кнопка валюты + state от другого тарифа даёт рассинхрон
+        (например 6 месяцев по цене 3 месяцев).
+        """
         user_id = callback.from_user.id
-        
+
         data = await state.get_data()
-        tariff = data.get('selected_tariff')
         is_gift = data.get('is_gift', False)
         is_member_gift = bool(data.get('is_member_gift'))
         gift_recipient_user_id = data.get('gift_recipient_user_id')
 
+        tariff = await self.user_storage.get_tariff_by_id(tariff_id)
         if not tariff:
             await render_user_screen(
                 callback.message, text=pay_txt.TARIFF_NOT_FOUND, edit=True
             )
             return
+
+        stale = data.get("selected_tariff") or {}
+        stale_id = stale.get("id")
+        if stale_id is not None and int(stale_id) != int(tariff_id):
+            logger.warning(
+                "currency selection tariff mismatch uid=%s callback_tariff=%s "
+                "state_tariff=%s — using DB price for callback tariff",
+                user_id,
+                tariff_id,
+                stale_id,
+            )
+        await state.update_data(selected_tariff=tariff)
 
         promo = None
         promo_guid = None
@@ -882,15 +899,15 @@ class PaymentFeature(BaseFeature):
             if promo:
                 promo_guid = str(promo.get("campaign_guid") or "")
                 tariff = apply_promo_to_tariffs([tariff], promo)[0]
-        
-        # Находим цену для выбранной валюты
+
+        # Находим цену для выбранной валюты (уже из БД / с промо поверх БД)
         price = next((p for p in tariff['prices'] if p['currency'].lower() == currency), None)
         if not price:
             await render_user_screen(
                 callback.message, text=pay_txt.PRICE_NOT_FOUND, edit=True
             )
             return
-        
+
         amount = price['amount']
         currency_code = 'RUB' if currency == 'rub' else 'USD'
         description = pay_txt.subscription_payment_description(

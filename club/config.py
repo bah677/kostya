@@ -36,6 +36,12 @@ class Config:
     PAYMENT_PROVIDER_USD: str = "bzb"
     #: Автопродление / save_payment_method (YooKassa). Пока выкл.; позже — и per-tariff.
     SUBSCRIPTION_RECURRING_ENABLED: bool = False
+    #: PaymentChecker: секунды между тиками цикла (внутри — деградирующий опрос).
+    PAYMENT_CHECK_LOOP_SEC: int = 60
+    #: Сколько дней опрашивать pending-ссылку, пока агрегатор не отменит / не истечёт.
+    PAYMENT_CHECK_MAX_AGE_DAYS: int = 30
+    #: Пауза между API-запросами к агрегатору в одном тике (анти-burst).
+    PAYMENT_CHECK_API_PAUSE_SEC: float = 0.25
 
     DB_HOST: str = ""
     DB_PORT: str = ""
@@ -479,6 +485,15 @@ def load_config() -> Config:
         ).strip().lower(),
         SUBSCRIPTION_RECURRING_ENABLED=_env_bool(
             "SUBSCRIPTION_RECURRING_ENABLED", False
+        ),
+        PAYMENT_CHECK_LOOP_SEC=max(
+            15, int(os.getenv("PAYMENT_CHECK_LOOP_SEC", "60") or "60")
+        ),
+        PAYMENT_CHECK_MAX_AGE_DAYS=max(
+            3, int(os.getenv("PAYMENT_CHECK_MAX_AGE_DAYS", "30") or "30")
+        ),
+        PAYMENT_CHECK_API_PAUSE_SEC=max(
+            0.0, float(os.getenv("PAYMENT_CHECK_API_PAUSE_SEC", "0.25") or "0.25")
         ),
         DB_HOST=os.getenv("DB_HOST", "localhost"),
         DB_PORT=os.getenv("DB_PORT", ""),

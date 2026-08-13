@@ -60,7 +60,8 @@ def _parse_args() -> argparse.Namespace:
 
 async def main() -> None:
     args = _parse_args()
-    load_dotenv(args.env)
+    # override=True: иначе локальный/шелл env или .env в cwd может указать на другую БД
+    load_dotenv(args.env, override=True)
 
     token = (os.getenv(args.token_env) or os.getenv("BOT_TOKEN") or "").strip()
     if not token:
