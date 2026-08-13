@@ -1223,17 +1223,37 @@ async def _count_prayer_gens(pool, start: datetime, end: datetime) -> int:
 
 
 async def _fetch_era_comparison(pool) -> Dict[str, Any]:
+    """
+    Стыкующиеся окна одной длины N (дней с первой молитвы по сегодня):
+
+    • с молитвами: [сегодня-(N-1), завтра)  = N дней
+    • −1: сразу перед ним, ещё N дней
+    • −2: сразу перед −1, ещё N дней
+
+    Пропусков между окнами нет.
+    """
     first_day = await _fetch_first_prayer_day(pool)
     if first_day is None:
         return {"empty": True}
     now = _msk_now()
-    start = _msk_day_start(first_day)
-    end_aligned = _msk_day_start(now.date() + timedelta(days=1))
+    today = now.date()
+    n_days = (today - first_day).days + 1
+    if n_days < 1:
+        n_days = 1
 
-    cur = await _fetch_era_metrics(
-        pool, start, end_aligned, label="С молитвами"
-    )
-    gens = await _count_prayer_gens(pool, start, end_aligned)
+    # текущее окно заканчивается завтра 00:00 (exclusive), начинается first_day
+    end0 = _msk_day_start(today + timedelta(days=1))
+    start0 = _msk_day_start(today - timedelta(days=n_days - 1))
+    # на всякий случай выровнять к first_day (источник N)
+    start0 = _msk_day_start(first_day)
+
+    end1 = start0
+    start1 = _msk_day_start(start0.date() - timedelta(days=n_days))
+    end2 = start1
+    start2 = _msk_day_start(start1.date() - timedelta(days=n_days))
+
+    cur = await _fetch_era_metrics(pool, start0, end0, label="С молитвами")
+    gens = await _count_prayer_gens(pool, start0, end0)
     usd_rub, rate_src = await _usd_to_rub_rate()
     cost_usd = gens * PRAYER_COST_USD
     cost_rub = cost_usd * usd_rub
@@ -1250,17 +1270,16 @@ async def _fetch_era_comparison(pool) -> Dict[str, Any]:
         cost_rub=cost_rub,
     )
 
-    m1_start, m1_end = _shift_window_by_months(start, end_aligned, -1)
-    m2_start, m2_end = _shift_window_by_months(start, end_aligned, -2)
     prev1 = await _fetch_era_metrics(
-        pool, m1_start, m1_end, label="−1 мес (без молитв)"
+        pool, start1, end1, label="−1 окно (без молитв)"
     )
     prev2 = await _fetch_era_metrics(
-        pool, m2_start, m2_end, label="−2 мес (без молитв)"
+        pool, start2, end2, label="−2 окно (без молитв)"
     )
     return {
         "empty": False,
         "first_day": first_day,
+        "n_days": n_days,
         "current": cur,
         "prev1": prev1,
         "prev2": prev2,
@@ -1280,6 +1299,7 @@ def format_era_comparison(data: Dict[str, Any]) -> str:
     cur: EraMetrics = data["current"]
     prev1: EraMetrics = data["prev1"]
     prev2: EraMetrics = data["prev2"]
+    n_days = int(data.get("n_days") or cur.days)
     usd_rub = float(data.get("usd_rub") or _USD_RUB_FALLBACK)
     rate_src = str(data.get("rate_src") or "fallback")
     cost_usd = float(data.get("cost_usd") or 0)
@@ -1287,12 +1307,12 @@ def format_era_comparison(data: Dict[str, Any]) -> str:
     parts.extend(
         [
             (
-                f"<i>{cur.days} дн. с {first_day.strftime('%d.%m.%Y')} · "
-                f"те же даты −1/−2 мес. "
+                f"<i>Окна по <b>{n_days}</b> дн. подряд без пропусков "
+                f"(с первой молитвы {first_day.strftime('%d.%m.%Y')} → сегодня). "
                 f"Δ = текущий − прошлое, % от прошлого.</i>"
             ),
             (
-                f"<i>Окна: тек. {_fmt_range(cur.start, cur.end)} · "
+                f"<i>тек. {_fmt_range(cur.start, cur.end)} · "
                 f"−1 {_fmt_range(prev1.start, prev1.end)} · "
                 f"−2 {_fmt_range(prev2.start, prev2.end)}</i>"
             ),
@@ -1329,8 +1349,8 @@ def format_era_comparison(data: Dict[str, Any]) -> str:
     ) -> None:
         parts.append(f"<b>{title}</b>")
         parts.append(f"• с молитвами: <b>{cur_s}</b>")
-        parts.append(f"• −1 мес: {p1_s} · Δ {_vs(cur_v, p1_v, kind=kind)}")
-        parts.append(f"• −2 мес: {p2_s} · Δ {_vs(cur_v, p2_v, kind=kind)}")
+        parts.append(f"• −1 окно: {p1_s} · Δ {_vs(cur_v, p1_v, kind=kind)}")
+        parts.append(f"• −2 окно: {p2_s} · Δ {_vs(cur_v, p2_v, kind=kind)}")
         parts.append("")
 
     _metric(
