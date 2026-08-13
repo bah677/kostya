@@ -1084,7 +1084,14 @@ def _fmt_range(start: datetime, end: datetime) -> str:
     s = start.astimezone(_MSK) if start.tzinfo else start.replace(tzinfo=_MSK)
     e = end.astimezone(_MSK) if end.tzinfo else end.replace(tzinfo=_MSK)
     last = (e - timedelta(seconds=1)).date()
-    return f"{s.strftime('%d.%m')}–{last.strftime('%d.%m.%Y')}"
+    return f"{s.strftime('%d.%m.%Y')}–{last.strftime('%d.%m.%Y')}"
+
+
+def _fmt_range_from_to(start: datetime, end: datetime) -> str:
+    s = start.astimezone(_MSK) if start.tzinfo else start.replace(tzinfo=_MSK)
+    e = end.astimezone(_MSK) if end.tzinfo else end.replace(tzinfo=_MSK)
+    last = (e - timedelta(seconds=1)).date()
+    return f"с {s.strftime('%d.%m.%Y')} по {last.strftime('%d.%m.%Y')}"
 
 
 def _delta_pct(cur: float, base: float) -> str:
@@ -1315,9 +1322,11 @@ def format_era_comparison(data: Dict[str, Any]) -> str:
     rate_src = str(data.get("rate_src") or "fallback")
     cost_usd = float(data.get("cost_usd") or 0)
 
-    range_bits = [f"тек. {_fmt_range(cur.start, cur.end)}"]
+    range_lines = [
+        f"• с молитвами: {_fmt_range_from_to(cur.start, cur.end)}",
+    ]
     for i, p in enumerate(prevs, start=1):
-        range_bits.append(f"−{i} {_fmt_range(p.start, p.end)}")
+        range_lines.append(f"• −{i}: {_fmt_range_from_to(p.start, p.end)}")
 
     parts.extend(
         [
@@ -1326,7 +1335,10 @@ def format_era_comparison(data: Dict[str, Any]) -> str:
                 f"(с первой молитвы {first_day.strftime('%d.%m.%Y')} → сегодня). "
                 f"Δ = текущий − прошлое, % от прошлого.</i>"
             ),
-            f"<i>{' · '.join(range_bits)}</i>",
+            "",
+            "<b>Периоды</b>",
+            *range_lines,
+            "",
             (
                 f"<i>Себест. молитв: {cur.prayer_gens}×{_fmt_usd(PRAYER_COST_USD)}$ "
                 f"= {_fmt_money(cur.cost_rub)} ₽ "
