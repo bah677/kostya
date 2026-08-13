@@ -1227,8 +1227,7 @@ async def _fetch_era_comparison(pool) -> Dict[str, Any]:
     Стыкующиеся окна одной длины N (дней с первой молитвы по сегодня):
 
     • с молитвами: [сегодня-(N-1), завтра)  = N дней
-    • −1: сразу перед ним, ещё N дней
-    • −2: сразу перед −1, ещё N дней
+    • −1…−4: сразу перед предыдущим, ещё N дней каждое
 
     Пропусков между окнами нет.
     """
@@ -1241,19 +1240,30 @@ async def _fetch_era_comparison(pool) -> Dict[str, Any]:
     if n_days < 1:
         n_days = 1
 
-    # текущее окно заканчивается завтра 00:00 (exclusive), начинается first_day
     end0 = _msk_day_start(today + timedelta(days=1))
-    start0 = _msk_day_start(today - timedelta(days=n_days - 1))
-    # на всякий случай выровнять к first_day (источник N)
     start0 = _msk_day_start(first_day)
 
-    end1 = start0
-    start1 = _msk_day_start(start0.date() - timedelta(days=n_days))
-    end2 = start1
-    start2 = _msk_day_start(start1.date() - timedelta(days=n_days))
+    # start/end для −1…−4: каждый блок N дней сразу перед предыдущим
+    windows: List[Tuple[datetime, datetime]] = [(start0, end0)]
+    for _ in range(4):
+        prev_start, _prev_end = windows[-1]
+        end_i = prev_start
+        start_i = _msk_day_start(prev_start.date() - timedelta(days=n_days))
+        windows.append((start_i, end_i))
 
-    cur = await _fetch_era_metrics(pool, start0, end0, label="С молитвами")
-    gens = await _count_prayer_gens(pool, start0, end0)
+    labels = [
+        "С молитвами",
+        "−1 окно (без молитв)",
+        "−2 окно (без молитв)",
+        "−3 окно (без молитв)",
+        "−4 окно (без молитв)",
+    ]
+    eras: List[EraMetrics] = []
+    for (w_start, w_end), label in zip(windows, labels):
+        eras.append(await _fetch_era_metrics(pool, w_start, w_end, label=label))
+
+    cur = eras[0]
+    gens = await _count_prayer_gens(pool, cur.start, cur.end)
     usd_rub, rate_src = await _usd_to_rub_rate()
     cost_usd = gens * PRAYER_COST_USD
     cost_rub = cost_usd * usd_rub
@@ -1269,20 +1279,17 @@ async def _fetch_era_comparison(pool) -> Dict[str, Any]:
         prayer_gens=gens,
         cost_rub=cost_rub,
     )
+    eras[0] = cur
 
-    prev1 = await _fetch_era_metrics(
-        pool, start1, end1, label="−1 окно (без молитв)"
-    )
-    prev2 = await _fetch_era_metrics(
-        pool, start2, end2, label="−2 окно (без молитв)"
-    )
     return {
         "empty": False,
         "first_day": first_day,
         "n_days": n_days,
         "current": cur,
-        "prev1": prev1,
-        "prev2": prev2,
+        "prev1": eras[1],
+        "prev2": eras[2],
+        "prev3": eras[3],
+        "prev4": eras[4],
         "usd_rub": usd_rub,
         "rate_src": rate_src,
         "cost_usd": cost_usd,
@@ -1297,12 +1304,20 @@ def format_era_comparison(data: Dict[str, Any]) -> str:
 
     first_day: date = data["first_day"]
     cur: EraMetrics = data["current"]
-    prev1: EraMetrics = data["prev1"]
-    prev2: EraMetrics = data["prev2"]
+    prevs = [
+        data["prev1"],
+        data["prev2"],
+        data["prev3"],
+        data["prev4"],
+    ]
     n_days = int(data.get("n_days") or cur.days)
     usd_rub = float(data.get("usd_rub") or _USD_RUB_FALLBACK)
     rate_src = str(data.get("rate_src") or "fallback")
     cost_usd = float(data.get("cost_usd") or 0)
+
+    range_bits = [f"тек. {_fmt_range(cur.start, cur.end)}"]
+    for i, p in enumerate(prevs, start=1):
+        range_bits.append(f"−{i} {_fmt_range(p.start, p.end)}")
 
     parts.extend(
         [
@@ -1311,11 +1326,7 @@ def format_era_comparison(data: Dict[str, Any]) -> str:
                 f"(с первой молитвы {first_day.strftime('%d.%m.%Y')} → сегодня). "
                 f"Δ = текущий − прошлое, % от прошлого.</i>"
             ),
-            (
-                f"<i>тек. {_fmt_range(cur.start, cur.end)} · "
-                f"−1 {_fmt_range(prev1.start, prev1.end)} · "
-                f"−2 {_fmt_range(prev2.start, prev2.end)}</i>"
-            ),
+            f"<i>{' · '.join(range_bits)}</i>",
             (
                 f"<i>Себест. молитв: {cur.prayer_gens}×{_fmt_usd(PRAYER_COST_USD)}$ "
                 f"= {_fmt_money(cur.cost_rub)} ₽ "
@@ -1339,48 +1350,40 @@ def format_era_comparison(data: Dict[str, Any]) -> str:
     def _metric(
         title: str,
         cur_s: str,
-        p1_s: str,
-        p2_s: str,
+        past_ss: List[str],
         cur_v: float,
-        p1_v: float,
-        p2_v: float,
+        past_vs: List[float],
         *,
         kind: str = "int",
     ) -> None:
         parts.append(f"<b>{title}</b>")
         parts.append(f"• с молитвами: <b>{cur_s}</b>")
-        parts.append(f"• −1 окно: {p1_s} · Δ {_vs(cur_v, p1_v, kind=kind)}")
-        parts.append(f"• −2 окно: {p2_s} · Δ {_vs(cur_v, p2_v, kind=kind)}")
+        for i, (ps, pv) in enumerate(zip(past_ss, past_vs), start=1):
+            parts.append(f"• −{i}: {ps} · Δ {_vs(cur_v, pv, kind=kind)}")
         parts.append("")
 
     _metric(
         "ср. DAU",
         f"{cur.avg_dau:.1f}",
-        f"{prev1.avg_dau:.1f}",
-        f"{prev2.avg_dau:.1f}",
+        [f"{p.avg_dau:.1f}" for p in prevs],
         cur.avg_dau,
-        prev1.avg_dau,
-        prev2.avg_dau,
+        [p.avg_dau for p in prevs],
         kind="dau",
     )
     _metric(
         "MAU (уники окна)",
         str(cur.mau),
-        str(prev1.mau),
-        str(prev2.mau),
+        [str(p.mau) for p in prevs],
         float(cur.mau),
-        float(prev1.mau),
-        float(prev2.mau),
+        [float(p.mau) for p in prevs],
         kind="int",
     )
     _metric(
         "Выручка, ₽",
         f"{_fmt_money(cur.revenue_rub)} ({cur.donations_n} дон.)",
-        f"{_fmt_money(prev1.revenue_rub)} ({prev1.donations_n})",
-        f"{_fmt_money(prev2.revenue_rub)} ({prev2.donations_n})",
+        [f"{_fmt_money(p.revenue_rub)} ({p.donations_n})" for p in prevs],
         cur.revenue_rub,
-        prev1.revenue_rub,
-        prev2.revenue_rub,
+        [p.revenue_rub for p in prevs],
         kind="money",
     )
     _metric(
@@ -1389,11 +1392,9 @@ def format_era_comparison(data: Dict[str, Any]) -> str:
             f"{_fmt_money(cur.net_revenue_rub)} "
             f"(выручка {_fmt_money(cur.revenue_rub)} − себест. {_fmt_money(cur.cost_rub)})"
         ),
-        f"{_fmt_money(prev1.revenue_rub)} (себест. 0)",
-        f"{_fmt_money(prev2.revenue_rub)} (себест. 0)",
+        [f"{_fmt_money(p.revenue_rub)} (себест. 0)" for p in prevs],
         cur.net_revenue_rub,
-        prev1.revenue_rub,
-        prev2.revenue_rub,
+        [p.revenue_rub for p in prevs],
         kind="money",
     )
 
@@ -1401,7 +1402,10 @@ def format_era_comparison(data: Dict[str, Any]) -> str:
         "<i>DAU — ср. уников/день (user-сообщения). "
         "Чистая — только эпоха с молитвами: выручка минус себестоимость compose.</i>"
     )
-    return "\n".join(parts).rstrip()
+    text = "\n".join(parts).rstrip()
+    if len(text) > 4000:
+        text = text[:3990] + "\n…"
+    return text
 
 
 
