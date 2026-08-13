@@ -17,15 +17,17 @@ from bot.services.admin_panel import (
     CB_PREFIX,
     build_admin_panel_group,
     build_admin_panel_home,
+    build_prayer_stats_keyboard,
     build_quick_report_keyboard_for,
     parse_admin_panel_group_cb,
     parse_admin_panel_quick_cb,
+    parse_prayer_stats_cb,
 )
 from bot.services.admin_quick_reports import (
     build_last_campaigns_report_html,
-    build_prayer_usage_report_html,
 )
 from bot.services.bot_live_status import build_bot_live_status_html
+from bot.services.prayer_usage_report import build_prayer_stats_html
 from bot.texts.admin_panel_catalog import HelpTier
 from bot.utils.admin_channel import resolved_admin_group_id
 
@@ -98,7 +100,7 @@ class AdminPanelFeature(BaseFeature):
         if key == "mail3":
             return await build_last_campaigns_report_html(pool)
         if key == "prayer":
-            return await build_prayer_usage_report_html(pool)
+            return await build_prayer_stats_html(pool, screen="ov", period="30")
         return "❌ Неизвестный отчёт."
 
     async def _cb_panel(self, query: CallbackQuery) -> None:
@@ -111,6 +113,28 @@ class AdminPanelFeature(BaseFeature):
         tier = await self._resolve_tier(query.from_user.id)
         data = query.data or ""
         try:
+            prayer = parse_prayer_stats_cb(data)
+            if prayer:
+                screen, period = prayer
+                await query.answer("⏳")
+                pool = getattr(self.user_storage, "pool", None)
+                if pool is None:
+                    text = "❌ База данных недоступна."
+                else:
+                    text = await build_prayer_stats_html(
+                        pool, screen=screen, period=period  # type: ignore[arg-type]
+                    )
+                if len(text) > 4000:
+                    text = text[:3990] + "\n…"
+                kb = build_prayer_stats_keyboard(screen, period)
+                await query.message.edit_text(
+                    text,
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=kb,
+                    disable_web_page_preview=True,
+                )
+                return
+
             quick_key = parse_admin_panel_quick_cb(data)
             if quick_key:
                 await query.answer("⏳")

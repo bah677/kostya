@@ -24,12 +24,17 @@ CB_QUICK_PREFIX = f"{CB_PREFIX}:q:"
 CB_QUICK_MAIL3 = f"{CB_QUICK_PREFIX}mail3"
 CB_QUICK_PRAYER = f"{CB_QUICK_PREFIX}prayer"
 CB_QUICK_LIVE = f"{CB_QUICK_PREFIX}live"
+# Молитвы: apnl:pr:{screen}:{period}  screen=ov|dn|an  period=7|30|all
+CB_PRAYER_PREFIX = f"{CB_PREFIX}:pr:"
 
 QUICK_REPORT_KEYS = {
     "mail3": CB_QUICK_MAIL3,
     "prayer": CB_QUICK_PRAYER,
     "live": CB_QUICK_LIVE,
 }
+
+_PRAYER_SCREENS = ("ov", "dn", "an")
+_PRAYER_PERIODS = ("7", "30", "all")
 
 
 def admin_panel_cb_group(group_key: str) -> str:
@@ -48,6 +53,26 @@ def parse_admin_panel_quick_cb(data: str) -> Optional[str]:
         return None
     key = data[len(CB_QUICK_PREFIX) :].strip()
     return key if key in QUICK_REPORT_KEYS else None
+
+
+def prayer_stats_cb(screen: str, period: str) -> str:
+    return f"{CB_PRAYER_PREFIX}{screen}:{period}"
+
+
+def parse_prayer_stats_cb(data: str) -> Optional[Tuple[str, str]]:
+    """Возвращает (screen, period) или None."""
+    if data == CB_QUICK_PRAYER:
+        return "ov", "30"
+    if not data.startswith(CB_PRAYER_PREFIX):
+        return None
+    rest = data[len(CB_PRAYER_PREFIX) :].strip()
+    parts = rest.split(":")
+    if len(parts) != 2:
+        return None
+    screen, period = parts[0].strip(), parts[1].strip()
+    if screen not in _PRAYER_SCREENS or period not in _PRAYER_PERIODS:
+        return None
+    return screen, period
 
 
 def _format_entries(entries: List[AdminEntry]) -> str:
@@ -79,7 +104,7 @@ def _quick_report_rows() -> List[List[InlineKeyboardButton]]:
         [
             InlineKeyboardButton(
                 text="🙏 Статистика молитв",
-                callback_data=CB_QUICK_PRAYER,
+                callback_data=prayer_stats_cb("ov", "30"),
             )
         ],
     ]
@@ -140,9 +165,49 @@ def build_admin_panel_group(
 
 def build_quick_report_keyboard_for(key: str) -> InlineKeyboardMarkup:
     refresh_cb = QUICK_REPORT_KEYS.get(key, CB_HOME)
+    if key == "prayer":
+        return build_prayer_stats_keyboard("ov", "30")
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="🔄 Обновить", callback_data=refresh_cb)],
+            [InlineKeyboardButton(text="« Назад", callback_data=CB_HOME)],
+        ]
+    )
+
+
+def build_prayer_stats_keyboard(screen: str, period: str) -> InlineKeyboardMarkup:
+    screen = screen if screen in _PRAYER_SCREENS else "ov"
+    period = period if period in _PRAYER_PERIODS else "30"
+    screen_labels = {
+        "ov": "Обзор",
+        "dn": "Донаты",
+        "an": "Аномалии",
+    }
+    period_labels = {"7": "7 дн", "30": "30 дн", "all": "Всё"}
+    screen_row = [
+        InlineKeyboardButton(
+            text=("• " if s == screen else "") + screen_labels[s],
+            callback_data=prayer_stats_cb(s, period),
+        )
+        for s in _PRAYER_SCREENS
+    ]
+    period_row = [
+        InlineKeyboardButton(
+            text=("• " if p == period else "") + period_labels[p],
+            callback_data=prayer_stats_cb(screen, p),
+        )
+        for p in _PRAYER_PERIODS
+    ]
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            screen_row,
+            period_row,
+            [
+                InlineKeyboardButton(
+                    text="🔄 Обновить",
+                    callback_data=prayer_stats_cb(screen, period),
+                )
+            ],
             [InlineKeyboardButton(text="« Назад", callback_data=CB_HOME)],
         ]
     )

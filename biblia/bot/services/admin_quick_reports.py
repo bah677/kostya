@@ -4,14 +4,10 @@ from __future__ import annotations
 
 import html as html_mod
 import logging
-from datetime import date, datetime, time, timedelta
-from typing import Any, Dict, List, Optional
+from datetime import datetime
+from typing import Any, Dict, List
 from zoneinfo import ZoneInfo
 
-from bot.services.biblia_daily_report import (
-    BibliaDailyReportCollector,
-    _EXCLUDED_STATS_USER_IDS,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -28,11 +24,6 @@ _STATUS_LABELS = {
 
 def _msk_now() -> datetime:
     return datetime.now(_MSK)
-
-
-def _msk_day_bounds(day: date) -> tuple[datetime, datetime]:
-    start = datetime.combine(day, time.min, tzinfo=_MSK)
-    return start, start + timedelta(days=1)
 
 
 def _fmt_dt(value: Any) -> str:
@@ -142,69 +133,13 @@ def format_last_campaigns_report(campaigns: List[Dict[str, Any]]) -> str:
     return "\n".join(parts).rstrip()
 
 
-async def format_prayer_usage_report(pool) -> str:
-    collector = BibliaDailyReportCollector(pool)
-    now = _msk_now()
-    today = now.date()
-    today_start, today_end = _msk_day_bounds(today)
-    yday_start, yday_end = _msk_day_bounds(today - timedelta(days=1))
-    d7_start = today_start - timedelta(days=6)
-    d30_start = today_start - timedelta(days=29)
-    epoch = datetime(2020, 1, 1, tzinfo=_MSK)
-
-    today_s = await collector.get_prayer_generation_stats(today_start, today_end)
-    yday_s = await collector.get_prayer_generation_stats(yday_start, yday_end)
-    d7_s = await collector.get_prayer_generation_stats(d7_start, today_end)
-    d30_s = await collector.get_prayer_generation_stats(d30_start, today_end)
-    all_s = await collector.get_prayer_generation_stats(epoch, today_end)
-
-    first_at: Optional[datetime] = None
-    last_at: Optional[datetime] = None
-    excl = ", ".join(str(uid) for uid in _EXCLUDED_STATS_USER_IDS)
-    async with pool.acquire() as conn:
-        row = await conn.fetchrow(
-            f"""
-            SELECT MIN(created_at) AS first_at, MAX(created_at) AS last_at
-            FROM token_usage
-            WHERE request_kind LIKE 'personal_prayer_compose%'
-              AND user_id NOT IN ({excl})
-            """
-        )
-        if row:
-            first_at = row["first_at"]
-            last_at = row["last_at"]
-
-    now_s = now.strftime("%d.%m.%Y %H:%M MSK")
-    excl_s = ", ".join(str(uid) for uid in _EXCLUDED_STATS_USER_IDS)
-
-    def _line(label: str, stats: Dict[str, int]) -> str:
-        return (
-            f"• {label}: <b>{int(stats.get('generations_count') or 0)}</b> генераций / "
-            f"<b>{int(stats.get('unique_users') or 0)}</b> уников"
-        )
-
-    return "\n".join(
-        [
-            "<b>🙏 Голосовая молитва — использование</b>",
-            f"<i>на сейчас · {html_mod.escape(now_s)}</i>",
-            f"<i>без учёта {html_mod.escape(excl_s)}</i>",
-            "",
-            _line("Сегодня", today_s),
-            _line("Вчера", yday_s),
-            _line("7 дней", d7_s),
-            _line("30 дней", d30_s),
-            _line("Всего", all_s),
-            "",
-            f"• первая: {_fmt_dt(first_at)}",
-            f"• последняя: {_fmt_dt(last_at)}",
-        ]
-    )
-
-
 async def build_last_campaigns_report_html(pool) -> str:
     campaigns = await fetch_last_campaigns(pool, limit=3)
     return format_last_campaigns_report(campaigns)
 
 
 async def build_prayer_usage_report_html(pool) -> str:
-    return await format_prayer_usage_report(pool)
+    """Кнопка /adm «Статистика молитв» → обзор за 30 дней (см. prayer_usage_report)."""
+    from bot.services.prayer_usage_report import build_prayer_stats_html
+
+    return await build_prayer_stats_html(pool, screen="ov", period="30")
