@@ -7,6 +7,7 @@ import calendar
 import html as html_mod
 import logging
 import os
+import re
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 from typing import Any, Dict, List, Literal, Optional, Tuple
@@ -35,7 +36,8 @@ POWER_USER_MIN_PRAYERS = max(
 _USD_RUB_FALLBACK = 90.0
 
 PrayerScreen = Literal["ov", "dn", "an", "pw", "cmp"]
-PrayerPeriod = Literal["7", "30", "all"]
+# "7"/"30"/"all"/"yday" или ISO-дата YYYY-MM-DD (один календарный день МСК)
+PrayerPeriod = str
 
 SCREEN_TITLES = {
     "ov": "Обзор",
@@ -48,6 +50,7 @@ PERIOD_LABELS = {
     "7": "7 дней",
     "30": "30 дней",
     "all": "всё время",
+    "yday": "вчера",
 }
 
 _COMPOSE_KIND = "request_kind LIKE 'personal_prayer_compose%'"
@@ -56,6 +59,36 @@ _USER_OK = f"user_id NOT IN ({_EXCL_SQL})"
 _DON_OK = (
     f"status = 'succeeded' AND order_id IS NULL AND user_id NOT IN ({_EXCL_SQL})"
 )
+
+_ISO_DAY_RE = re.compile(r"^(\d{4})-(\d{2})-(\d{2})$")
+
+
+def parse_prayer_period_token(raw: str) -> Optional[str]:
+    """Нормализует период: 7|30|all|yday|YYYY-MM-DD; иначе None."""
+    token = (raw or "").strip().lower()
+    if token in ("7", "30", "all", "yday"):
+        return token
+    m = _ISO_DAY_RE.match((raw or "").strip())
+    if not m:
+        return None
+    try:
+        date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+    except ValueError:
+        return None
+    return f"{m.group(1)}-{m.group(2)}-{m.group(3)}"
+
+
+def parse_user_prayer_date(raw: str) -> Optional[date]:
+    """ДД.ММ.ГГГГ / ДД.ММ.ГГ / ГГГГ-ММ-ДД → date."""
+    s = (raw or "").strip()
+    if not s:
+        return None
+    for fmt in ("%Y-%m-%d", "%d.%m.%Y", "%d.%m.%y", "%d/%m/%Y"):
+        try:
+            return datetime.strptime(s, fmt).date()
+        except ValueError:
+            continue
+    return None
 
 
 def _msk_now() -> datetime:
@@ -70,13 +103,26 @@ def period_bounds(period: PrayerPeriod) -> Tuple[datetime, datetime, str]:
     now = _msk_now()
     end = now + timedelta(seconds=1)
     today = now.date()
-    if period == "7":
+    token = parse_prayer_period_token(period) or "30"
+    if token == "7":
         start = _msk_day_start(today - timedelta(days=6))
-    elif period == "30":
+        return start, end, PERIOD_LABELS["7"]
+    if token == "30":
         start = _msk_day_start(today - timedelta(days=29))
-    else:
+        return start, end, PERIOD_LABELS["30"]
+    if token == "all":
         start = datetime(2020, 1, 1, tzinfo=_MSK)
-    return start, end, PERIOD_LABELS[period]
+        return start, end, PERIOD_LABELS["all"]
+    if token == "yday":
+        day = today - timedelta(days=1)
+        start = _msk_day_start(day)
+        end = _msk_day_start(today)
+        return start, end, f"вчера ({day.strftime('%d.%m.%Y')})"
+    # ISO day
+    day = date.fromisoformat(token)
+    start = _msk_day_start(day)
+    end = _msk_day_start(day + timedelta(days=1))
+    return start, end, day.strftime("%d.%m.%Y")
 
 
 def _fmt_dt(value: Any) -> str:

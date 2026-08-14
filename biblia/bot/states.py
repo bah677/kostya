@@ -19,3 +19,8 @@ class ScriptureChallengeStates(StatesGroup):
     duration = State()
     delivery_time = State()
     planning = State()
+
+
+class AdminPanelStates(StatesGroup):
+    """Админ-панель: ввод параметров отчётов."""
+    waiting_prayer_stats_date = State()

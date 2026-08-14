@@ -25,8 +25,10 @@ CB_QUICK_PREFIX = f"{CB_PREFIX}:q:"
 CB_QUICK_MAIL3 = f"{CB_QUICK_PREFIX}mail3"
 CB_QUICK_PRAYER = f"{CB_QUICK_PREFIX}prayer"
 CB_QUICK_LIVE = f"{CB_QUICK_PREFIX}live"
-# Молитвы: apnl:pr:{screen}:{period}  screen=ov|dn|an  period=7|30|all
+# Молитвы: apnl:pr:{screen}:{period}  period=7|30|all|yday|YYYY-MM-DD
+# Запрос даты: apnl:pr:ask:{screen}
 CB_PRAYER_PREFIX = f"{CB_PREFIX}:pr:"
+CB_PRAYER_ASK_PREFIX = f"{CB_PRAYER_PREFIX}ask:"
 
 QUICK_REPORT_KEYS = {
     "mail3": CB_QUICK_MAIL3,
@@ -35,7 +37,7 @@ QUICK_REPORT_KEYS = {
 }
 
 _PRAYER_SCREENS = ("ov", "dn", "an", "pw", "cmp")
-_PRAYER_PERIODS = ("7", "30", "all")
+_PRAYER_PERIODS = ("7", "30", "all", "yday")
 
 
 def admin_panel_cb_group(group_key: str) -> str:
@@ -60,18 +62,37 @@ def prayer_stats_cb(screen: str, period: str) -> str:
     return f"{CB_PRAYER_PREFIX}{screen}:{period}"
 
 
+def prayer_stats_ask_date_cb(screen: str) -> str:
+    return f"{CB_PRAYER_ASK_PREFIX}{screen}"
+
+
+def parse_prayer_stats_ask_cb(data: str) -> Optional[str]:
+    """Экран, для которого ждём дату, или None."""
+    if not data.startswith(CB_PRAYER_ASK_PREFIX):
+        return None
+    screen = data[len(CB_PRAYER_ASK_PREFIX) :].strip()
+    return screen if screen in _PRAYER_SCREENS and screen != "cmp" else None
+
+
 def parse_prayer_stats_cb(data: str) -> Optional[Tuple[str, str]]:
     """Возвращает (screen, period) или None."""
+    from bot.services.prayer_usage_report import parse_prayer_period_token
+
     if data == CB_QUICK_PRAYER:
         return "ov", "30"
     if not data.startswith(CB_PRAYER_PREFIX):
+        return None
+    if data.startswith(CB_PRAYER_ASK_PREFIX):
         return None
     rest = data[len(CB_PRAYER_PREFIX) :].strip()
     parts = rest.split(":")
     if len(parts) != 2:
         return None
-    screen, period = parts[0].strip(), parts[1].strip()
-    if screen not in _PRAYER_SCREENS or period not in _PRAYER_PERIODS:
+    screen, period_raw = parts[0].strip(), parts[1].strip()
+    if screen not in _PRAYER_SCREENS:
+        return None
+    period = parse_prayer_period_token(period_raw)
+    if not period:
         return None
     return screen, period
 
@@ -177,8 +198,10 @@ def build_quick_report_keyboard_for(key: str) -> InlineKeyboardMarkup:
 
 
 def build_prayer_stats_keyboard(screen: str, period: str) -> InlineKeyboardMarkup:
+    from bot.services.prayer_usage_report import parse_prayer_period_token
+
     screen = screen if screen in _PRAYER_SCREENS else "ov"
-    period = period if period in _PRAYER_PERIODS else "30"
+    period_norm = parse_prayer_period_token(period) or "30"
     screen_labels = {
         "ov": "Обзор",
         "dn": "Донаты",
@@ -186,38 +209,51 @@ def build_prayer_stats_keyboard(screen: str, period: str) -> InlineKeyboardMarku
         "pw": f"≥{POWER_USER_MIN_PRAYERS}",
         "cmp": "Сравн.",
     }
-    period_labels = {"7": "7 дн", "30": "30 дн", "all": "Всё"}
+    period_labels = {"7": "7 дн", "30": "30 дн", "all": "Всё", "yday": "Вчера"}
     row1 = [
         InlineKeyboardButton(
             text=("• " if s == screen else "") + screen_labels[s],
-            callback_data=prayer_stats_cb(s, period),
+            callback_data=prayer_stats_cb(s, period_norm),
         )
         for s in ("ov", "dn", "cmp")
     ]
     row2 = [
         InlineKeyboardButton(
             text=("• " if s == screen else "") + screen_labels[s],
-            callback_data=prayer_stats_cb(s, period),
+            callback_data=prayer_stats_cb(s, period_norm),
         )
         for s in ("an", "pw")
     ]
-    # для сравнения эпох период 7/30/all не влияет — прячем ряд, чтобы не путать
     rows: list = [row1, row2]
     if screen != "cmp":
         rows.append(
             [
                 InlineKeyboardButton(
-                    text=("• " if p == period else "") + period_labels[p],
+                    text=("• " if p == period_norm else "") + period_labels[p],
                     callback_data=prayer_stats_cb(screen, p),
                 )
-                for p in _PRAYER_PERIODS
+                for p in ("7", "30", "all", "yday")
+            ]
+        )
+        date_mark = "• " if len(period_norm) == 10 and period_norm[4] == "-" else ""
+        date_label = (
+            f"{date_mark}📅 {period_norm[8:10]}.{period_norm[5:7]}.{period_norm[0:4]}"
+            if date_mark
+            else "📅 Дата…"
+        )
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=date_label,
+                    callback_data=prayer_stats_ask_date_cb(screen),
+                )
             ]
         )
     rows.append(
         [
             InlineKeyboardButton(
                 text="🔄 Обновить",
-                callback_data=prayer_stats_cb(screen, period),
+                callback_data=prayer_stats_cb(screen, period_norm),
             )
         ]
     )
