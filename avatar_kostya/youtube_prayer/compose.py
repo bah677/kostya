@@ -128,8 +128,16 @@ async def deepseek_complete(
             client.chat.completions.create(**kwargs),
             timeout=_WAIT_SEC,
         )
+    except asyncio.TimeoutError:
+        logger.error("deepseek_complete timeout after %.0fs", _WAIT_SEC)
+        return None, None
     except Exception as e:
-        logger.error("deepseek_complete failed: %s", e)
+        logger.error(
+            "deepseek_complete failed: %s: %r",
+            type(e).__name__,
+            e,
+            exc_info=True,
+        )
         return None, None
     choice = resp.choices[0] if resp.choices else None
     text = None

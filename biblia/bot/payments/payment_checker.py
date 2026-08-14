@@ -174,22 +174,82 @@ class PaymentChecker:
                 len(due),
             )
 
-            for payment in due:
-                provider = (payment.get("payment_provider") or "yookassa").strip().lower()
-                try:
-                    await self._check_single_payment(payment, provider)
-                except Exception as e:
-                    logger.error(
-                        "❌ Failed to check %s payment %s: %s",
-                        provider,
-                        payment.get("id"),
-                        e,
-                    )
-                if self.api_pause_sec > 0:
-                    await asyncio.sleep(self.api_pause_sec)
+            await self._check_payment_list(due)
 
         except Exception as e:
             logger.error(f"❌ Error checking pending payments: {e}")
+
+    async def force_check_pending(
+        self,
+        *,
+        since: Optional[datetime] = None,
+        max_age_days: Optional[int] = None,
+        ignore_schedule: bool = True,
+    ) -> Dict[str, int]:
+        """
+        Разовый опрос pending (для reconcile после сбоя чекера).
+
+        Возвращает счётчики: pending / checked / succeeded / canceled / errors.
+        """
+        age_days = int(max_age_days) if max_age_days is not None else self.max_age_days
+        all_pending = await self.user_storage.get_pending_payments_for_poll(
+            max_age_days=age_days
+        )
+        if since is not None:
+            since_n = _as_naive(since) or since
+            filtered = []
+            for p in all_pending:
+                created = _as_naive(p.get("created_at"))
+                if created is None or created >= since_n:
+                    filtered.append(p)
+            all_pending = filtered
+
+        now = datetime.now()
+        to_check = (
+            list(all_pending)
+            if ignore_schedule
+            else [p for p in all_pending if payment_due_for_check(p, now=now)]
+        )
+        stats = {
+            "pending": len(all_pending),
+            "checked": 0,
+            "succeeded": 0,
+            "canceled": 0,
+            "errors": 0,
+        }
+        before_status = {int(p["id"]): p.get("status") for p in to_check}
+        await self._check_payment_list(to_check)
+        stats["checked"] = len(to_check)
+        for pid in before_status:
+            try:
+                fresh = await self.user_storage.get_payment(pid)
+            except Exception:
+                stats["errors"] += 1
+                continue
+            if not fresh:
+                stats["errors"] += 1
+                continue
+            st = fresh.get("status")
+            if st == "succeeded":
+                stats["succeeded"] += 1
+            elif st in ("canceled", "failed", "expired"):
+                stats["canceled"] += 1
+        return stats
+
+    async def _check_payment_list(self, payments: List[Dict[str, Any]]) -> None:
+        for payment in payments:
+            provider = (payment.get("payment_provider") or "yookassa").strip().lower()
+            try:
+                await self._check_single_payment(payment, provider)
+            except Exception as e:
+                logger.error(
+                    "❌ Failed to check %s payment %s: %s",
+                    provider,
+                    payment.get("id"),
+                    e,
+                )
+            if self.api_pause_sec > 0:
+                await asyncio.sleep(self.api_pause_sec)
 
     async def _check_single_payment(self, payment: Dict[str, Any], provider: str):
         """Проверяет статус одного платежа для конкретного провайдера."""

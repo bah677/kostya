@@ -8,7 +8,10 @@
 `bot/media_processing/*` использует только `transcribe_voice` и `describe_image`.
 """
 
+import asyncio
 import logging
+import os
+import tempfile
 import uuid
 from datetime import datetime
 from typing import Any, Dict, Optional
@@ -20,6 +23,49 @@ from storage.db.llm_token_normalize import extract_token_counts_and_extras
 from storage.user_storage import UserStorage
 
 logger = logging.getLogger(__name__)
+
+_WHISPER_MAX_FILE_BYTES = 24 * 1024 * 1024
+
+
+async def _compress_audio_for_whisper(src: str) -> Optional[str]:
+    """Сжимает аудио до mono 16kHz mp3, чтобы уложиться в лимит Whisper (~25MB)."""
+    fd, dst = tempfile.mkstemp(suffix=".mp3", prefix="whisper_")
+    os.close(fd)
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-i",
+        src,
+        "-vn",
+        "-ac",
+        "1",
+        "-ar",
+        "16000",
+        "-c:a",
+        "libmp3lame",
+        "-b:a",
+        "32k",
+        dst,
+    ]
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        await asyncio.wait_for(proc.communicate(), timeout=180)
+        if proc.returncode != 0 or not os.path.isfile(dst) or os.path.getsize(dst) <= 0:
+            logger.warning("ffmpeg compress for Whisper failed rc=%s", proc.returncode)
+            os.remove(dst)
+            return None
+        return dst
+    except Exception as e:
+        logger.warning("ffmpeg compress for Whisper failed: %s", e)
+        try:
+            os.remove(dst)
+        except OSError:
+            pass
+        return None
 
 
 class OpenAIClient:
@@ -101,9 +147,33 @@ class OpenAIClient:
     ) -> Optional[str]:
         """Распознаёт аудиофайл через Whisper."""
         start_time = datetime.now()
+        path = audio_file_path
+        compressed: Optional[str] = None
 
         try:
-            with open(audio_file_path, "rb") as audio_file:
+            size = os.path.getsize(path) if os.path.isfile(path) else 0
+            if size > _WHISPER_MAX_FILE_BYTES:
+                logger.info(
+                    "Whisper: %s MB > 24 MB — сжимаем перед отправкой",
+                    size // (1024 * 1024),
+                )
+                compressed = await _compress_audio_for_whisper(path)
+                if not compressed:
+                    logger.warning(
+                        "Whisper skip: file %s bytes exceeds API limit and compress failed",
+                        size,
+                    )
+                    return None
+                path = compressed
+                size = os.path.getsize(path)
+                if size > _WHISPER_MAX_FILE_BYTES:
+                    logger.warning(
+                        "Whisper skip: compressed file still %s bytes > 24 MB",
+                        size,
+                    )
+                    return None
+
+            with open(path, "rb") as audio_file:
                 transcript = await self.client.audio.transcriptions.create(
                     model="whisper-1",
                     file=audio_file,
@@ -134,7 +204,11 @@ class OpenAIClient:
             return transcript or None
 
         except Exception as e:
-            logger.error(f"❌ Whisper transcription failed: {e}")
+            msg = str(e)
+            if "413" in msg or "Maximum content size" in msg:
+                logger.warning("Whisper skipped oversized payload: %s", e)
+            else:
+                logger.error(f"❌ Whisper transcription failed: {e}")
             await self.user_storage.log_interaction(
                 user_id=user_id,
                 event_category="openai",
@@ -144,6 +218,12 @@ class OpenAIClient:
                 outcome="error",
             )
             return None
+        finally:
+            if compressed:
+                try:
+                    os.remove(compressed)
+                except OSError:
+                    pass
 
     # =====================================================
     # VISION: описание фото

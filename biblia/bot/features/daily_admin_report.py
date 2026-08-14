@@ -4,8 +4,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 from zoneinfo import ZoneInfo
 
@@ -91,6 +92,7 @@ class DailyAdminReportFeature(BaseFeature):
                 await MetricsSnapshotStorage(self.user_storage.pool).ensure_schema()
             except Exception as e:
                 logger.warning("[%s] ensure metric snapshots: %s", self.name, e)
+            asyncio.create_task(self._maybe_catch_up_missed_report())
 
     async def teardown(self) -> None:
         try:
@@ -171,8 +173,35 @@ class DailyAdminReportFeature(BaseFeature):
     async def _send_scheduled_report(self) -> None:
         try:
             await self.send_report()
+        except asyncio.CancelledError:
+            logger.warning("[%s] Cron-отчёт прерван (остановка/рестарт процесса)", self.name)
         except Exception as e:
             logger.error("[%s] Ошибка cron-отчёта: %s", self.name, e, exc_info=True)
+
+    async def _maybe_catch_up_missed_report(self) -> None:
+        """Если рестарт сразу после 00:01 оборвал cron — досылаем отчёт за вчера."""
+        try:
+            now = datetime.now(_MSK)
+            if (now.hour, now.minute) < (0, 1):
+                return
+            if now.hour >= 4:
+                return
+            yesterday = now.date() - timedelta(days=1)
+            from bot.services.metrics_snapshot_storage import MetricsSnapshotStorage
+
+            snap = await MetricsSnapshotStorage(self.user_storage.pool).get_snapshot(yesterday)
+            if snap:
+                return
+            logger.warning(
+                "[%s] Нет снимка отчёта за %s — догоняем cron",
+                self.name,
+                yesterday,
+            )
+            await self.send_report()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("[%s] Catch-up daily report failed", self.name)
 
     async def send_report(self, *, thread_id: Optional[int] = None) -> bool:
         if not config.ADMIN_CHANNEL_ID:

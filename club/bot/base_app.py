@@ -33,6 +33,21 @@ from storage.user_storage import UserStorage
 logger = logging.getLogger(__name__)
 
 
+def _acquire_getupdates_lock(lock_name: str):
+    """Один процесс GetUpdates: ждём, пока предыдущий отпустит flock."""
+    import fcntl
+
+    path = f"/tmp/{lock_name}_getupdates.lock"
+    fh = open(path, "a+")
+    try:
+        fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        logger.warning("Ждём предыдущий процесс бота (GetUpdates lock %s)", path)
+        fcntl.flock(fh, fcntl.LOCK_EX)
+    logger.info("GetUpdates lock acquired (%s)", path)
+    return fh
+
+
 class TelegramBotApp:
     """Базовый класс процесса бота — без набора фич (их задаёт подкласс, например TelegramBot)."""
 
@@ -65,6 +80,7 @@ class TelegramBotApp:
         self._queues_guard: Lock = Lock()
         self._worker_tasks: Set[asyncio.Task] = set()
         self._subscription_chain_test_task: Optional[asyncio.Task] = None
+        self._getupdates_lock_fh = None
 
     def _register_all_components(self) -> None:
         self._register_features()
@@ -353,10 +369,11 @@ class TelegramBotApp:
         logger.info("🚀 Запуск бота...")
 
         try:
+            self._getupdates_lock_fh = _acquire_getupdates_lock("club_bot")
             await self.bot.delete_webhook(drop_pending_updates=True)
             logger.info("✅ Webhook сброшен")
 
-            await asyncio.sleep(2)
+            await asyncio.sleep(5)
 
             allowed_updates = [
                 "message",

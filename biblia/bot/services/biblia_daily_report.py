@@ -946,7 +946,14 @@ class BibliaDailyReportCollector:
         )
 
         if save_snapshot:
-            await self._snapshots.save_snapshot(metrics)
+            snap_day = None
+            raw_day = metrics.get("report_day")
+            if raw_day:
+                try:
+                    snap_day = date.fromisoformat(str(raw_day))
+                except ValueError:
+                    snap_day = None
+            await self._snapshots.save_snapshot(metrics, snapshot_date=snap_day)
         return metrics
 
     @staticmethod

@@ -123,6 +123,9 @@ def _esc_pre(s: str) -> str:
     return _esc(s)
 
 
+_TG_BOT_UPLOAD_MAX = 49 * 1024 * 1024  # лимит Bot API ≈ 50 MB
+
+
 async def _send_video_or_doc(
     bot: Any,
     chat_id: int,
@@ -135,6 +138,13 @@ async def _send_video_or_doc(
         logger.error("missing file %s", path)
         return
     size = path.stat().st_size
+    if size >= _TG_BOT_UPLOAD_MAX:
+        logger.error(
+            "skip send %s: %.1f MB exceeds Telegram bot upload limit (~50MB)",
+            path.name,
+            size / (1024 * 1024),
+        )
+        return
     file = FSInputFile(str(path), filename=path.name)
     try:
         if size < 48_000_000:
@@ -142,6 +152,13 @@ async def _send_video_or_doc(
         else:
             await bot.send_document(chat_id, file, caption=caption[:1024], **kwargs)
     except Exception as e:
+        err = str(e).lower()
+        if any(
+            token in err
+            for token in ("too large", "entity too large", "file is too big", "request entity")
+        ):
+            logger.error("send failed %s (%s bytes): %s", path.name, size, e)
+            return
         logger.warning("send_video failed (%s), try document: %s", path.name, e)
         try:
             await bot.send_document(

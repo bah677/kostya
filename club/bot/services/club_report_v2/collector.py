@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
@@ -226,7 +227,13 @@ class ClubReportV2Collector:
             metrics["legacy_103_reactivation"] = None
 
         if include_llm and config.DEEPSEEK_API_KEY:
-            metrics["llm"] = await self._run_llm_blocks(metrics)
+            try:
+                metrics["llm"] = await self._run_llm_blocks(metrics)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("club report llm blocks failed")
+                metrics["llm"] = {}
         else:
             metrics["llm"] = {}
 

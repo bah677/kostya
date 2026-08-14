@@ -371,9 +371,16 @@ class MailingFeature(BaseFeature):
 
                 if any(
                     word in error_msg
-                    for word in ["forbidden", "blocked", "chat not found", "deactivated"]
+                    for word in [
+                        "forbidden",
+                        "blocked",
+                        "chat not found",
+                        "deactivated",
+                        "user_bot_to_bot",
+                        "bot_to_bot",
+                    ]
                 ):
-                    logger.info("🚫 User %s blocked bot", user_id)
+                    logger.info("🚫 User %s unreachable (blocked/bot): %s", user_id, e)
                     await self.mailing_storage.update_audience_status(
                         audience_id,
                         "blocked",

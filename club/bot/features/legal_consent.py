@@ -60,7 +60,8 @@ class LegalConsentFeature(BaseFeature):
         self.bot = bot
 
     def set_bot(self, bot) -> None:
-        self.bot = bot
+        # core передаёт TelegramBot (app); нужен aiogram.Bot
+        self.bot = getattr(bot, "bot", bot)
 
     async def initialize(self) -> None:
         logger.info("[%s] Фича инициализирована", self.name)

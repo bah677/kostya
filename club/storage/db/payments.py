@@ -119,7 +119,7 @@ class PaymentsMixin:
                     WHERE status = 'pending'
                       AND provider_payment_id IS NOT NULL
                       AND TRIM(provider_payment_id) <> ''
-                      AND created_at >= NOW() - ($1::text || ' days')::interval
+                      AND created_at >= NOW() - make_interval(days => $1::int)
                     ORDER BY created_at ASC
                     """,
                     int(max_age_days),
@@ -157,7 +157,7 @@ class PaymentsMixin:
                        SET status = 'expired',
                            updated_at = NOW()
                      WHERE status = 'pending'
-                       AND created_at < NOW() - ($1::text || ' days')::interval
+                       AND created_at < NOW() - make_interval(days => $1::int)
                  RETURNING id
                     """,
                     int(max_age_days),

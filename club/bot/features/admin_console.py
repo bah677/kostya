@@ -7,12 +7,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import html as html_mod
 import io
 import logging
 import re
 from datetime import date, datetime, timedelta
 from typing import Any, Optional
+from zoneinfo import ZoneInfo
 
 from aiogram import Dispatcher, F
 from aiogram.enums import ChatType, ParseMode
@@ -115,6 +117,9 @@ _EXCL_PAY_PREFIX = "excl_pay"
 _ADMIN_CLEAR_CB = "adm_clear"
 # Telegram HTML не поддерживает <hr/> и многие теги — только разделитель текстом.
 _REPORT_HTML_PART_SEP = "\n\n━━━━━━━━━━━━━━━━━━━━━\n\n"
+_MSK = ZoneInfo("Europe/Moscow")
+_TG_CAPTION_MAX = 1024
+_TG_TEXT_MAX = 4096
 
 
 class AdminConsoleFeature(BaseFeature):
@@ -342,6 +347,9 @@ class AdminConsoleFeature(BaseFeature):
                 ),
                 id="club_daily_admin_report",
                 replace_existing=True,
+                misfire_grace_time=3600,
+                coalesce=True,
+                max_instances=1,
             )
             sched.start()
             self._scheduler = sched
@@ -351,9 +359,8 @@ class AdminConsoleFeature(BaseFeature):
                 config.REPORT_HOUR,
                 config.REPORT_MINUTE,
             )
-            import asyncio
-
             asyncio.create_task(self._ref_key_pending_startup())
+            asyncio.create_task(self._maybe_catch_up_missed_club_report())
         except Exception as e:
             logger.warning("[%s] Планировщик отчёта не запущен: %s", self.name, e)
 
@@ -449,8 +456,53 @@ class AdminConsoleFeature(BaseFeature):
                         self._bot, extra, thread_id=tid
                     ):
                         logger.info("[%s] Extra midnight report chunk sent", self.name)
+        except asyncio.CancelledError:
+            logger.warning(
+                "[%s] Cron-отчёт прерван (остановка/рестарт процесса)",
+                self.name,
+            )
         except Exception as e:
             logger.exception("[%s] Ошибка при отправке отчёта по расписанию: %s", self.name, e)
+
+    async def _maybe_catch_up_missed_club_report(self) -> None:
+        """Если рестарт сразу после 00:01 оборвал cron — досылаем отчёт за вчера."""
+        try:
+            now = datetime.now(_MSK)
+            hour = int(config.REPORT_HOUR)
+            minute = int(config.REPORT_MINUTE)
+            if (now.hour, now.minute) < (hour, minute):
+                return
+            if now.hour >= 4:
+                return
+            yesterday = (now.date() - timedelta(days=1))
+            if await self._has_report_snapshot(yesterday):
+                return
+            logger.warning(
+                "[%s] Нет снимка отчёта за %s — догоняем cron",
+                self.name,
+                yesterday,
+            )
+            await self._club_report_scheduled_tick()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("[%s] Catch-up club report failed", self.name)
+
+    async def _has_report_snapshot(self, snapshot_date: date) -> bool:
+        try:
+            async with self.user_storage.get_connection() as conn:
+                row = await conn.fetchval(
+                    """
+                    SELECT 1 FROM club_report_snapshots
+                    WHERE snapshot_date = $1
+                    LIMIT 1
+                    """,
+                    snapshot_date,
+                )
+            return bool(row)
+        except Exception as e:
+            logger.debug("[%s] snapshot lookup: %s", self.name, e)
+            return False
 
     def _is_super_admin_user_id(self, uid: int) -> bool:
         return is_super_admin_user_id(uid)
@@ -2096,12 +2148,49 @@ class AdminConsoleFeature(BaseFeature):
             f"{html_mod.escape(reply_text)}"
         )
         new_text = base + block
-        await self._bot.edit_message_text(
-            chat_id=original.chat.id,
-            message_id=original.message_id,
-            text=new_text,
-            parse_mode=ParseMode.HTML,
+        await self._edit_forum_message_body(original, new_text)
+
+    async def _edit_forum_message_body(self, original: Message, new_html: str) -> None:
+        """edit_message_text для текста; caption — для фото/видео (иначе Telegram: no text to edit)."""
+        has_media = bool(
+            original.photo
+            or original.video
+            or original.animation
+            or original.document
+            or original.voice
+            or original.video_note
+            or original.audio
+            or original.sticker
+            or (original.text is None and original.caption is not None)
         )
+        try:
+            if has_media:
+                await self._bot.edit_message_caption(
+                    chat_id=original.chat.id,
+                    message_id=original.message_id,
+                    caption=new_html[:_TG_CAPTION_MAX],
+                    parse_mode=ParseMode.HTML,
+                )
+                return
+            await self._bot.edit_message_text(
+                chat_id=original.chat.id,
+                message_id=original.message_id,
+                text=new_html[:_TG_TEXT_MAX],
+                parse_mode=ParseMode.HTML,
+            )
+        except Exception as e:
+            err = str(e).lower()
+            if "message is not modified" in err:
+                return
+            if "no text in the message" in err:
+                await self._bot.edit_message_caption(
+                    chat_id=original.chat.id,
+                    message_id=original.message_id,
+                    caption=new_html[:_TG_CAPTION_MAX],
+                    parse_mode=ParseMode.HTML,
+                )
+                return
+            raise
 
     async def _sales_thread_reply(self, message: Message) -> None:
         if not self._bot:
@@ -2188,12 +2277,7 @@ class AdminConsoleFeature(BaseFeature):
             f"{html_mod.escape(reply_text)}"
         )
         new_text += block
-        await self._bot.edit_message_text(
-            chat_id=original.chat.id,
-            message_id=original.message_id,
-            text=new_text,
-            parse_mode=ParseMode.HTML,
-        )
+        await self._edit_forum_message_body(original, new_text)
 
     async def _forum_topic_reply(self, message: Message) -> None:
         """Ответ админа в персональном форум-топике → пересылка пользователю."""
