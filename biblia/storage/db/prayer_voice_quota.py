@@ -43,6 +43,8 @@ class PrayerVoiceQuotaMixin:
             ADD COLUMN IF NOT EXISTS prayer_last_text TEXT;
         ALTER TABLE users
             ADD COLUMN IF NOT EXISTS prayer_last_text_at TIMESTAMPTZ;
+        ALTER TABLE users
+            ADD COLUMN IF NOT EXISTS prayer_voice_bonus INTEGER NOT NULL DEFAULT 0;
         ALTER TABLE payments
             ADD COLUMN IF NOT EXISTS purpose TEXT;
         """
@@ -169,6 +171,74 @@ class PrayerVoiceQuotaMixin:
         except Exception as e:
             logger.error("try_reserve_prayer_voice_slot uid=%s: %s", user_id, e)
             return None
+
+    async def try_acquire_prayer_voice_access(
+        self, user_id: int, *, quota_day: Optional[date] = None
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Право на голос: сначала суточный слот, иначе компенсационный бонус.
+        Возвращает {"source": "quota", "slot_id": int} | {"source": "bonus"} | None.
+        """
+        slot_id = await self.try_reserve_prayer_voice_slot(
+            user_id, quota_day=quota_day
+        )
+        if slot_id is not None:
+            return {"source": "quota", "slot_id": int(slot_id)}
+        if await self.try_consume_prayer_voice_bonus(user_id):
+            return {"source": "bonus"}
+        return None
+
+    async def try_consume_prayer_voice_bonus(self, user_id: int) -> bool:
+        """Списывает 1 компенсационный пропуск. True — списан."""
+        try:
+            async with self.get_connection() as conn:
+                row = await conn.fetchrow(
+                    """
+                    UPDATE users
+                       SET prayer_voice_bonus = prayer_voice_bonus - 1
+                     WHERE user_id = $1
+                       AND COALESCE(prayer_voice_bonus, 0) > 0
+                 RETURNING prayer_voice_bonus
+                    """,
+                    int(user_id),
+                )
+            return row is not None
+        except Exception as e:
+            logger.error("try_consume_prayer_voice_bonus uid=%s: %s", user_id, e)
+            return False
+
+    async def grant_prayer_voice_bonus(
+        self, user_id: int, amount: int = 1
+    ) -> bool:
+        """Начисляет компенсационные пропуски голоса (amount ≥ 1)."""
+        n = max(1, int(amount))
+        try:
+            async with self.get_connection() as conn:
+                await conn.execute(
+                    """
+                    UPDATE users
+                       SET prayer_voice_bonus = COALESCE(prayer_voice_bonus, 0) + $2
+                     WHERE user_id = $1
+                    """,
+                    int(user_id),
+                    n,
+                )
+            return True
+        except Exception as e:
+            logger.error("grant_prayer_voice_bonus uid=%s: %s", user_id, e)
+            return False
+
+    async def release_prayer_voice_access(
+        self, access: Optional[Dict[str, Any]], user_id: int
+    ) -> None:
+        """Откат резерва при сбое TTS (слот квоты или возврат бонуса)."""
+        if not access:
+            return
+        source = access.get("source")
+        if source == "quota":
+            await self.release_prayer_voice_slot(access.get("slot_id"))
+        elif source == "bonus":
+            await self.grant_prayer_voice_bonus(user_id, 1)
 
     async def release_prayer_voice_slot(self, slot_id: Optional[int]) -> None:
         if not slot_id:

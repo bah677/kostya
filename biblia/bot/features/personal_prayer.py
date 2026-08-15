@@ -414,7 +414,7 @@ class PersonalPrayerFeature(BaseFeature):
         bot = self.bot
         prayer_text: Optional[str] = None
         ogg: Optional[bytes] = None
-        slot_id: Optional[int] = None
+        voice_access: Optional[dict] = None
         voice_unlocked_by_admin = False
         voice_allowed = True
 
@@ -423,8 +423,10 @@ class PersonalPrayerFeature(BaseFeature):
                 uid and await is_admin_or_super(self.user_storage, uid)
             )
             if uid and not voice_unlocked_by_admin:
-                slot_id = await self.user_storage.try_reserve_prayer_voice_slot(uid)
-                voice_allowed = slot_id is not None
+                voice_access = await self.user_storage.try_acquire_prayer_voice_access(
+                    uid
+                )
+                voice_allowed = voice_access is not None
                 if not voice_allowed:
                     try:
                         await wait_msg.edit_text("⏳ Составляю молитву…")
@@ -450,9 +452,11 @@ class PersonalPrayerFeature(BaseFeature):
                 )
 
             if not prayer_text:
-                if slot_id:
-                    await self.user_storage.release_prayer_voice_slot(slot_id)
-                    slot_id = None
+                if voice_access:
+                    await self.user_storage.release_prayer_voice_access(
+                        voice_access, uid
+                    )
+                    voice_access = None
                 await wait_msg.edit_text(
                     "Не удалось составить молитву. Попробуйте позже или /prayer снова."
                 )
@@ -464,10 +468,10 @@ class PersonalPrayerFeature(BaseFeature):
                 except Exception as e:
                     logger.warning("[%s] save last prayer text uid=%s: %s", self.name, uid, e)
 
-            if voice_allowed and not ogg and slot_id:
-                # TTS не удался — освобождаем слот бесплатного голоса
-                await self.user_storage.release_prayer_voice_slot(slot_id)
-                slot_id = None
+            if voice_allowed and not ogg and voice_access:
+                # TTS не удался — возвращаем слот/бонус
+                await self.user_storage.release_prayer_voice_access(voice_access, uid)
+                voice_access = None
 
             try:
                 await wait_msg.delete()
@@ -487,16 +491,16 @@ class PersonalPrayerFeature(BaseFeature):
                 await self._send_voice_limit_notice(message)
 
             logger.info(
-                "[%s] prayer delivered uid=%s voice=%s free_slot=%s admin=%s",
+                "[%s] prayer delivered uid=%s voice=%s access=%s admin=%s",
                 self.name,
                 uid,
                 bool(ogg),
-                slot_id,
+                (voice_access or {}).get("source") if voice_access else None,
                 voice_unlocked_by_admin,
             )
         except Exception as e:
-            if slot_id:
-                await self.user_storage.release_prayer_voice_slot(slot_id)
+            if voice_access:
+                await self.user_storage.release_prayer_voice_access(voice_access, uid)
             logger.error("[%s] generate failed uid=%s: %s", self.name, uid, e, exc_info=True)
             try:
                 await wait_msg.edit_text(
