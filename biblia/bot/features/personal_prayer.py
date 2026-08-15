@@ -1209,18 +1209,6 @@ class PersonalPrayerFeature(BaseFeature):
             except Exception:
                 pass
             return False
-
-        try:
-            next_slots = await self._voice_funding().indicative_next_slots()
-            await self.bot.send_message(
-                user_id,
-                "Спасибо за поддержку! Завтрашний бесплатный лимит голоса — "
-                f"сейчас уже собрано на <b>{next_slots}</b> молитв. "
-                "Каждый донат поднимает эту цифру.",
-                parse_mode="HTML",
-            )
-        except Exception as e:
-            logger.debug("[%s] tomorrow pool update after unlock: %s", self.name, e)
         return True
 
     def _prayer_support_kb(self) -> InlineKeyboardMarkup:

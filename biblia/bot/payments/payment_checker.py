@@ -493,6 +493,7 @@ class PaymentChecker:
                         "🙏 <b>Спасибо за поддержку проекта!</b>\n\n"
                         "Ваше пожертвование получено — пусть оно вернётся к вам сторицей."
                     )
+                thank_text = await self._thank_with_tomorrow_voice_limit(thank_text)
                 await self.bot.send_message(
                     user_id,
                     thank_text,
@@ -521,6 +522,24 @@ class PaymentChecker:
                 e,
                 exc_info=True,
             )
+
+    async def _thank_with_tomorrow_voice_limit(self, thank_html: str) -> str:
+        """Добавляет к благодарности актуальный индикатив лимита голоса на завтра."""
+        try:
+            from bot.services.prayer_voice_funding import PrayerVoiceFundingService
+
+            next_slots = await PrayerVoiceFundingService(
+                self.user_storage,
+                getattr(self, "currency_converter", None),
+            ).indicative_next_slots()
+            return (
+                f"{thank_html.rstrip()}\n\n"
+                "📈 Завтрашний бесплатный лимит голоса — сейчас уже собрано на "
+                f"<b>{int(next_slots)}</b> молитв. Каждый донат поднимает эту цифру."
+            )
+        except Exception as e:
+            logger.debug("tomorrow voice limit in thank-you: %s", e)
+            return thank_html
 
     async def _deliver_prayer_voice_unlock(
         self, user_id: int, *, payment_id: int

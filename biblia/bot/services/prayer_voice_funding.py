@@ -91,14 +91,20 @@ class PrayerVoiceFundingService:
     async def indicative_next_slots(
         self, *, now: Optional[datetime] = None
     ) -> int:
-        """Сколько слотов уже «собрано на завтра» по донатам текущего окна (без пола)."""
+        """
+        Индикатив на завтра: max(расчёт от донатов текущего окна, минимум из /adm).
+        Юзерам и в «спасибо» показываем уже с полом — иначе первый маленький донат
+        выглядел бы как «1», хотя завтра сработает минимум.
+        """
         day = quota_day_for(now)
         start, end = quota_window(day)
         rub = await self.user_storage.sum_succeeded_payments_rub(start, end)
         from bot.services.prayer_voice_quota import msk_now
 
         usd = await self._rub_to_usd(rub, on_date=msk_now().date())
-        return slots_from_donation_usd(usd)
+        computed = slots_from_donation_usd(usd)
+        min_floor = await self.user_storage.get_prayer_voice_min_limit()
+        return apply_min_floor(computed, min_floor)
 
     async def get_status(self, *, now: Optional[datetime] = None) -> Dict[str, Any]:
         period = await self.ensure_current_period(now=now)

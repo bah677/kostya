@@ -243,6 +243,20 @@ class SubscriptionChecker:
                     "🙏 <b>Спасибо за ежемесячную поддержку!</b>\n\n"
                     "Списание прошло успешно. Пусть ваше пожертвование вернётся сторицей."
                 )
+            try:
+                from bot.services.prayer_voice_funding import PrayerVoiceFundingService
+
+                next_slots = await PrayerVoiceFundingService(
+                    self.user_storage,
+                    getattr(self, "currency_converter", None),
+                ).indicative_next_slots()
+                thank_text = (
+                    f"{thank_text.rstrip()}\n\n"
+                    "📈 Завтрашний бесплатный лимит голоса — сейчас уже собрано на "
+                    f"<b>{int(next_slots)}</b> молитв. Каждый донат поднимает эту цифру."
+                )
+            except Exception as e:
+                logger.debug("tomorrow voice limit in renewal thank: %s", e)
             await self.bot.send_message(
                 user_id,
                 thank_text,
