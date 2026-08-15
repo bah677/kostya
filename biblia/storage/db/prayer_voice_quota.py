@@ -5,12 +5,14 @@ Mixin: лимит бесплатных голосовых молитв и раз
 from __future__ import annotations
 
 import logging
-from datetime import date
-from typing import Any, Dict, Optional, Tuple
+from datetime import date, datetime
+from typing import Any, Dict, Optional
 
 from bot.services.prayer_voice_quota import (
-    DEFAULT_DAILY_LIMIT,
-    SETTING_KEY_DAILY_LIMIT,
+    DEFAULT_MIN_LIMIT,
+    DEFAULT_PER_USER_DAILY,
+    SETTING_KEY_MIN_LIMIT,
+    SETTING_KEY_PER_USER_DAILY,
     quota_day_for,
 )
 
@@ -29,6 +31,9 @@ class PrayerVoiceQuotaMixin:
         INSERT INTO bot_runtime_settings (key, value)
         VALUES ('prayer_voice_daily_limit', '5')
         ON CONFLICT (key) DO NOTHING;
+        INSERT INTO bot_runtime_settings (key, value)
+        VALUES ('prayer_voice_per_user_daily', '2')
+        ON CONFLICT (key) DO NOTHING;
         CREATE TABLE IF NOT EXISTS prayer_voice_quota_log (
             id BIGSERIAL PRIMARY KEY,
             user_id BIGINT NOT NULL,
@@ -37,6 +42,15 @@ class PrayerVoiceQuotaMixin:
         );
         CREATE INDEX IF NOT EXISTS idx_prayer_voice_quota_day
             ON prayer_voice_quota_log (quota_day);
+        CREATE TABLE IF NOT EXISTS prayer_voice_period (
+            quota_day DATE PRIMARY KEY,
+            limit_slots INTEGER NOT NULL,
+            computed_slots INTEGER NOT NULL DEFAULT 0,
+            min_floor INTEGER NOT NULL DEFAULT 0,
+            revenue_usd DOUBLE PRECISION NOT NULL DEFAULT 0,
+            revenue_rub DOUBLE PRECISION NOT NULL DEFAULT 0,
+            locked_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
         ALTER TABLE users
             ADD COLUMN IF NOT EXISTS prayer_voice_unlock_pending BOOLEAN NOT NULL DEFAULT FALSE;
         ALTER TABLE users
@@ -85,19 +99,144 @@ class PrayerVoiceQuotaMixin:
             logger.error("set_runtime_setting %s: %s", key, e)
             return False
 
-    async def get_prayer_voice_daily_limit(self) -> int:
+    async def get_prayer_voice_min_limit(self) -> int:
         raw = await self.get_runtime_setting(
-            SETTING_KEY_DAILY_LIMIT, str(DEFAULT_DAILY_LIMIT)
+            SETTING_KEY_MIN_LIMIT, str(DEFAULT_MIN_LIMIT)
         )
         try:
             return max(0, int(str(raw).strip()))
         except (TypeError, ValueError):
-            return DEFAULT_DAILY_LIMIT
+            return DEFAULT_MIN_LIMIT
+
+    async def get_prayer_voice_daily_limit(self) -> int:
+        """Совместимость: раньше фиксированный лимит, теперь — минимум (пол)."""
+        return await self.get_prayer_voice_min_limit()
 
     async def set_prayer_voice_daily_limit(self, limit: int) -> bool:
+        return await self.set_prayer_voice_min_limit(limit)
+
+    async def set_prayer_voice_min_limit(self, limit: int) -> bool:
         return await self.set_runtime_setting(
-            SETTING_KEY_DAILY_LIMIT, str(max(0, int(limit)))
+            SETTING_KEY_MIN_LIMIT, str(max(0, int(limit)))
         )
+
+    async def get_prayer_voice_per_user_daily(self) -> int:
+        raw = await self.get_runtime_setting(
+            SETTING_KEY_PER_USER_DAILY, str(DEFAULT_PER_USER_DAILY)
+        )
+        try:
+            return max(0, int(str(raw).strip()))
+        except (TypeError, ValueError):
+            return DEFAULT_PER_USER_DAILY
+
+    async def set_prayer_voice_per_user_daily(self, limit: int) -> bool:
+        return await self.set_runtime_setting(
+            SETTING_KEY_PER_USER_DAILY, str(max(0, int(limit)))
+        )
+
+    async def count_user_prayer_voice_quota_used(
+        self, user_id: int, *, quota_day: Optional[date] = None
+    ) -> int:
+        day = quota_day or quota_day_for()
+        try:
+            async with self.get_connection() as conn:
+                n = await conn.fetchval(
+                    """
+                    SELECT COUNT(*)::int
+                    FROM prayer_voice_quota_log
+                    WHERE quota_day = $1 AND user_id = $2
+                    """,
+                    day,
+                    int(user_id),
+                )
+            return int(n or 0)
+        except Exception as e:
+            logger.error("count_user_prayer_voice_quota_used uid=%s: %s", user_id, e)
+            return 0
+
+    async def sum_succeeded_payments_rub(
+        self, start: datetime, end: datetime
+    ) -> float:
+        """Сумма всех успешных поступлений в [start, end) в рублях."""
+        try:
+            async with self.get_connection() as conn:
+                val = await conn.fetchval(
+                    """
+                    SELECT COALESCE(SUM(
+                        CASE
+                          WHEN amount_rub IS NOT NULL THEN amount_rub::float8
+                          WHEN upper(COALESCE(currency, 'RUB')) = 'RUB'
+                            THEN amount::float8
+                          ELSE 0::float8
+                        END
+                    ), 0)::float8
+                    FROM payments
+                    WHERE status = 'succeeded'
+                      AND completed_at >= $1
+                      AND completed_at < $2
+                    """,
+                    start,
+                    end,
+                )
+            return float(val or 0.0)
+        except Exception as e:
+            logger.error("sum_succeeded_payments_rub: %s", e)
+            return 0.0
+
+    async def get_prayer_voice_period(
+        self, quota_day: date
+    ) -> Optional[Dict[str, Any]]:
+        try:
+            async with self.get_connection() as conn:
+                row = await conn.fetchrow(
+                    """
+                    SELECT quota_day, limit_slots, computed_slots, min_floor,
+                           revenue_usd, revenue_rub, locked_at
+                    FROM prayer_voice_period
+                    WHERE quota_day = $1
+                    """,
+                    quota_day,
+                )
+            return dict(row) if row else None
+        except Exception as e:
+            logger.error("get_prayer_voice_period %s: %s", quota_day, e)
+            return None
+
+    async def insert_prayer_voice_period(
+        self,
+        *,
+        quota_day: date,
+        limit_slots: int,
+        computed_slots: int,
+        min_floor: int,
+        revenue_usd: float,
+        revenue_rub: float,
+    ) -> Optional[Dict[str, Any]]:
+        try:
+            async with self.get_connection() as conn:
+                row = await conn.fetchrow(
+                    """
+                    INSERT INTO prayer_voice_period (
+                        quota_day, limit_slots, computed_slots, min_floor,
+                        revenue_usd, revenue_rub, locked_at
+                    ) VALUES ($1, $2, $3, $4, $5, $6, NOW())
+                    ON CONFLICT (quota_day) DO NOTHING
+                    RETURNING quota_day, limit_slots, computed_slots, min_floor,
+                              revenue_usd, revenue_rub, locked_at
+                    """,
+                    quota_day,
+                    int(limit_slots),
+                    int(computed_slots),
+                    int(min_floor),
+                    float(revenue_usd),
+                    float(revenue_rub),
+                )
+            if row:
+                return dict(row)
+            return await self.get_prayer_voice_period(quota_day)
+        except Exception as e:
+            logger.error("insert_prayer_voice_period %s: %s", quota_day, e)
+            return None
 
     async def count_prayer_voice_quota_used(
         self, *, quota_day: Optional[date] = None
@@ -119,35 +258,47 @@ class PrayerVoiceQuotaMixin:
             return 0
 
     async def try_reserve_prayer_voice_slot(
-        self, user_id: int, *, quota_day: Optional[date] = None
+        self,
+        user_id: int,
+        *,
+        quota_day: Optional[date] = None,
+        limit_slots: Optional[int] = None,
     ) -> Optional[int]:
-        """
-        Атомарно занимает слот бесплатного голоса.
-        None — лимит исчерпан; иначе id строки лога.
-        """
+        """Атомарно занимает слот. None — лимит исчерпан; иначе id лога."""
         day = quota_day or quota_day_for()
         try:
             async with self.get_connection() as conn:
                 async with conn.transaction():
-                    # сериализуем резерв слотов в рамках транзакции
                     await conn.execute(
                         "SELECT pg_advisory_xact_lock(hashtext('prayer_voice_quota'))"
                     )
-                    limit = await conn.fetchval(
-                        """
-                        SELECT COALESCE(
-                            (
-                                SELECT NULLIF(trim(value), '')::int
-                                FROM bot_runtime_settings
-                                WHERE key = $1
-                            ),
-                            $2
+                    if limit_slots is None:
+                        limit = await conn.fetchval(
+                            """
+                            SELECT limit_slots
+                            FROM prayer_voice_period
+                            WHERE quota_day = $1
+                            """,
+                            day,
                         )
-                        """,
-                        SETTING_KEY_DAILY_LIMIT,
-                        DEFAULT_DAILY_LIMIT,
-                    )
-                    limit_i = max(0, int(limit or 0))
+                        if limit is None:
+                            limit = await conn.fetchval(
+                                """
+                                SELECT COALESCE(
+                                    (
+                                        SELECT NULLIF(trim(value), '')::int
+                                        FROM bot_runtime_settings
+                                        WHERE key = $1
+                                    ),
+                                    $2
+                                )
+                                """,
+                                SETTING_KEY_MIN_LIMIT,
+                                DEFAULT_MIN_LIMIT,
+                            )
+                        limit_i = max(0, int(limit or 0))
+                    else:
+                        limit_i = max(0, int(limit_slots))
                     used = await conn.fetchval(
                         """
                         SELECT COUNT(*)::int
@@ -173,23 +324,39 @@ class PrayerVoiceQuotaMixin:
             return None
 
     async def try_acquire_prayer_voice_access(
-        self, user_id: int, *, quota_day: Optional[date] = None
+        self,
+        user_id: int,
+        *,
+        quota_day: Optional[date] = None,
+        limit_slots: Optional[int] = None,
+        per_user_daily: Optional[int] = None,
     ) -> Optional[Dict[str, Any]]:
-        """
-        Право на голос: сначала суточный слот, иначе компенсационный бонус.
-        Возвращает {"source": "quota", "slot_id": int} | {"source": "bonus"} | None.
-        """
+        day = quota_day or quota_day_for()
+        personal_cap = (
+            per_user_daily
+            if per_user_daily is not None
+            else await self.get_prayer_voice_per_user_daily()
+        )
+        personal_cap = max(0, int(personal_cap))
+        personal_used = await self.count_user_prayer_voice_quota_used(
+            user_id, quota_day=day
+        )
+        # Личный лимит: сверх — только компенсационный бонус (или донат).
+        if personal_used >= personal_cap:
+            if await self.try_consume_prayer_voice_bonus(user_id):
+                return {"source": "bonus", "reason": "per_user_cap"}
+            return None
+
         slot_id = await self.try_reserve_prayer_voice_slot(
-            user_id, quota_day=quota_day
+            user_id, quota_day=day, limit_slots=limit_slots
         )
         if slot_id is not None:
             return {"source": "quota", "slot_id": int(slot_id)}
         if await self.try_consume_prayer_voice_bonus(user_id):
-            return {"source": "bonus"}
+            return {"source": "bonus", "reason": "pool_exhausted"}
         return None
 
     async def try_consume_prayer_voice_bonus(self, user_id: int) -> bool:
-        """Списывает 1 компенсационный пропуск. True — списан."""
         try:
             async with self.get_connection() as conn:
                 row = await conn.fetchrow(
@@ -210,7 +377,6 @@ class PrayerVoiceQuotaMixin:
     async def grant_prayer_voice_bonus(
         self, user_id: int, amount: int = 1
     ) -> bool:
-        """Начисляет компенсационные пропуски голоса (amount ≥ 1)."""
         n = max(1, int(amount))
         try:
             async with self.get_connection() as conn:
@@ -231,7 +397,6 @@ class PrayerVoiceQuotaMixin:
     async def release_prayer_voice_access(
         self, access: Optional[Dict[str, Any]], user_id: int
     ) -> None:
-        """Откат резерва при сбое TTS (слот квоты или возврат бонуса)."""
         if not access:
             return
         source = access.get("source")
@@ -320,10 +485,6 @@ class PrayerVoiceQuotaMixin:
     async def take_prayer_voice_unlock(
         self, user_id: int, *, require_pending: bool = True
     ) -> Optional[str]:
-        """
-        Снимает флаг разблокировки и возвращает последний текст молитвы.
-        Если require_pending=True — только при установленном флаге.
-        """
         try:
             async with self.get_connection() as conn:
                 async with conn.transaction():
@@ -356,11 +517,17 @@ class PrayerVoiceQuotaMixin:
 
     async def get_prayer_quota_status(self) -> Dict[str, Any]:
         day = quota_day_for()
-        limit = await self.get_prayer_voice_daily_limit()
+        period = await self.get_prayer_voice_period(day)
+        min_floor = await self.get_prayer_voice_min_limit()
+        limit = int(period["limit_slots"]) if period else min_floor
         used = await self.count_prayer_voice_quota_used(quota_day=day)
         return {
             "quota_day": day,
             "limit": limit,
             "used": used,
             "remaining": max(0, limit - used),
+            "min_floor": min_floor,
+            "computed_slots": int((period or {}).get("computed_slots") or 0),
+            "next_slots": 0,
+            "per_user_daily": await self.get_prayer_voice_per_user_daily(),
         }

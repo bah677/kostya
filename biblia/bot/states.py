@@ -25,3 +25,4 @@ class AdminPanelStates(StatesGroup):
     """Админ-панель: ввод параметров отчётов."""
     waiting_prayer_stats_date = State()
     waiting_prayer_voice_limit = State()
+    waiting_prayer_voice_per_user = State()

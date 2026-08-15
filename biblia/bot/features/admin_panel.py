@@ -18,6 +18,7 @@ from bot.services.admin_panel import (
     CB_PREFIX,
     CB_VOICE_LIMIT,
     CB_VOICE_LIMIT_SET,
+    CB_VOICE_PER_USER_SET,
     build_admin_panel_group,
     build_admin_panel_home,
     build_prayer_stats_keyboard,
@@ -73,6 +74,12 @@ class AdminPanelFeature(BaseFeature):
             StateFilter(AdminPanelStates.waiting_prayer_voice_limit),
             F.text,
         )
+        dp.message.register(
+            self._msg_prayer_voice_per_user,
+            private,
+            StateFilter(AdminPanelStates.waiting_prayer_voice_per_user),
+            F.text,
+        )
         dp.callback_query.register(
             self._cb_panel,
             F.data.startswith(f"{CB_PREFIX}:"),
@@ -94,6 +101,12 @@ class AdminPanelFeature(BaseFeature):
                 self._msg_prayer_voice_limit,
                 admin_chat,
                 StateFilter(AdminPanelStates.waiting_prayer_voice_limit),
+                F.text,
+            )
+            dp.message.register(
+                self._msg_prayer_voice_per_user,
+                admin_chat,
+                StateFilter(AdminPanelStates.waiting_prayer_voice_per_user),
                 F.text,
             )
         logger.info("[%s] /adm /status зарегистрированы", self.name)
@@ -208,7 +221,16 @@ class AdminPanelFeature(BaseFeature):
             await self.user_storage.ensure_prayer_voice_quota_schema()
         except Exception:
             pass
-        status = await self.user_storage.get_prayer_quota_status()
+        try:
+            from bot.services.prayer_voice_funding import PrayerVoiceFundingService
+
+            conv = getattr(self._bot_app, "currency_converter", None) if self._bot_app else None
+            status = await PrayerVoiceFundingService(
+                self.user_storage, conv
+            ).get_status()
+        except Exception as e:
+            logger.warning("[%s] funding status fallback: %s", self.name, e)
+            status = await self.user_storage.get_prayer_quota_status()
         text = format_voice_limit_status_html(status)
         kb = build_voice_limit_keyboard()
         if edit_message is not None:
@@ -226,7 +248,7 @@ class AdminPanelFeature(BaseFeature):
         raw = (message.text or "").strip()
         if raw.lower() in ("/cancel", "cancel", "отмена"):
             await state.clear()
-            await message.answer("Ок, ввод лимита отменён. /adm")
+            await message.answer("Ок, ввод минимума отменён. /adm")
             return
         try:
             limit = int(raw.replace(" ", ""))
@@ -239,12 +261,52 @@ class AdminPanelFeature(BaseFeature):
                 parse_mode=ParseMode.HTML,
             )
             return
-        ok = await self.user_storage.set_prayer_voice_daily_limit(limit)
+        ok = await self.user_storage.set_prayer_voice_min_limit(limit)
         await state.clear()
         if not ok:
-            await message.answer("Не удалось сохранить лимит. Попробуйте позже.")
+            await message.answer("Не удалось сохранить минимум. Попробуйте позже.")
             return
-        await message.answer(f"✅ Лимит голоса молитв: <b>{limit}</b> / сутки (с 08:00 МСК).", parse_mode=ParseMode.HTML)
+        await message.answer(
+            f"✅ Минимум голоса молитв: <b>{limit}</b> / сутки (с 08:00 МСК).\n"
+            "Текущий зафиксированный период не пересчитывается — новый минимум "
+            "пойдёт с ближайшей фиксации в 08:00.",
+            parse_mode=ParseMode.HTML,
+        )
+        await self._show_voice_limit(reply_to=message)
+
+    async def _msg_prayer_voice_per_user(
+        self, message: Message, state: FSMContext
+    ) -> None:
+        if message.from_user is None or message.from_user.is_bot:
+            return
+        if not await is_admin_or_super(self.user_storage, message.from_user.id):
+            return
+        raw = (message.text or "").strip()
+        if raw.lower() in ("/cancel", "cancel", "отмена"):
+            await state.clear()
+            await message.answer("Ок, ввод лимита на человека отменён. /adm")
+            return
+        try:
+            limit = int(raw.replace(" ", ""))
+            if limit < 0 or limit > 1000:
+                raise ValueError("out of range")
+        except ValueError:
+            await message.answer(
+                "Нужно целое число ≥ 0 (например <code>2</code>). "
+                "Отмена: /cancel",
+                parse_mode=ParseMode.HTML,
+            )
+            return
+        ok = await self.user_storage.set_prayer_voice_per_user_daily(limit)
+        await state.clear()
+        if not ok:
+            await message.answer("Не удалось сохранить. Попробуйте позже.")
+            return
+        await message.answer(
+            f"✅ Лимит голоса на одного человека: <b>{limit}</b> / сутки "
+            "(с 08:00 МСК).",
+            parse_mode=ParseMode.HTML,
+        )
         await self._show_voice_limit(reply_to=message)
 
     async def _cb_panel(self, query: CallbackQuery, state: FSMContext) -> None:
@@ -261,9 +323,23 @@ class AdminPanelFeature(BaseFeature):
                 await state.set_state(AdminPanelStates.waiting_prayer_voice_limit)
                 await query.answer()
                 await query.message.answer(
-                    "🎤 Новый суточный лимит бесплатных голосовых молитв\n\n"
+                    "🎤 Минимальный суточный лимит пула бесплатных голосовых молитв\n\n"
                     "Пришлите целое число (например <code>5</code>). "
+                    "Это пол: если сборы дали меньше — берём минимум. "
                     "Сброс окна — в <b>08:00 МСК</b>.\n"
+                    "Отмена: /cancel",
+                    parse_mode=ParseMode.HTML,
+                )
+                return
+
+            if data == CB_VOICE_PER_USER_SET:
+                await state.set_state(AdminPanelStates.waiting_prayer_voice_per_user)
+                await query.answer()
+                await query.message.answer(
+                    "👤 Лимит голосовых молитв на одного человека в сутки\n\n"
+                    "Пришлите целое число (например <code>2</code>). "
+                    "Сброс — в <b>08:00 МСК</b>. После исчерпания — донат "
+                    "или ждать завтра.\n"
                     "Отмена: /cancel",
                     parse_mode=ParseMode.HTML,
                 )

@@ -27,6 +27,7 @@ CB_QUICK_PRAYER = f"{CB_QUICK_PREFIX}prayer"
 CB_QUICK_LIVE = f"{CB_QUICK_PREFIX}live"
 CB_VOICE_LIMIT = f"{CB_PREFIX}:voice_limit"
 CB_VOICE_LIMIT_SET = f"{CB_PREFIX}:voice_limit_set"
+CB_VOICE_PER_USER_SET = f"{CB_PREFIX}:voice_per_user_set"
 # Молитвы: apnl:pr:{screen}:{period}  period=7|30|all|yday|YYYY-MM-DD
 # Запрос даты: apnl:pr:ask:{screen}
 CB_PRAYER_PREFIX = f"{CB_PREFIX}:pr:"
@@ -283,8 +284,14 @@ def build_voice_limit_keyboard() -> InlineKeyboardMarkup:
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="✏️ Изменить лимит",
+                    text="✏️ Минимум пула",
                     callback_data=CB_VOICE_LIMIT_SET,
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="👤 Лимит на человека",
+                    callback_data=CB_VOICE_PER_USER_SET,
                 )
             ],
             [
@@ -304,12 +311,22 @@ def format_voice_limit_status_html(status: dict) -> str:
     limit = int(status.get("limit") or 0)
     used = int(status.get("used") or 0)
     remaining = int(status.get("remaining") or 0)
+    min_floor = int(status.get("min_floor") or 0)
+    computed = int(status.get("computed_slots") or 0)
+    next_slots = int(status.get("next_slots") or 0)
+    per_user = int(status.get("per_user_daily") or 0)
+    rub = float(status.get("revenue_rub") or 0)
+    usd = float(status.get("revenue_usd") or 0)
     return (
         "<b>🎤 Лимит бесплатных голосовых молитв</b>\n\n"
         f"Сутки квоты (с 08:00 МСК): <code>{html_mod.escape(day_s)}</code>\n"
-        f"Лимит: <b>{limit}</b>\n"
-        f"Использовано: <b>{used}</b>\n"
-        f"Осталось: <b>{remaining}</b>\n\n"
-        "<i>Админы лимит не расходуют. После исчерпания — текст + предложение доната "
-        "за озвучку.</i>"
+        f"Лимит пула сегодня: <b>{limit}</b> "
+        f"(из сборов: {computed}, минимум: {min_floor})\n"
+        f"На одного человека / сутки: <b>{per_user}</b>\n"
+        f"Использовано в пуле: <b>{used}</b> · осталось: <b>{remaining}</b>\n"
+        f"Сборы за прошлые 24ч (для фиксации): "
+        f"{html_mod.escape(f'{rub:.0f}')} ₽ ≈ {html_mod.escape(f'{usd:.2f}')} $\n"
+        f"Индикатив на завтра: <b>{next_slots}</b>\n\n"
+        "<i>Минимум пула — пол от донатов. Лимит на человека — отдельно. "
+        "Админы лимит не расходуют.</i>"
     )

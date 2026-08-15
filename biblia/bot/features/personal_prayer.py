@@ -84,18 +84,8 @@ _PRAYER_DONATION_FOOTER = (
     "(Гал. 6:2)"
 )
 
-_PRAYER_VOICE_LIMIT_NOTICE = (
-    "Голосовая генерация — одна из самых любимых и вместе с тем затратных "
-    "частей проекта. Сейчас она очень востребована, и мы пока не можем держать "
-    "её без лимита.\n\n"
-    "На сегодня бесплатный лимит голоса исчерпан. Он обновится каждый день "
-    "в <b>08:00 мск</b>.\n\n"
-    "Можно подождать сброса и снова попробовать попасть в число бесплатных "
-    "генераций — или поддержать проект любым донатом, и мы сразу озвучим "
-    "эту молитву для вас."
-)
-
 _PRAYER_VOICE_UNLOCK_CB = "payment_start_prayer_voice"
+_PRAYER_VOICE_SUPPORT_CB = "payment_start"
 
 
 @dataclass(frozen=True)
@@ -208,6 +198,7 @@ class PersonalPrayerFeature(BaseFeature):
         super().__init__()
         self.user_storage = user_storage
         self.bot: Optional[Bot] = None
+        self._bot_app: Optional[Any] = None
         self.agents_client: Optional[AgentsClient] = None
         self.voicebox = VoiceboxPrayerTTS()
         self.speechkit = YandexSpeechKitTTS()
@@ -218,6 +209,7 @@ class PersonalPrayerFeature(BaseFeature):
             max_concurrent=int(getattr(config, "PRAYER_TTS_MAX_CONCURRENT", 1) or 1)
         )
         self._stress_dict_cache: dict[str, str] = {}
+        self._funding = None
 
     @property
     def tts(self) -> _TTS:
@@ -226,7 +218,17 @@ class PersonalPrayerFeature(BaseFeature):
         return self.speechkit
 
     def set_bot(self, app) -> None:
+        self._bot_app = app
         self.bot = app.bot if app is not None else None
+        self._funding = None
+
+    def _voice_funding(self):
+        if self._funding is None:
+            from bot.services.prayer_voice_funding import PrayerVoiceFundingService
+
+            conv = getattr(self._bot_app, "currency_converter", None) if self._bot_app else None
+            self._funding = PrayerVoiceFundingService(self.user_storage, conv)
+        return self._funding
 
     async def initialize(self) -> None:
         self.agents_client = AgentsClient(self.user_storage)
@@ -423,9 +425,7 @@ class PersonalPrayerFeature(BaseFeature):
                 uid and await is_admin_or_super(self.user_storage, uid)
             )
             if uid and not voice_unlocked_by_admin:
-                voice_access = await self.user_storage.try_acquire_prayer_voice_access(
-                    uid
-                )
+                voice_access = await self._voice_funding().try_acquire_access(uid)
                 voice_allowed = voice_access is not None
                 if not voice_allowed:
                     try:
@@ -485,6 +485,7 @@ class PersonalPrayerFeature(BaseFeature):
                     prayer_text,
                     ogg,
                     include_donation_footer=True,
+                    pool_progress=not voice_unlocked_by_admin,
                 )
             else:
                 await self._deliver_prayer_text_only(message, prayer_text)
@@ -512,6 +513,19 @@ class PersonalPrayerFeature(BaseFeature):
             await state.clear()
 
     async def _send_voice_limit_notice(self, message: Message) -> None:
+        next_slots = 0
+        try:
+            next_slots = await self._voice_funding().indicative_next_slots()
+        except Exception as e:
+            logger.debug("[%s] next_slots for limit notice: %s", self.name, e)
+        text = (
+            "Лимит бесплатных голосовых молитв на сегодня закончился.\n\n"
+            "Если хотите голос сейчас — поддержите проект любым донатом, "
+            "и мы сразу озвучим эту молитву.\n"
+            "Или попробуйте завтра с <b>08:00 мск</b> попасть в бесплатный лимит.\n\n"
+            "Каждый донат учитывается в лимите на завтра — сейчас уже собрано "
+            f"на <b>{next_slots}</b> бесплатных молитв."
+        )
         kb = InlineKeyboardMarkup(
             inline_keyboard=[
                 [
@@ -523,13 +537,23 @@ class PersonalPrayerFeature(BaseFeature):
             ]
         )
         try:
-            await message.answer(
-                _PRAYER_VOICE_LIMIT_NOTICE,
-                parse_mode=ParseMode.HTML,
-                reply_markup=kb,
-            )
+            await message.answer(text, parse_mode=ParseMode.HTML, reply_markup=kb)
         except Exception as e:
             logger.error("[%s] voice limit notice failed: %s", self.name, e)
+
+    async def _format_pool_progress_html(self) -> str:
+        status = await self._voice_funding().get_status()
+        limit = int(status.get("limit") or 0)
+        used = int(status.get("used") or 0)
+        remaining = int(status.get("remaining") or 0)
+        next_slots = int(status.get("next_slots") or 0)
+        return (
+            f"Вчера сообщество поддержало проект — этого хватило на "
+            f"<b>{limit}</b> бесплатных голосовых молитв.\n"
+            f"Уже израсходовано: <b>{used}</b>. Осталось: <b>{remaining}</b>.\n\n"
+            "Можете поддержать проект и внести вклад в завтрашний лимит — "
+            f"сейчас на завтра уже собрано на <b>{next_slots}</b> бесплатных молитв."
+        )
 
     async def _notify_tts_queue(
         self, wait_msg: Optional[Message], ahead: int
@@ -947,6 +971,7 @@ class PersonalPrayerFeature(BaseFeature):
         ogg: Optional[bytes],
         *,
         include_donation_footer: bool = True,
+        pool_progress: bool = False,
     ) -> None:
         body = (prayer_text or "").strip()
         uid = message.from_user.id if message.from_user else 0
@@ -1008,6 +1033,7 @@ class PersonalPrayerFeature(BaseFeature):
             message,
             body,
             include_donation_footer=include_donation_footer,
+            pool_progress=pool_progress,
         )
 
     async def _deliver_prayer_text_only(
@@ -1034,10 +1060,11 @@ class PersonalPrayerFeature(BaseFeature):
         body: str,
         *,
         include_donation_footer: bool = True,
+        pool_progress: bool = False,
     ) -> None:
         """
         1) Текст молитвы (plain, без HTML — надёжно доходит).
-        2) Отдельным сообщением — донат-блок + кнопка (если include_donation_footer).
+        2) Отдельным сообщением — пул лимита / донат-блок + кнопка.
         """
         body = (body or "").strip()
         uid = message.from_user.id if message.from_user else 0
@@ -1048,7 +1075,6 @@ class PersonalPrayerFeature(BaseFeature):
             except Exception:
                 pass
 
-        # Молитва — обычный текст, без parse_mode (не ломается на символах LLM).
         prayer_msg = f"🙏 Ваша молитва\n\n{body}" if body else "🙏 Ваша молитва"
         try:
             if len(prayer_msg) <= _TG_MESSAGE_MAX:
@@ -1073,7 +1099,6 @@ class PersonalPrayerFeature(BaseFeature):
                 e,
                 exc_info=True,
             )
-            # Последняя попытка — кусками без заголовка.
             try:
                 await _send_text_chunks(message, body)
             except Exception as e2:
@@ -1082,9 +1107,18 @@ class PersonalPrayerFeature(BaseFeature):
         if not include_donation_footer:
             return
 
+        footer = _PRAYER_DONATION_FOOTER
+        parse_mode = None
+        if pool_progress:
+            try:
+                footer = await self._format_pool_progress_html()
+                parse_mode = ParseMode.HTML
+            except Exception as e:
+                logger.warning("[%s] pool progress footer failed: %s", self.name, e)
+
         try:
-            await message.answer(_PRAYER_DONATION_FOOTER, reply_markup=kb)
-            logger.info("[%s] donation footer sent uid=%s", self.name, uid)
+            await message.answer(footer, reply_markup=kb, parse_mode=parse_mode)
+            logger.info("[%s] donation footer sent uid=%s pool=%s", self.name, uid, pool_progress)
         except Exception as e:
             logger.error(
                 "[%s] donation footer failed uid=%s: %s",
@@ -1175,7 +1209,20 @@ class PersonalPrayerFeature(BaseFeature):
             except Exception:
                 pass
             return False
+
+        try:
+            next_slots = await self._voice_funding().indicative_next_slots()
+            await self.bot.send_message(
+                user_id,
+                "Спасибо за поддержку! Завтрашний бесплатный лимит голоса — "
+                f"сейчас уже собрано на <b>{next_slots}</b> молитв. "
+                "Каждый донат поднимает эту цифру.",
+                parse_mode="HTML",
+            )
+        except Exception as e:
+            logger.debug("[%s] tomorrow pool update after unlock: %s", self.name, e)
         return True
+
     def _prayer_support_kb(self) -> InlineKeyboardMarkup:
         return InlineKeyboardMarkup(
             inline_keyboard=[

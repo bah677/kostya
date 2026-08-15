@@ -129,11 +129,27 @@ async def notify_admins_standalone_donation_success(
     if purpose == PAYMENT_PURPOSE_VOICE_UNLOCK:
         purpose_line = "🎯 <b>Назначение:</b> на генерацию молитвы\n"
 
+    tomorrow_line = ""
+    try:
+        from bot.payments.currency_converter import CurrencyConverterService
+        from bot.services.prayer_voice_funding import PrayerVoiceFundingService
+
+        next_slots = await PrayerVoiceFundingService(
+            user_storage, CurrencyConverterService()
+        ).indicative_next_slots()
+        tomorrow_line = (
+            f"📈 <b>Лимит голоса на завтра (сейчас):</b> "
+            f"{html_module.escape(str(next_slots))}\n"
+        )
+    except Exception as e:
+        logger.debug("tomorrow voice limit for donation notify: %s", e)
+
     notification_text = (
         f"{header}\n\n"
         f"💰 <b>Сумма:</b> {amount_bit} {curr_bit}\n"
         f"{_fmt_rub_line(resolved_rub)}\n"
         f"{purpose_line}"
+        f"{tomorrow_line}"
         f"👤 <b>Пользователь:</b> {html_module.escape(full_name)}\n"
         f"🆔 <b>User ID:</b> <code>{user_id}</code>\n"
         f"📱 <b>Username:</b> {html_module.escape(username_display)}\n"
