@@ -234,7 +234,7 @@ class AdminPanelFeature(BaseFeature):
                 raise ValueError("out of range")
         except ValueError:
             await message.answer(
-                "Нужно целое число ≥ 0 (например <code>50</code>). "
+                "Нужно целое число ≥ 0 (например <code>5</code>). "
                 "Отмена: /cancel",
                 parse_mode=ParseMode.HTML,
             )
@@ -262,7 +262,7 @@ class AdminPanelFeature(BaseFeature):
                 await query.answer()
                 await query.message.answer(
                     "🎤 Новый суточный лимит бесплатных голосовых молитв\n\n"
-                    "Пришлите целое число (например <code>50</code>). "
+                    "Пришлите целое число (например <code>5</code>). "
                     "Сброс окна — в <b>08:00 МСК</b>.\n"
                     "Отмена: /cancel",
                     parse_mode=ParseMode.HTML,

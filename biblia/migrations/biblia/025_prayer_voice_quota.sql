@@ -7,7 +7,7 @@ CREATE TABLE IF NOT EXISTS bot_runtime_settings (
 );
 
 INSERT INTO bot_runtime_settings (key, value)
-VALUES ('prayer_voice_daily_limit', '50')
+VALUES ('prayer_voice_daily_limit', '5')
 ON CONFLICT (key) DO NOTHING;
 
 CREATE TABLE IF NOT EXISTS prayer_voice_quota_log (
@@ -36,7 +36,28 @@ ALTER TABLE payments
     ADD COLUMN IF NOT EXISTS purpose TEXT;
 
 DO $$
+DECLARE
+  roles text[] := ARRAY[
+    'biblia_bot_user',
+    'biblia_bot_user_dev',
+    'bot_user'
+  ];
+  r text;
 BEGIN
+  FOREACH r IN ARRAY roles LOOP
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r) THEN
+      EXECUTE format(
+        'GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE bot_runtime_settings TO %I', r
+      );
+      EXECUTE format(
+        'GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE prayer_voice_quota_log TO %I', r
+      );
+      EXECUTE format(
+        'GRANT USAGE, SELECT ON SEQUENCE prayer_voice_quota_log_id_seq TO %I', r
+      );
+    END IF;
+  END LOOP;
+
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'agency_ro') THEN
     GRANT SELECT ON TABLE bot_runtime_settings TO agency_ro;
     GRANT SELECT ON TABLE prayer_voice_quota_log TO agency_ro;

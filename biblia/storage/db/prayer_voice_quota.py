@@ -27,7 +27,7 @@ class PrayerVoiceQuotaMixin:
             updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         );
         INSERT INTO bot_runtime_settings (key, value)
-        VALUES ('prayer_voice_daily_limit', '50')
+        VALUES ('prayer_voice_daily_limit', '5')
         ON CONFLICT (key) DO NOTHING;
         CREATE TABLE IF NOT EXISTS prayer_voice_quota_log (
             id BIGSERIAL PRIMARY KEY,

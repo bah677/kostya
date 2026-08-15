@@ -9,7 +9,7 @@ from zoneinfo import ZoneInfo
 _MSK = ZoneInfo("Europe/Moscow")
 QUOTA_RESET_HOUR = 8
 SETTING_KEY_DAILY_LIMIT = "prayer_voice_daily_limit"
-DEFAULT_DAILY_LIMIT = 50
+DEFAULT_DAILY_LIMIT = 5
 PAYMENT_PURPOSE_VOICE_UNLOCK = "prayer_voice_unlock"
 
 
