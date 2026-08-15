@@ -25,6 +25,7 @@ from aiogram.types import (
 from bot.features.base import BaseFeature
 from bot.payments.bzb_service import BZBCreatePaymentError
 from bot.payments.payment_provider_router import resolve_donation_payment_service
+from bot.services.prayer_voice_quota import PAYMENT_PURPOSE_VOICE_UNLOCK
 from bot.utils.telegram_identity import resolve_telegram_bot_username
 from config import config
 
@@ -67,6 +68,10 @@ class DonationPaymentFeature(BaseFeature):
         self.bot = bot
 
     async def initialize(self) -> None:
+        try:
+            await self.user_storage.ensure_prayer_voice_quota_schema()
+        except Exception as e:
+            logger.warning("[%s] prayer voice quota schema: %s", self.name, e)
         logger.info(
             "[%s] Фича донатов инициализирована (recurring=%s)",
             self.name,
@@ -99,38 +104,11 @@ class DonationPaymentFeature(BaseFeature):
     def _recurring_enabled(self) -> bool:
         return bool(config.DONATION_RECURRING_ENABLED)
 
-    async def _count_voice_prayers_all_time(self) -> int:
-        """Число генераций персональной молитвы за всё время (без служебных uid)."""
-        pool = getattr(self.user_storage, "pool", None)
-        if pool is None:
-            return 0
-        try:
-            async with pool.acquire() as conn:
-                n = await conn.fetchval(
-                    """
-                    SELECT COUNT(*)
-                    FROM token_usage
-                    WHERE request_kind = 'personal_prayer_compose'
-                      AND user_id NOT IN (304631563, 367302291)
-                    """
-                )
-            return int(n or 0)
-        except Exception as e:
-            logger.warning("[%s] prayer count for donation intro failed: %s", self.name, e)
-            return 0
-
     async def _donation_intro_text(self) -> str:
-        prayer_n = await self._count_voice_prayers_all_time()
-        prayer_line = ""
-        if prayer_n > 0:
-            prayer_line = (
-                f"Уже создано голосовых молитв: **{prayer_n:,}**.\n\n".replace(",", " ")
-            )
         return (
             "🤝 **Поддержи развитие нашего проекта**\n\n"
             "Твоя поддержка поможет сделать его лучше для всех пользователей.\n"
             "Ты вкладываешь в Благое дело 🙏🏻\n\n"
-            f"{prayer_line}"
         )
 
     def _mode_keyboard(self, *, show_subscription_mgmt: bool) -> InlineKeyboardMarkup:
@@ -275,10 +253,41 @@ class DonationPaymentFeature(BaseFeature):
 
     async def handle_callback(self, callback: CallbackQuery, state: FSMContext) -> None:
         data = callback.data or ""
+        if data == "payment_start_prayer_voice":
+            await callback.answer()
+            uid = callback.from_user.id if callback.from_user else 0
+            if uid:
+                try:
+                    await self.user_storage.set_prayer_voice_unlock_pending(uid, True)
+                except Exception as e:
+                    logger.warning(
+                        "[%s] set prayer_voice_unlock_pending uid=%s: %s",
+                        self.name,
+                        uid,
+                        e,
+                    )
+            if callback.message:
+                await self.show_donation_menu(
+                    callback.message, state=state, from_user_id=uid
+                )
+            return
+
         if data == "payment_start":
             await callback.answer()
             if callback.message:
                 uid = callback.from_user.id if callback.from_user else 0
+                if uid:
+                    try:
+                        await self.user_storage.set_prayer_voice_unlock_pending(
+                            uid, False
+                        )
+                    except Exception as e:
+                        logger.debug(
+                            "[%s] clear prayer unlock pending uid=%s: %s",
+                            self.name,
+                            uid,
+                            e,
+                        )
                 await self.show_donation_menu(
                     callback.message, state=state, from_user_id=uid
                 )
@@ -571,6 +580,13 @@ class DonationPaymentFeature(BaseFeature):
         if not confirmation_url or not provider_pid:
             raise RuntimeError("empty provider response")
 
+        purpose = None
+        try:
+            if await self.user_storage.get_prayer_voice_unlock_pending(user_id):
+                purpose = PAYMENT_PURPOSE_VOICE_UNLOCK
+        except Exception as e:
+            logger.debug("[%s] unlock pending check uid=%s: %s", self.name, user_id, e)
+
         row_id = await self.user_storage.create_payment(
             user_id=user_id,
             amount=float(amount),
@@ -582,6 +598,7 @@ class DonationPaymentFeature(BaseFeature):
             order_id=None,
             provider_checkout_url=confirmation_url,
             marathon_id=marathon_id,
+            purpose=purpose,
         )
         if not row_id:
             raise RuntimeError("create_payment failed")

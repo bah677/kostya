@@ -84,6 +84,12 @@ class AppCommandHandlers:
 
     async def _payment_handler(self, message: Message, state: FSMContext):
         pay = self.features.get("payment")
+        uid = message.from_user.id if message.from_user else 0
+        if uid:
+            try:
+                await pay.user_storage.set_prayer_voice_unlock_pending(uid, False)
+            except Exception:
+                pass
         await pay.show_donation_menu(message, state=state)
 
     async def _affiliate_handler(self, message: Message, state: FSMContext):

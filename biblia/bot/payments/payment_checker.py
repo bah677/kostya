@@ -16,6 +16,7 @@ from bot.payments.standalone_donation_notify import (
 )
 from bot.services.donation_marathon_attr import attribute_payment_to_marathon
 from bot.services.donation_marathon_close import handle_marathon_closed
+from bot.services.prayer_voice_quota import PAYMENT_PURPOSE_VOICE_UNLOCK
 from config import config
 
 logger = logging.getLogger(__name__)
@@ -420,6 +421,23 @@ class PaymentChecker:
                     exc_info=True,
                 )
 
+            purpose = ((payment_row or {}).get("purpose") or "").strip()
+            is_prayer_voice_unlock = purpose == PAYMENT_PURPOSE_VOICE_UNLOCK
+            if not is_prayer_voice_unlock:
+                try:
+                    is_prayer_voice_unlock = bool(
+                        await self.user_storage.get_prayer_voice_unlock_pending(user_id)
+                    )
+                except Exception:
+                    is_prayer_voice_unlock = False
+            if (
+                is_prayer_voice_unlock
+                and payment_row is not None
+                and purpose != PAYMENT_PURPOSE_VOICE_UNLOCK
+            ):
+                payment_row = dict(payment_row)
+                payment_row["purpose"] = PAYMENT_PURPOSE_VOICE_UNLOCK
+
             try:
                 if payment_row:
                     if rub_amount is None and payment_row.get("amount_rub") is not None:
@@ -484,17 +502,72 @@ class PaymentChecker:
                 logger.warning(
                     "Не удалось отправить благодарность user=%s: %s", user_id, send_e
                 )
+
+            if is_prayer_voice_unlock:
+                await self._deliver_prayer_voice_unlock(user_id, payment_id=payment_id)
+
             if payment_row and (payment_row.get("payment_type") or "") == "subscription":
                 await link_donation_subscription_after_payment(
                     self.user_storage,
                     self.bzb_service,
                     payment_row,
                 )
-            elif not marathon_thank:
+            elif not marathon_thank and not is_prayer_voice_unlock:
                 await send_donation_club_promo_message(self.bot, user_id)
         except Exception as e:
             logger.error(
                 "❌ Ошибка финализации standalone payment_id=%s: %s",
+                payment_id,
+                e,
+                exc_info=True,
+            )
+
+    async def _deliver_prayer_voice_unlock(
+        self, user_id: int, *, payment_id: int
+    ) -> None:
+        """После доната-разблокировки — озвучить последнюю молитву пользователя."""
+        try:
+            prayer_text = await self.user_storage.take_prayer_voice_unlock(
+                user_id,
+                require_pending=False,
+            )
+            if not prayer_text:
+                prayer_text = await self.user_storage.get_prayer_last_text(user_id)
+            if not prayer_text:
+                logger.warning(
+                    "prayer voice unlock: no last text user=%s payment=%s",
+                    user_id,
+                    payment_id,
+                )
+                try:
+                    await self.bot.send_message(
+                        user_id,
+                        "Не нашли текст молитвы для озвучки. Напишите /prayer ещё раз "
+                        "или в поддержку — донат уже учтён.",
+                    )
+                except Exception:
+                    pass
+                return
+
+            feature = None
+            if self.feature_manager is not None:
+                feature = self.feature_manager.get_optional("personal_prayer")
+            if feature is None or not hasattr(feature, "deliver_unlock_voice_for_user"):
+                logger.error(
+                    "prayer voice unlock: personal_prayer feature missing payment=%s",
+                    payment_id,
+                )
+                return
+            ok = await feature.deliver_unlock_voice_for_user(user_id, prayer_text)
+            logger.info(
+                "prayer voice unlock delivered=%s user=%s payment=%s",
+                ok,
+                user_id,
+                payment_id,
+            )
+        except Exception as e:
+            logger.error(
+                "❌ prayer voice unlock payment_id=%s: %s",
                 payment_id,
                 e,
                 exc_info=True,

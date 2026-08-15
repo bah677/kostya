@@ -84,6 +84,19 @@ _PRAYER_DONATION_FOOTER = (
     "(Гал. 6:2)"
 )
 
+_PRAYER_VOICE_LIMIT_NOTICE = (
+    "Голосовая генерация — одна из самых любимых и вместе с тем затратных "
+    "частей проекта. Сейчас она очень востребована, и мы пока не можем держать "
+    "её без лимита.\n\n"
+    "На сегодня бесплатный лимит голоса исчерпан. Он обновится каждый день "
+    "в <b>08:00 мск</b>.\n\n"
+    "Можно подождать сброса и снова попробовать попасть в число бесплатных "
+    "генераций — или поддержать проект любым донатом, и мы сразу озвучим "
+    "эту молитву для вас."
+)
+
+_PRAYER_VOICE_UNLOCK_CB = "payment_start_prayer_voice"
+
 
 @dataclass(frozen=True)
 class _PrayerStressProposalContext:
@@ -218,6 +231,10 @@ class PersonalPrayerFeature(BaseFeature):
     async def initialize(self) -> None:
         self.agents_client = AgentsClient(self.user_storage)
         await self.user_storage.ensure_prayer_stress_schema()
+        try:
+            await self.user_storage.ensure_prayer_voice_quota_schema()
+        except Exception as e:
+            logger.warning("[%s] prayer voice quota schema: %s", self.name, e)
         self._stress_dict_cache = await self.user_storage.get_prayer_stress_dictionary()
         if self.voicebox.configured:
             logger.info(
@@ -397,39 +414,89 @@ class PersonalPrayerFeature(BaseFeature):
         bot = self.bot
         prayer_text: Optional[str] = None
         ogg: Optional[bytes] = None
+        slot_id: Optional[int] = None
+        voice_unlocked_by_admin = False
+        voice_allowed = True
 
         try:
+            voice_unlocked_by_admin = bool(
+                uid and await is_admin_or_super(self.user_storage, uid)
+            )
+            if uid and not voice_unlocked_by_admin:
+                slot_id = await self.user_storage.try_reserve_prayer_voice_slot(uid)
+                voice_allowed = slot_id is not None
+                if not voice_allowed:
+                    try:
+                        await wait_msg.edit_text("⏳ Составляю молитву…")
+                    except Exception:
+                        pass
+
             if bot:
                 async with record_voice_chat_action(
                     bot, message.chat.id, message_thread_id=message.message_thread_id
                 ):
                     prayer_text, ogg = await self._compose_and_synthesize(
-                        uid, turns, wait_msg=wait_msg
+                        uid,
+                        turns,
+                        wait_msg=wait_msg,
+                        skip_voice=not voice_allowed,
                     )
             else:
                 prayer_text, ogg = await self._compose_and_synthesize(
-                    uid, turns, wait_msg=wait_msg
+                    uid,
+                    turns,
+                    wait_msg=wait_msg,
+                    skip_voice=not voice_allowed,
                 )
 
             if not prayer_text:
+                if slot_id:
+                    await self.user_storage.release_prayer_voice_slot(slot_id)
+                    slot_id = None
                 await wait_msg.edit_text(
                     "Не удалось составить молитву. Попробуйте позже или /prayer снова."
                 )
                 return
+
+            if uid:
+                try:
+                    await self.user_storage.save_prayer_last_text(uid, prayer_text)
+                except Exception as e:
+                    logger.warning("[%s] save last prayer text uid=%s: %s", self.name, uid, e)
+
+            if voice_allowed and not ogg and slot_id:
+                # TTS не удался — освобождаем слот бесплатного голоса
+                await self.user_storage.release_prayer_voice_slot(slot_id)
+                slot_id = None
 
             try:
                 await wait_msg.delete()
             except Exception:
                 pass
 
-            await self._deliver_prayer(message, bot, prayer_text, ogg)
+            if voice_allowed:
+                await self._deliver_prayer(
+                    message,
+                    bot,
+                    prayer_text,
+                    ogg,
+                    include_donation_footer=True,
+                )
+            else:
+                await self._deliver_prayer_text_only(message, prayer_text)
+                await self._send_voice_limit_notice(message)
+
             logger.info(
-                "[%s] prayer delivered uid=%s voice=%s",
+                "[%s] prayer delivered uid=%s voice=%s free_slot=%s admin=%s",
                 self.name,
                 uid,
                 bool(ogg),
+                slot_id,
+                voice_unlocked_by_admin,
             )
         except Exception as e:
+            if slot_id:
+                await self.user_storage.release_prayer_voice_slot(slot_id)
             logger.error("[%s] generate failed uid=%s: %s", self.name, uid, e, exc_info=True)
             try:
                 await wait_msg.edit_text(
@@ -439,6 +506,26 @@ class PersonalPrayerFeature(BaseFeature):
                 pass
         finally:
             await state.clear()
+
+    async def _send_voice_limit_notice(self, message: Message) -> None:
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="💳 Поддержать проект",
+                        callback_data=_PRAYER_VOICE_UNLOCK_CB,
+                    )
+                ]
+            ]
+        )
+        try:
+            await message.answer(
+                _PRAYER_VOICE_LIMIT_NOTICE,
+                parse_mode=ParseMode.HTML,
+                reply_markup=kb,
+            )
+        except Exception as e:
+            logger.error("[%s] voice limit notice failed: %s", self.name, e)
 
     async def _notify_tts_queue(
         self, wait_msg: Optional[Message], ahead: int
@@ -460,6 +547,7 @@ class PersonalPrayerFeature(BaseFeature):
         turns: List[str],
         *,
         wait_msg: Optional[Message] = None,
+        skip_voice: bool = False,
     ) -> tuple[Optional[str], Optional[bytes]]:
         """Промпт B → озвучка ТЕКСТА МОЛИТВЫ (ElevenLabs #1 + фон). Подпись = инструкция."""
         logger.info("[%s] compose start uid=%s turns=%s", self.name, uid, len(turns))
@@ -481,6 +569,10 @@ class PersonalPrayerFeature(BaseFeature):
             len(prayer_text),
         )
 
+        if skip_voice:
+            logger.info("[%s] skip TTS (quota) uid=%s", self.name, uid)
+            return prayer_text, None
+
         if wait_msg is not None:
             try:
                 await wait_msg.edit_text("⏳ Озвучиваю молитву…")
@@ -491,7 +583,6 @@ class PersonalPrayerFeature(BaseFeature):
             uid, prayer_text, wait_msg=wait_msg
         )
         return prayer_text, ogg
-
     async def _synthesize_prayer_voice(
         self,
         uid: int,
@@ -850,6 +941,8 @@ class PersonalPrayerFeature(BaseFeature):
         bot: Optional[Bot],
         prayer_text: str,
         ogg: Optional[bytes],
+        *,
+        include_donation_footer: bool = True,
     ) -> None:
         body = (prayer_text or "").strip()
         uid = message.from_user.id if message.from_user else 0
@@ -907,7 +1000,11 @@ class PersonalPrayerFeature(BaseFeature):
         else:
             logger.info("[%s] prayer voice missing uid=%s — текст без аудио", self.name, uid)
 
-        await self._deliver_prayer_text_with_donation(message, body)
+        await self._deliver_prayer_text_with_donation(
+            message,
+            body,
+            include_donation_footer=include_donation_footer,
+        )
 
     async def _deliver_prayer_text_only(
         self,
@@ -916,7 +1013,9 @@ class PersonalPrayerFeature(BaseFeature):
         *,
         notice: Optional[str] = None,
     ) -> None:
-        await self._deliver_prayer_text_with_donation(message, body)
+        await self._deliver_prayer_text_with_donation(
+            message, body, include_donation_footer=False
+        )
         if notice:
             try:
                 await message.answer(notice, parse_mode=ParseMode.HTML)
@@ -926,16 +1025,20 @@ class PersonalPrayerFeature(BaseFeature):
                 )
 
     async def _deliver_prayer_text_with_donation(
-        self, message: Message, body: str
+        self,
+        message: Message,
+        body: str,
+        *,
+        include_donation_footer: bool = True,
     ) -> None:
         """
         1) Текст молитвы (plain, без HTML — надёжно доходит).
-        2) Отдельным сообщением — донат-блок + кнопка.
+        2) Отдельным сообщением — донат-блок + кнопка (если include_donation_footer).
         """
         body = (body or "").strip()
         uid = message.from_user.id if message.from_user else 0
         kb = self._prayer_support_kb()
-        if uid:
+        if uid and include_donation_footer:
             try:
                 await self.user_storage.increment_donation_button_counter(uid)
             except Exception:
@@ -972,6 +1075,9 @@ class PersonalPrayerFeature(BaseFeature):
             except Exception as e2:
                 logger.error("[%s] prayer text chunks failed uid=%s: %s", self.name, uid, e2)
 
+        if not include_donation_footer:
+            return
+
         try:
             await message.answer(_PRAYER_DONATION_FOOTER, reply_markup=kb)
             logger.info("[%s] donation footer sent uid=%s", self.name, uid)
@@ -983,6 +1089,89 @@ class PersonalPrayerFeature(BaseFeature):
                 e,
             )
 
+    async def deliver_unlock_voice_for_user(
+        self,
+        user_id: int,
+        prayer_text: str,
+    ) -> bool:
+        """После доната-разблокировки: голос + текст, без донат-футера."""
+        body = (prayer_text or "").strip()
+        if not body or not self.bot or user_id <= 0:
+            return False
+        try:
+            ogg = await self._synthesize_prayer_voice(user_id, body)
+        except Exception as e:
+            logger.error(
+                "[%s] unlock TTS failed uid=%s: %s",
+                self.name,
+                user_id,
+                e,
+                exc_info=True,
+            )
+            ogg = None
+
+        intro_caption = _PRAYER_VOICE_CAPTION.strip()
+        if len(intro_caption) > _TG_CAPTION_MAX:
+            intro_caption = intro_caption[: _TG_CAPTION_MAX - 1].rstrip() + "…"
+
+        if ogg:
+            try:
+                duration = ogg_opus_duration_sec(ogg)
+                voice_file = BufferedInputFile(ogg, filename="prayer.ogg")
+                kwargs = {
+                    "chat_id": user_id,
+                    "voice": voice_file,
+                    "caption": intro_caption,
+                }
+                if duration is not None:
+                    kwargs["duration"] = duration
+                await self.bot.send_voice(**kwargs)
+            except Exception as e:
+                logger.error(
+                    "[%s] unlock voice send failed uid=%s: %s",
+                    self.name,
+                    user_id,
+                    e,
+                    exc_info=True,
+                )
+                ogg = None
+
+        prayer_msg = f"🙏 Ваша молитва\n\n{body}"
+        try:
+            if len(prayer_msg) <= _TG_MESSAGE_MAX:
+                await self.bot.send_message(user_id, prayer_msg)
+            else:
+                first, rest = _split_caption(
+                    body, _TG_MESSAGE_MAX - len("🙏 Ваша молитва\n\n")
+                )
+                await self.bot.send_message(user_id, f"🙏 Ваша молитва\n\n{first}")
+                # остаток — одним куском / несколькими
+                chunk = rest
+                while chunk:
+                    part = chunk[:_TG_MESSAGE_MAX]
+                    chunk = chunk[_TG_MESSAGE_MAX:]
+                    await self.bot.send_message(user_id, part)
+        except Exception as e:
+            logger.error(
+                "[%s] unlock text send failed uid=%s: %s",
+                self.name,
+                user_id,
+                e,
+                exc_info=True,
+            )
+            return False
+
+        if not ogg:
+            try:
+                await self.bot.send_message(
+                    user_id,
+                    "Не удалось сразу озвучить молитву. Мы уже сохранили ваш донат — "
+                    "попробуйте /prayer чуть позже или напишите в поддержку.",
+                )
+            except Exception:
+                pass
+            return False
+        return True
     def _prayer_support_kb(self) -> InlineKeyboardMarkup:
         return InlineKeyboardMarkup(
             inline_keyboard=[

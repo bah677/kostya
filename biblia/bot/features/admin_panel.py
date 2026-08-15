@@ -16,10 +16,14 @@ from bot.features.base import BaseFeature
 from bot.services.admin_panel import (
     CB_HOME,
     CB_PREFIX,
+    CB_VOICE_LIMIT,
+    CB_VOICE_LIMIT_SET,
     build_admin_panel_group,
     build_admin_panel_home,
     build_prayer_stats_keyboard,
     build_quick_report_keyboard_for,
+    build_voice_limit_keyboard,
+    format_voice_limit_status_html,
     parse_admin_panel_group_cb,
     parse_admin_panel_quick_cb,
     parse_prayer_stats_ask_cb,
@@ -63,6 +67,12 @@ class AdminPanelFeature(BaseFeature):
             StateFilter(AdminPanelStates.waiting_prayer_stats_date),
             F.text,
         )
+        dp.message.register(
+            self._msg_prayer_voice_limit,
+            private,
+            StateFilter(AdminPanelStates.waiting_prayer_voice_limit),
+            F.text,
+        )
         dp.callback_query.register(
             self._cb_panel,
             F.data.startswith(f"{CB_PREFIX}:"),
@@ -78,6 +88,12 @@ class AdminPanelFeature(BaseFeature):
                 self._msg_prayer_stats_date,
                 admin_chat,
                 StateFilter(AdminPanelStates.waiting_prayer_stats_date),
+                F.text,
+            )
+            dp.message.register(
+                self._msg_prayer_voice_limit,
+                admin_chat,
+                StateFilter(AdminPanelStates.waiting_prayer_voice_limit),
                 F.text,
             )
         logger.info("[%s] /adm /status зарегистрированы", self.name)
@@ -182,6 +198,55 @@ class AdminPanelFeature(BaseFeature):
         await message.answer(f"⏳ Собираю отчёт за {day.strftime('%d.%m.%Y')}…")
         await self._show_prayer_stats(screen=screen, period=period, reply_to=message)
 
+    async def _show_voice_limit(
+        self,
+        *,
+        reply_to: Optional[Message] = None,
+        edit_message: Optional[Message] = None,
+    ) -> None:
+        try:
+            await self.user_storage.ensure_prayer_voice_quota_schema()
+        except Exception:
+            pass
+        status = await self.user_storage.get_prayer_quota_status()
+        text = format_voice_limit_status_html(status)
+        kb = build_voice_limit_keyboard()
+        if edit_message is not None:
+            await edit_message.edit_text(
+                text, parse_mode=ParseMode.HTML, reply_markup=kb
+            )
+        elif reply_to is not None:
+            await reply_to.answer(text, parse_mode=ParseMode.HTML, reply_markup=kb)
+
+    async def _msg_prayer_voice_limit(self, message: Message, state: FSMContext) -> None:
+        if message.from_user is None or message.from_user.is_bot:
+            return
+        if not await is_admin_or_super(self.user_storage, message.from_user.id):
+            return
+        raw = (message.text or "").strip()
+        if raw.lower() in ("/cancel", "cancel", "отмена"):
+            await state.clear()
+            await message.answer("Ок, ввод лимита отменён. /adm")
+            return
+        try:
+            limit = int(raw.replace(" ", ""))
+            if limit < 0 or limit > 100_000:
+                raise ValueError("out of range")
+        except ValueError:
+            await message.answer(
+                "Нужно целое число ≥ 0 (например <code>50</code>). "
+                "Отмена: /cancel",
+                parse_mode=ParseMode.HTML,
+            )
+            return
+        ok = await self.user_storage.set_prayer_voice_daily_limit(limit)
+        await state.clear()
+        if not ok:
+            await message.answer("Не удалось сохранить лимит. Попробуйте позже.")
+            return
+        await message.answer(f"✅ Лимит голоса молитв: <b>{limit}</b> / сутки (с 08:00 МСК).", parse_mode=ParseMode.HTML)
+        await self._show_voice_limit(reply_to=message)
+
     async def _cb_panel(self, query: CallbackQuery, state: FSMContext) -> None:
         if query.from_user is None or query.message is None:
             await query.answer()
@@ -192,6 +257,24 @@ class AdminPanelFeature(BaseFeature):
         tier = await self._resolve_tier(query.from_user.id)
         data = query.data or ""
         try:
+            if data == CB_VOICE_LIMIT_SET:
+                await state.set_state(AdminPanelStates.waiting_prayer_voice_limit)
+                await query.answer()
+                await query.message.answer(
+                    "🎤 Новый суточный лимит бесплатных голосовых молитв\n\n"
+                    "Пришлите целое число (например <code>50</code>). "
+                    "Сброс окна — в <b>08:00 МСК</b>.\n"
+                    "Отмена: /cancel",
+                    parse_mode=ParseMode.HTML,
+                )
+                return
+
+            if data == CB_VOICE_LIMIT:
+                await state.clear()
+                await query.answer()
+                await self._show_voice_limit(edit_message=query.message)
+                return
+
             ask_screen = parse_prayer_stats_ask_cb(data)
             if ask_screen:
                 await state.set_state(AdminPanelStates.waiting_prayer_stats_date)

@@ -20,6 +20,7 @@ from storage.db.messages import MessagesMixin
 from storage.db.orders import OrdersMixin
 from storage.db.payments import PaymentsMixin
 from storage.db.prayer_stress import PrayerStressMixin
+from storage.db.prayer_voice_quota import PrayerVoiceQuotaMixin
 from storage.db.referrals import ReferralsMixin
 from storage.db.scripture_challenge import ScriptureChallengeMixin
 from storage.db.subscription_outreach import SubscriptionOutreachMixin
@@ -35,6 +36,7 @@ class Database(
     SupportMixin,
     PaymentsMixin,
     PrayerStressMixin,
+    PrayerVoiceQuotaMixin,
     DonationSubscriptionsMixin,
     DonationMarathonsMixin,
     ScriptureChallengeMixin,

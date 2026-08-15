@@ -194,6 +194,12 @@ ADMIN_CATALOG: Tuple[AdminEntry, ...] = (
         "admin",
         "tools",
     ),
+    AdminEntry(
+        "⚡ /adm → лимит голоса молитв",
+        "Суточный лимит бесплатных голосовых молитв (сброс 08:00 МСК)",
+        "admin",
+        "tools",
+    ),
     # —— подсказки ——
     AdminEntry(
         "reply в топике поддержки",

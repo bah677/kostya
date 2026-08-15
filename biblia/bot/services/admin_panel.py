@@ -25,6 +25,8 @@ CB_QUICK_PREFIX = f"{CB_PREFIX}:q:"
 CB_QUICK_MAIL3 = f"{CB_QUICK_PREFIX}mail3"
 CB_QUICK_PRAYER = f"{CB_QUICK_PREFIX}prayer"
 CB_QUICK_LIVE = f"{CB_QUICK_PREFIX}live"
+CB_VOICE_LIMIT = f"{CB_PREFIX}:voice_limit"
+CB_VOICE_LIMIT_SET = f"{CB_PREFIX}:voice_limit_set"
 # Молитвы: apnl:pr:{screen}:{period}  period=7|30|all|yday|YYYY-MM-DD
 # Запрос даты: apnl:pr:ask:{screen}
 CB_PRAYER_PREFIX = f"{CB_PREFIX}:pr:"
@@ -129,6 +131,12 @@ def _quick_report_rows() -> List[List[InlineKeyboardButton]]:
                 callback_data=prayer_stats_cb("ov", "30"),
             )
         ],
+        [
+            InlineKeyboardButton(
+                text="🎤 Лимит голоса молитв",
+                callback_data=CB_VOICE_LIMIT,
+            )
+        ],
     ]
 
 
@@ -172,6 +180,15 @@ def build_admin_panel_group(
     kb_rows: List[List[InlineKeyboardButton]] = []
     if group_key == "reports":
         kb_rows.extend(_quick_report_rows())
+    elif group_key == "tools":
+        kb_rows.append(
+            [
+                InlineKeyboardButton(
+                    text="🎤 Лимит голоса молитв",
+                    callback_data=CB_VOICE_LIMIT,
+                )
+            ]
+        )
     elif group_key == "mailings":
         kb_rows.append(
             [
@@ -259,3 +276,40 @@ def build_prayer_stats_keyboard(screen: str, period: str) -> InlineKeyboardMarku
     )
     rows.append([InlineKeyboardButton(text="« Назад", callback_data=CB_HOME)])
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def build_voice_limit_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="✏️ Изменить лимит",
+                    callback_data=CB_VOICE_LIMIT_SET,
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🔄 Обновить",
+                    callback_data=CB_VOICE_LIMIT,
+                )
+            ],
+            [InlineKeyboardButton(text="« Назад", callback_data=CB_HOME)],
+        ]
+    )
+
+
+def format_voice_limit_status_html(status: dict) -> str:
+    day = status.get("quota_day")
+    day_s = day.isoformat() if hasattr(day, "isoformat") else str(day or "—")
+    limit = int(status.get("limit") or 0)
+    used = int(status.get("used") or 0)
+    remaining = int(status.get("remaining") or 0)
+    return (
+        "<b>🎤 Лимит бесплатных голосовых молитв</b>\n\n"
+        f"Сутки квоты (с 08:00 МСК): <code>{html_mod.escape(day_s)}</code>\n"
+        f"Лимит: <b>{limit}</b>\n"
+        f"Использовано: <b>{used}</b>\n"
+        f"Осталось: <b>{remaining}</b>\n\n"
+        "<i>Админы лимит не расходуют. После исчерпания — текст + предложение доната "
+        "за озвучку.</i>"
+    )

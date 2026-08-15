@@ -11,6 +11,7 @@ from aiogram import Bot
 
 from bot.utils.admin_channel import send_admin_html_message
 from bot.services.donation_marathon_progress import marathon_admin_notify_block
+from bot.services.prayer_voice_quota import PAYMENT_PURPOSE_VOICE_UNLOCK
 from config import config
 
 logger = logging.getLogger(__name__)
@@ -123,10 +124,16 @@ async def notify_admins_standalone_donation_success(
     }
     header = kind_labels.get(kind, kind_labels["donation"])
 
+    purpose = (payment.get("purpose") or "").strip()
+    purpose_line = ""
+    if purpose == PAYMENT_PURPOSE_VOICE_UNLOCK:
+        purpose_line = "🎯 <b>Назначение:</b> на генерацию молитвы\n"
+
     notification_text = (
         f"{header}\n\n"
         f"💰 <b>Сумма:</b> {amount_bit} {curr_bit}\n"
         f"{_fmt_rub_line(resolved_rub)}\n"
+        f"{purpose_line}"
         f"👤 <b>Пользователь:</b> {html_module.escape(full_name)}\n"
         f"🆔 <b>User ID:</b> <code>{user_id}</code>\n"
         f"📱 <b>Username:</b> {html_module.escape(username_display)}\n"
