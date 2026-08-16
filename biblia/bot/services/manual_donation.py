@@ -30,16 +30,15 @@ POOL_PERIOD_NEXT = "next"
 
 
 def normalize_currency(code: str) -> str:
+    """USDT и аналоги → USD: у ЦБ нет USDT, крипту учитываем как доллары."""
     cur = (code or "").strip().upper()
-    if cur in ("USDT", "USDTTRC20", "USDT_TRC20", "USDT-TRC20"):
-        return "USDT"
+    if cur in ("USDT", "USDTTRC20", "USDT_TRC20", "USDT-TRC20", "USDC"):
+        return "USD"
     return cur
 
 
 def fx_currency_for_cbr(currency: str) -> str:
-    """USDT учитываем как USD для курса ЦБ."""
-    cur = normalize_currency(currency)
-    return "USD" if cur == "USDT" else cur
+    return normalize_currency(currency)
 
 
 @dataclass

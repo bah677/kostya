@@ -25,14 +25,15 @@ from bot.services.donation_marathon_progress import format_money
 from bot.services.manual_donation import (
     POOL_PERIOD_CURRENT,
     POOL_PERIOD_NEXT,
+    normalize_currency,
     record_manual_donation,
 )
-from bot.services.prayer_voice_quota import format_reset_hint, quota_day_for
+from bot.services.prayer_voice_quota import format_reset_hint, msk_now, quota_day_for
 
 logger = logging.getLogger(__name__)
 
 _CB = "mdon_"
-_FALLBACK_CURRENCIES = ("RUB", "USD", "EUR", "USDT")
+_FALLBACK_CURRENCIES = ("RUB", "USD", "EUR")
 _EXTRA_MANUAL_PROVIDERS = ("crypto", "bank", "cash")
 _PROVIDER_LABELS = {
     "crypto": "Крипта",
@@ -42,6 +43,8 @@ _PROVIDER_LABELS = {
     "bzb": "BZB",
     "manual": "manual",
 }
+# В БД иногда лежит USDT — в кнопках не показываем, пишем USD.
+_CURRENCY_ALIASES_SKIP = frozenset({"USDT", "USDTTRC20", "USDC"})
 
 
 class ManualDonationStates(StatesGroup):
@@ -152,13 +155,15 @@ class ManualDonationFeature(BaseFeature):
             count_pool=True,
             pool_period=POOL_PERIOD_NEXT,
             provider=prefer_provider,
+            currency="USD" if prefer_provider == "crypto" else None,
             marathon_available=bool(active),
             marathon_name=(active or {}).get("name"),
         )
         hint = ""
         if prefer_provider == "crypto":
             hint = (
-                "\n<i>Алиас /marathon_crypto: крипта + марафон (если активен).</i>\n"
+                "\n<i>Алиас /marathon_crypto: провайдер crypto, валюта по умолчанию "
+                "<b>USD</b> (USDT учитываем как доллары).</i>\n"
             )
         await message.answer(
             "✍️ <b>Ручной донат</b>\n"
@@ -187,7 +192,9 @@ class ManualDonationFeature(BaseFeature):
         await state.update_data(amount=amount)
         await state.set_state(ManualDonationStates.currency)
         await message.answer(
-            "Валюта (из платежей или свой вариант):",
+            "Валюта (из платежей или свой вариант).\n"
+            "<i>Крипту (USDT и т.п.) указывайте как <b>USD</b> — у ЦБ нет курса USDT.</i>",
+            parse_mode=ParseMode.HTML,
             reply_markup=await self._currency_kb(),
         )
 
@@ -196,8 +203,8 @@ class ManualDonationFeature(BaseFeature):
         seen = set()
         out: list[str] = []
         for c in list(existing) + list(_FALLBACK_CURRENCIES):
-            cu = (c or "").strip().upper()
-            if not cu or cu in seen:
+            cu = normalize_currency(c)
+            if not cu or cu in seen or cu in _CURRENCY_ALIASES_SKIP:
                 continue
             seen.add(cu)
             out.append(cu)
@@ -358,12 +365,13 @@ class ManualDonationFeature(BaseFeature):
             if cur == "OTHER":
                 await state.set_state(ManualDonationStates.currency_other)
                 await callback.message.answer(
-                    "Код валюты (например <code>GBP</code>):",
+                    "Код валюты (например <code>GBP</code>).\n"
+                    "Крипту пишите как <code>USD</code>:",
                     parse_mode=ParseMode.HTML,
                 )
                 await callback.answer()
                 return
-            await state.update_data(currency=cur)
+            await state.update_data(currency=normalize_currency(cur))
             st = await state.get_data()
             if st.get("provider"):
                 await state.set_state(ManualDonationStates.user_id)
@@ -469,9 +477,11 @@ class ManualDonationFeature(BaseFeature):
     async def _on_currency_other(self, message: Message, state: FSMContext) -> None:
         if not await self._ensure_admin(message):
             return
-        cur = (message.text or "").strip().upper()
+        cur = normalize_currency((message.text or "").strip())
         if not cur.isalpha() or len(cur) < 3 or len(cur) > 8:
-            await message.answer("Нужен код из 3–8 букв (ISO), например GBP.")
+            await message.answer(
+                "Нужен код из 3–8 букв (ISO), например GBP. Крипту — USD."
+            )
             return
         await state.update_data(currency=cur)
         st = await state.get_data()
@@ -544,6 +554,26 @@ class ManualDonationFeature(BaseFeature):
 
     async def _ask_confirm(self, message: Message, state: FSMContext) -> None:
         st = await state.get_data()
+        cur = normalize_currency(str(st.get("currency") or ""))
+        amount = float(st.get("amount") or 0)
+        rub: Optional[float] = None
+        rate: Optional[float] = None
+        try:
+            conv = CurrencyConverterService()
+            when = msk_now()
+            rub = await conv.convert_payment_amount(amount, cur, when)
+            if cur == "RUB":
+                rate = 1.0
+            else:
+                rate = await conv.get_rate_to_rub(cur, when.date())
+        except Exception:
+            logger.exception("manual donation preview FX failed")
+        await state.update_data(
+            currency=cur,
+            preview_rub=rub,
+            preview_rate=rate,
+        )
+        st = await state.get_data()
         await state.set_state(ManualDonationStates.confirm)
         text = self._preview_html(st)
         await message.answer(
@@ -553,9 +583,22 @@ class ManualDonationFeature(BaseFeature):
     def _preview_html(self, st: Dict[str, Any]) -> str:
         amount = float(st.get("amount") or 0)
         cur = str(st.get("currency") or "?")
+        rub = st.get("preview_rub")
+        rate = st.get("preview_rate")
+        sum_line = f"• Сумма: <b>{html.escape(format_money(amount, cur))}</b>"
+        if rub is not None:
+            rub_f = float(rub)
+            rub_s = f"{rub_f:.2f}".rstrip("0").rstrip(".") if abs(rub_f - round(rub_f)) >= 0.005 else str(int(round(rub_f)))
+            sum_line += f" ≈ <b>{html.escape(rub_s)} ₽</b>"
+            if rate is not None and cur != "RUB":
+                sum_line += (
+                    f" <i>(курс ЦБ {html.escape(f'{float(rate):.4g}')} ₽/{html.escape(cur)})</i>"
+                )
+        else:
+            sum_line += " <i>(курс ЦБ недоступен — запись может не пройти)</i>"
         lines = [
             "📋 <b>Проверка ручного доната</b>\n",
-            f"• Сумма: <b>{html.escape(format_money(amount, cur))}</b>",
+            sum_line,
             f"• Провайдер: <code>{html.escape(str(st.get('provider') or ''))}</code>",
             f"• user_id: <code>{int(st.get('user_id') or 0)}</code>",
             f"• Комментарий: {html.escape(st.get('note') or '—')}",
