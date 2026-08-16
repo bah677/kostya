@@ -88,6 +88,46 @@ class PrayerVoiceFundingService:
             "revenue_rub": rub,
         }, used=used)
 
+    async def recalculate_locked_period(
+        self, day: date
+    ) -> Optional[PrayerVoicePeriodInfo]:
+        """
+        Пересчитать уже зафиксированный период по донатам окна предыдущих суток.
+        Лимит не опускаем ниже уже использованных слотов.
+        """
+        existing = await self.user_storage.get_prayer_voice_period(day)
+        if not existing:
+            return await self.ensure_period(day)
+
+        prev = previous_quota_day(day)
+        start, end = quota_window(prev)
+        rub = await self.user_storage.sum_succeeded_payments_rub(start, end)
+        usd = await self._rub_to_usd(rub, on_date=end)
+        computed = slots_from_donation_usd(usd)
+        min_floor = await self.user_storage.get_prayer_voice_min_limit()
+        limit = apply_min_floor(computed, min_floor)
+        used = await self.user_storage.count_prayer_voice_quota_used(quota_day=day)
+        limit = max(limit, used)
+        row = await self.user_storage.update_prayer_voice_period_totals(
+            quota_day=day,
+            limit_slots=limit,
+            computed_slots=computed,
+            min_floor=min_floor,
+            revenue_usd=usd,
+            revenue_rub=rub,
+        )
+        logger.info(
+            "prayer voice period recalculated day=%s limit=%s computed=%s "
+            "used=%s rub=%.2f usd=%.2f",
+            day,
+            limit,
+            computed,
+            used,
+            rub,
+            usd,
+        )
+        return self._row_to_info(row or existing, used=used)
+
     async def indicative_next_slots(
         self, *, now: Optional[datetime] = None
     ) -> int:

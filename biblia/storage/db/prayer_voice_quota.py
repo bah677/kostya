@@ -61,6 +61,8 @@ class PrayerVoiceQuotaMixin:
             ADD COLUMN IF NOT EXISTS prayer_voice_bonus INTEGER NOT NULL DEFAULT 0;
         ALTER TABLE payments
             ADD COLUMN IF NOT EXISTS purpose TEXT;
+        ALTER TABLE payments
+            ADD COLUMN IF NOT EXISTS counts_for_voice_pool BOOLEAN NOT NULL DEFAULT TRUE;
         """
         try:
             async with self.get_connection() as conn:
@@ -172,6 +174,7 @@ class PrayerVoiceQuotaMixin:
                     ), 0)::float8
                     FROM payments
                     WHERE status = 'succeeded'
+                      AND COALESCE(counts_for_voice_pool, TRUE) = TRUE
                       AND completed_at >= $1
                       AND completed_at < $2
                     """,
@@ -236,6 +239,43 @@ class PrayerVoiceQuotaMixin:
             return await self.get_prayer_voice_period(quota_day)
         except Exception as e:
             logger.error("insert_prayer_voice_period %s: %s", quota_day, e)
+            return None
+
+    async def update_prayer_voice_period_totals(
+        self,
+        *,
+        quota_day: date,
+        limit_slots: int,
+        computed_slots: int,
+        min_floor: int,
+        revenue_usd: float,
+        revenue_rub: float,
+    ) -> Optional[Dict[str, Any]]:
+        """Пересчёт уже зафиксированного периода (ручной донат в текущий пул)."""
+        try:
+            async with self.get_connection() as conn:
+                row = await conn.fetchrow(
+                    """
+                    UPDATE prayer_voice_period
+                       SET limit_slots = $2,
+                           computed_slots = $3,
+                           min_floor = $4,
+                           revenue_usd = $5,
+                           revenue_rub = $6
+                     WHERE quota_day = $1
+                 RETURNING quota_day, limit_slots, computed_slots, min_floor,
+                           revenue_usd, revenue_rub, locked_at
+                    """,
+                    quota_day,
+                    int(limit_slots),
+                    int(computed_slots),
+                    int(min_floor),
+                    float(revenue_usd),
+                    float(revenue_rub),
+                )
+            return dict(row) if row else None
+        except Exception as e:
+            logger.error("update_prayer_voice_period_totals %s: %s", quota_day, e)
             return None
 
     async def count_prayer_voice_quota_used(

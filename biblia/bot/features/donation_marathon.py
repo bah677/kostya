@@ -69,9 +69,6 @@ class MarathonAdminStates(StatesGroup):
     accept_methods = State()
     description = State()
     confirm = State()
-    crypto_amount = State()
-    crypto_user = State()
-    crypto_note = State()
 
 
 class DonationMarathonFeature(BaseFeature):
@@ -103,11 +100,6 @@ class DonationMarathonFeature(BaseFeature):
             Command("marathon_stop"),
         )
         dp.message.register(
-            self.cmd_marathon_crypto,
-            F.chat.type == ChatType.PRIVATE,
-            Command("marathon_crypto"),
-        )
-        dp.message.register(
             self.cmd_marathon_backfill,
             F.chat.type == ChatType.PRIVATE,
             Command("marathon_backfill"),
@@ -126,21 +118,6 @@ class DonationMarathonFeature(BaseFeature):
         dp.message.register(
             self._admin_description,
             StateFilter(MarathonAdminStates.description),
-            F.text,
-        )
-        dp.message.register(
-            self._admin_crypto_amount,
-            StateFilter(MarathonAdminStates.crypto_amount),
-            F.text,
-        )
-        dp.message.register(
-            self._admin_crypto_user,
-            StateFilter(MarathonAdminStates.crypto_user),
-            F.text,
-        )
-        dp.message.register(
-            self._admin_crypto_note,
-            StateFilter(MarathonAdminStates.crypto_note),
             F.text,
         )
 
@@ -168,7 +145,7 @@ class DonationMarathonFeature(BaseFeature):
                 "Сейчас марафон не запущен.\n"
                 "Создать: /marathon_start\n"
                 "Остановить: /marathon_stop\n"
-                "Крипта вручную: /marathon_crypto\n"
+                "Ручной донат: /manual_donat\n"
                 "Ретроспектива: /marathon_backfill 1"
             )
             return
@@ -270,26 +247,6 @@ class DonationMarathonFeature(BaseFeature):
         except Exception as e:
             logger.exception("marathon_backfill failed: %s", e)
             await wait.edit_text(f"❌ Ошибка бэкфилла: {html.escape(str(e)[:200])}")
-
-    async def cmd_marathon_crypto(self, message: Message, state: FSMContext) -> None:
-        if not await self._ensure_admin(message):
-            return
-        active = await self.user_storage.get_active_donation_marathon()
-        if not active:
-            await message.answer("Нет активного марафона.")
-            return
-        if not active.get("accept_crypto"):
-            await message.answer("В этом марафоне крипта не включена.")
-            return
-        await state.set_state(MarathonAdminStates.crypto_amount)
-        await state.update_data(marathon_id=int(active["id"]))
-        cur = str(active["goal_currency"]).upper()
-        await message.answer(
-            f"Введите сумму в <b>USDT</b> (считаем USDT = USD).\n"
-            f"Валюта цели марафона: <b>{cur}</b> — переведём автоматически.\n"
-            f"Пример: <code>25</code>",
-            parse_mode=ParseMode.HTML,
-        )
 
     async def _status_html(self, marathon: Dict[str, Any]) -> str:
         mid = int(marathon["id"])
@@ -578,118 +535,6 @@ class DonationMarathonFeature(BaseFeature):
             f"🎙️ Марафон <b>{row['name']}</b> запущен. "
             f"Цель: {format_money(float(row['goal_amount']), row['goal_currency'])}.",
         )
-
-    async def _admin_crypto_amount(self, message: Message, state: FSMContext) -> None:
-        if not await self._ensure_admin(message):
-            return
-        raw = (message.text or "").strip().replace(",", ".")
-        try:
-            amount = float(raw)
-        except ValueError:
-            await message.answer("Введите число.")
-            return
-        if amount <= 0:
-            await message.answer("Сумма > 0.")
-            return
-        await state.update_data(crypto_amount=amount)
-        await state.set_state(MarathonAdminStates.crypto_user)
-        await message.answer(
-            "Telegram user_id донора (или <code>0</code>, если неизвестен):",
-            parse_mode=ParseMode.HTML,
-        )
-
-    async def _admin_crypto_user(self, message: Message, state: FSMContext) -> None:
-        if not await self._ensure_admin(message):
-            return
-        raw = (message.text or "").strip()
-        try:
-            user_id = int(raw)
-        except ValueError:
-            await message.answer("Нужен целый user_id или 0.")
-            return
-        await state.update_data(crypto_user_id=user_id)
-        await state.set_state(MarathonAdminStates.crypto_note)
-        await message.answer("Комментарий (txid / «-»):")
-
-    async def _admin_crypto_note(self, message: Message, state: FSMContext) -> None:
-        if not await self._ensure_admin(message):
-            return
-        note = (message.text or "").strip()
-        if note == "-":
-            note = ""
-        data = await state.get_data()
-        mid = int(data["marathon_id"])
-        marathon = await self.user_storage.get_donation_marathon(mid)
-        if not marathon or marathon.get("status") != "active":
-            await state.clear()
-            await message.answer("Марафон уже не активен.")
-            return
-        amount = float(data["crypto_amount"])
-        user_id = int(data.get("crypto_user_id") or 0)
-        admin_id = message.from_user.id if message.from_user else None
-        goal_cur = str(marathon["goal_currency"]).upper()
-
-        from datetime import date
-
-        from bot.payments.currency_converter import CurrencyConverterService
-        from bot.services.donation_marathon_fx import convert_amount_to_marathon_goal
-
-        converter = CurrencyConverterService()
-        fx = await convert_amount_to_marathon_goal(
-            amount=amount,
-            currency="USDT",
-            goal_currency=goal_cur,
-            amount_rub=None,
-            currency_converter=converter,
-            rate_date=date.today(),
-            fx_source_hint="usdt_eq_usd",
-        )
-        if fx is None or fx.amount_goal <= 0:
-            await state.clear()
-            await message.answer(
-                "❌ Не удалось перевести USDT в валюту цели (нет курса ЦБ?). "
-                "Попробуйте позже."
-            )
-            return
-
-        row = await self.user_storage.add_marathon_contribution(
-            marathon_id=mid,
-            user_id=user_id,
-            amount_goal=float(fx.amount_goal),
-            amount_original=float(fx.amount_original),
-            currency_original="USDT",
-            payment_id=None,
-            source="crypto_manual",
-            note=note or None,
-            created_by=admin_id,
-            goal_currency=fx.goal_currency,
-            amount_rub=fx.amount_rub,
-            rub_per_goal_unit=fx.rub_per_goal_unit,
-            rate_original_to_goal=fx.rate_original_to_goal,
-            fx_source=fx.fx_source,
-        )
-        await state.clear()
-        if not row:
-            await message.answer("❌ Не удалось записать взнос.")
-            return
-        raised = await self.user_storage.get_marathon_raised_amount(mid)
-        await message.answer(
-            f"✅ Крипто-взнос {amount:g} USDT → "
-            f"{format_money(fx.amount_goal, goal_cur)} учтён.\n"
-            f"Всего: {format_money(raised, goal_cur)}."
-        )
-        closed = await self.maybe_autoclose_marathon(mid)
-        if closed and user_id > 0 and self.bot:
-            try:
-                from bot.services.donation_marathon_progress import thank_you_remaining_html
-
-                await self.bot.send_message(
-                    user_id,
-                    thank_you_remaining_html(marathon, raised=raised),
-                    parse_mode=ParseMode.HTML,
-                )
-            except Exception:
-                pass
 
     async def _user_open(self, callback: CallbackQuery) -> None:
         marathon = await self.user_storage.get_active_donation_marathon()

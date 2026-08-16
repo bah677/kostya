@@ -176,8 +176,14 @@ ADMIN_CATALOG: Tuple[AdminEntry, ...] = (
         "marathon",
     ),
     AdminEntry(
+        "/manual_donat",
+        "Ручной донат: валюта, провайдер, марафон и/или пул голоса",
+        "admin",
+        "marathon",
+    ),
+    AdminEntry(
         "/marathon_crypto",
-        "Вручную учесть крипто-донат в марафоне",
+        "Алиас /manual_donat (крипта + марафон по умолчанию)",
         "admin",
         "marathon",
     ),

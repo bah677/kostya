@@ -7,6 +7,7 @@ from bot.base_app import TelegramBotApp
 from bot.features.daily_admin_report import DailyAdminReportFeature
 from bot.features.donation_marathon import DonationMarathonFeature
 from bot.features.donation_payment import DonationPaymentFeature
+from bot.features.manual_donation import ManualDonationFeature
 from bot.features.frequent_questions import FrequentQuestionsFeature
 from bot.features.mailing import MailingFeature
 from bot.features.media_id_helper import MediaIdHelperFeature
@@ -63,6 +64,10 @@ class BotApplication(TelegramBotApp):
             agents_client=mailing_html_agents,
         )
         marathon_feature.bind_payment_feature(payment_feature)
+        manual_donation_feature = ManualDonationFeature(
+            user_storage=self.user_storage,
+            bot=self.bot,
+        )
         mailing_feature = MailingFeature(
             user_storage=self.user_storage,
             bot=self.bot,
@@ -104,6 +109,7 @@ class BotApplication(TelegramBotApp):
             referral_feature,
             payment_feature,
             marathon_feature,
+            manual_donation_feature,
             mailing_feature,
             scheduled_mailing,
             scripture_mailing,

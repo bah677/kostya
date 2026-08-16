@@ -121,6 +121,7 @@ async def notify_admins_standalone_donation_success(
         "donation": "💰 ДОНАТ",
         "subscription_initial": "💰 ЕЖЕМЕСЯЧНАЯ ПОДДЕРЖКА (первое списание)",
         "subscription_renewal": "💰 ЕЖЕМЕСЯЧНАЯ ПОДДЕРЖКА (продление)",
+        "manual": "✍️ РУЧНОЙ ДОНАТ (админ)",
     }
     header = kind_labels.get(kind, kind_labels["donation"])
 
@@ -128,6 +129,13 @@ async def notify_admins_standalone_donation_success(
     purpose_line = ""
     if purpose == PAYMENT_PURPOSE_VOICE_UNLOCK:
         purpose_line = "🎯 <b>Назначение:</b> на генерацию молитвы\n"
+    elif purpose == "manual_admin" or kind == "manual":
+        purpose_line = "✍️ <b>Назначение:</b> внесён вручную админом\n"
+        provider = (payment.get("payment_provider") or "").strip()
+        if provider:
+            purpose_line += (
+                f"🏦 <b>Провайдер:</b> {html_module.escape(provider)}\n"
+            )
 
     tomorrow_line = ""
     try:

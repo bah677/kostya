@@ -48,6 +48,104 @@ class PaymentsMixin:
             logger.error(f"❌ Failed to create payment record: {e}")
             return None
 
+    async def create_manual_succeeded_payment(
+        self,
+        *,
+        user_id: int,
+        amount: float,
+        currency: str,
+        provider: str,
+        provider_payment_id: str,
+        amount_rub: float,
+        exchange_rate: Optional[float],
+        completed_at: datetime,
+        marathon_id: Optional[int] = None,
+        purpose: Optional[str] = None,
+        counts_for_voice_pool: bool = True,
+        user_telegram_data: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Уже успешный донат, внесённый админом (крипта / перевод / нал и т.п.)."""
+        try:
+            async with self.get_connection() as conn:
+                row = await conn.fetchrow(
+                    """
+                    INSERT INTO payments (
+                        user_id, amount, currency, payment_type,
+                        payment_provider, provider_payment_id, status,
+                        user_telegram_data, order_id, marathon_id, purpose,
+                        amount_rub, exchange_rate, converted_at,
+                        completed_at, created_at, updated_at,
+                        counts_for_voice_pool
+                    ) VALUES (
+                        $1, $2, $3, 'one_time',
+                        $4, $5, 'succeeded',
+                        $6, NULL, $7, $8,
+                        $9, $10, NOW(),
+                        $11, $11, NOW(),
+                        $12
+                    )
+                    RETURNING *
+                    """,
+                    int(user_id),
+                    float(amount),
+                    (currency or "RUB").upper(),
+                    (provider or "manual").strip().lower(),
+                    provider_payment_id,
+                    user_telegram_data,
+                    marathon_id,
+                    purpose,
+                    float(amount_rub),
+                    exchange_rate,
+                    completed_at,
+                    bool(counts_for_voice_pool),
+                )
+                return dict(row) if row else None
+        except Exception as e:
+            logger.error("❌ create_manual_succeeded_payment: %s", e, exc_info=True)
+            return None
+
+    async def list_distinct_payment_currencies(self, *, limit: int = 12) -> List[str]:
+        """Валюты из существующих платежей (частотные), для ручного доната."""
+        try:
+            async with self.get_connection() as conn:
+                rows = await conn.fetch(
+                    """
+                    SELECT upper(trim(currency)) AS c, count(*)::int AS n
+                      FROM payments
+                     WHERE currency IS NOT NULL
+                       AND trim(currency) <> ''
+                     GROUP BY 1
+                     ORDER BY n DESC, c ASC
+                     LIMIT $1
+                    """,
+                    int(limit),
+                )
+            return [str(r["c"]) for r in rows if r.get("c")]
+        except Exception as e:
+            logger.error("list_distinct_payment_currencies: %s", e)
+            return []
+
+    async def list_distinct_payment_providers(self, *, limit: int = 12) -> List[str]:
+        """Провайдеры из существующих платежей + типичные ручные каналы."""
+        try:
+            async with self.get_connection() as conn:
+                rows = await conn.fetch(
+                    """
+                    SELECT lower(trim(payment_provider)) AS p, count(*)::int AS n
+                      FROM payments
+                     WHERE payment_provider IS NOT NULL
+                       AND trim(payment_provider) <> ''
+                     GROUP BY 1
+                     ORDER BY n DESC, p ASC
+                     LIMIT $1
+                    """,
+                    int(limit),
+                )
+            return [str(r["p"]) for r in rows if r.get("p")]
+        except Exception as e:
+            logger.error("list_distinct_payment_providers: %s", e)
+            return []
+
     async def update_payment_status(
         self,
         payment_id: int,
