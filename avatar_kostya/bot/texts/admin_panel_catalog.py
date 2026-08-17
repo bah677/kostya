@@ -17,6 +17,7 @@ TIER_ORDER: Tuple[HelpTier, ...] = ("user", "admin", "superadmin")
 
 ADMIN_GROUP_ORDER: Tuple[str, ...] = (
     "users",
+    "money",
     "rag",
     "telemost",
     "ydisk",
@@ -29,6 +30,7 @@ ADMIN_GROUP_ORDER: Tuple[str, ...] = (
 
 ADMIN_GROUP_TITLES: Dict[str, str] = {
     "users": "👤 Для пользователей",
+    "money": "💸 Расходы",
     "rag": "📚 RAG / база",
     "telemost": "📧 Телемост",
     "ydisk": "☁ Яндекс.Диск",
@@ -67,6 +69,18 @@ ADMIN_CATALOG: Tuple[AdminEntry, ...] = (
     AdminEntry("/feedback", "Обратная связь", "user", "users"),
     AdminEntry("/payment, /donat", "Донат", "user", "users"),
     AdminEntry("/affiliate", "Реферальная ссылка", "user", "users"),
+    AdminEntry(
+        "/expenses, /rashody",
+        "Депозит и расходы (USDT)",
+        "admin",
+        "money",
+    ),
+    AdminEntry(
+        "—",
+        "Пополнение: брутто → комиссия → нетто на баланс. Расход: статья → брутто → комиссия → списание брутто+комиссия. Отчёты: брутто и нетто.",
+        "admin",
+        "money",
+    ),
     AdminEntry(
         "/code_id",
         "Узнать file_id вложения (для настройки)",

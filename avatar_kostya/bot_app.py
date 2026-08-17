@@ -20,6 +20,7 @@ from bot.features.caption_editor_feature import CaptionEditorFeature
 from bot.features.support import SupportFeature
 from bot.features.voicebox_admin import VoiceboxAdminFeature
 from bot.features.admin_panel import AdminPanelFeature
+from bot.features.ledger import LedgerFeature
 from bot.features.youtube_prayer_feature import YoutubePrayerFeature
 from bot.handlers.messages import MessageHandlers
 
@@ -72,10 +73,12 @@ class BotApplication(TelegramBotApp):
         rag_source_visibility = RagSourceVisibilityFeature()
         voicebox_admin = VoiceboxAdminFeature()
         admin_panel = AdminPanelFeature(user_storage=self.user_storage)
+        ledger = LedgerFeature(user_storage=self.user_storage)
         youtube_prayer = YoutubePrayerFeature()
 
         features = [
             admin_panel,
+            ledger,
             rag_backfill,
             telemost_shorts,
             telemost_audio,

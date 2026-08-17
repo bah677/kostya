@@ -12,6 +12,7 @@ from storage.db.creative_sessions import CreativeSessionsMixin
 from storage.db.forum_topic_names import ForumTopicNamesMixin
 from storage.db.gifts import GiftsMixin
 from storage.db.licenses import LicensesMixin
+from storage.db.ledger import LedgerMixin
 from storage.db.media_archive import MediaArchiveMixin
 from storage.db.messages import MessagesMixin
 from storage.db.orders import OrdersMixin
@@ -36,6 +37,7 @@ class Database(
     SupportMixin,
     PaymentsMixin,
     LicensesMixin,
+    LedgerMixin,
     OrdersMixin,
     TariffsMixin,
     ReferralsMixin,
@@ -59,6 +61,7 @@ class Database(
       - SupportMixin          — support_tickets
       - PaymentsMixin         — payments
       - LicensesMixin         — license (включая бонусные продления)
+      - LedgerMixin           — депозит/расходы (ledger_*)
       - OrdersMixin           — orders (включая подарочные)
       - TariffsMixin          — tariffs + tariff_prices
       - ReferralsMixin        — referrals + ref_keys

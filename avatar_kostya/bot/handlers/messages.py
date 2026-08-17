@@ -56,6 +56,8 @@ async def route_message_to_feature(
         if "support" in current_state_lower:
             feature = feature_manager.get("support")
             await feature.handle_message(message, state, text)
+        elif "ledger" in current_state_lower:
+            return
         else:
             feature = feature_manager.get("messaging")
             await feature.handle_chat_message(message, state, text, message_id)
@@ -97,6 +99,7 @@ class MessageHandlers:
             self._callback_handler,
             CALLBACK_PRIVATE_CHAT,
             ~F.data.startswith("payment_"),
+            ~F.data.startswith("ldg:"),
         )
         self.dp.edited_message.register(
             self._edited_message_handler, PRIVATE_CHAT

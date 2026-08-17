@@ -19,6 +19,14 @@
 | `011_media_inbound_files.sql` | `MediaArchiveMixin`, входящие медиа (`MEDIA_INBOUND_ARCHIVE_*`). |
 | `012_forum_topic_names.sql` | `ForumTopicNamesMixin`, кэш имён форум-топиков для RAG (`group_rag_indexer`). |
 | `013_creative_sessions.sql` | `CreativeSessionsMixin`, сессия /new и ходы задачи (`creative_task_turns`). |
+| `014_yandex_disk_indexed.sql` | `YandexDiskMixin`. |
+| `015_telemost_mail.sql` | `TelemostMailMixin`. |
+| `016_rag_source_visibility.sql` | `RagSourceVisibilityMixin`. |
+| `017_rag_import_cache.sql` | `RagImportCacheMixin`. |
+| `018_telemost_mail_recordings.sql` | Записи Телемоста. |
+| `019_telemost_recordings_audio.sql` | Аудио записей Телемоста. |
+| `020_caption_edit_sessions.sql` | `CaptionEditSessionsMixin`, итеративная редактура caption. |
+| `021_ledger.sql` | `LedgerMixin`, депозит и расходы (`ledger_*`). Сейчас USDT; поля FX — задел под мультивалютность. |
 
 В `.env`: `SUPER_ADMIN_ID=<telegram_user_id>` — полный доступ и единственный, кто добавляет/удаляет записи в `bot_admins`.
 
