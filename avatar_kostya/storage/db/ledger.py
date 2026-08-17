@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import json
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
@@ -405,6 +406,95 @@ class LedgerMixin:
         except Exception as e:
             logger.error("ledger_totals: %s", e)
             return empty
+
+    async def ledger_monthly_report(
+        self, account_id: int, *, limit: int = 24
+    ) -> List[Dict[str, Any]]:
+        """Помесячные приход/комиссии и расходы нетто по статьям."""
+        try:
+            async with self.get_connection() as conn:
+                rows = await conn.fetch(
+                    """
+                    WITH tot AS (
+                        SELECT date_trunc('month', occurred_on)::date AS month,
+                               COALESCE(SUM(amount_net) FILTER (WHERE kind = 'deposit'), 0)
+                                   AS deposit_net,
+                               COALESCE(SUM(amount_fee) FILTER (WHERE kind = 'deposit'), 0)
+                                   AS deposit_fee,
+                               COALESCE(SUM(amount_net) FILTER (WHERE kind = 'expense'), 0)
+                                   AS expense_net,
+                               COALESCE(SUM(amount_fee) FILTER (WHERE kind = 'expense'), 0)
+                                   AS expense_fee
+                          FROM ledger_entries
+                         WHERE account_id = $1
+                         GROUP BY 1
+                    ),
+                    cats AS (
+                        SELECT date_trunc('month', occurred_on)::date AS month,
+                               COALESCE(NULLIF(btrim(category_name), ''), 'без статьи')
+                                   AS name,
+                               SUM(amount_net) AS expense_net
+                          FROM ledger_entries
+                         WHERE account_id = $1
+                           AND kind = 'expense'
+                         GROUP BY 1, 2
+                    )
+                    SELECT t.month,
+                           t.deposit_net,
+                           t.deposit_fee,
+                           t.expense_net,
+                           t.expense_fee,
+                           COALESCE(
+                               (
+                                   SELECT json_agg(
+                                              json_build_object(
+                                                  'name', c.name,
+                                                  'expense_net', c.expense_net
+                                              )
+                                              ORDER BY c.expense_net DESC, c.name
+                                          )
+                                     FROM cats c
+                                    WHERE c.month = t.month
+                               ),
+                               '[]'::json
+                           ) AS categories
+                      FROM tot t
+                     ORDER BY t.month DESC
+                     LIMIT $2
+                    """,
+                    int(account_id),
+                    int(limit),
+                )
+            out: List[Dict[str, Any]] = []
+            for r in rows:
+                cats = r["categories"]
+                if isinstance(cats, str):
+                    cats = json.loads(cats)
+                parsed = []
+                for c in cats or []:
+                    parsed.append(
+                        {
+                            "name": str(c.get("name") or "без статьи"),
+                            "expense_net": Decimal(str(c.get("expense_net") or 0)),
+                        }
+                    )
+                month = r["month"]
+                if isinstance(month, datetime):
+                    month = month.date()
+                out.append(
+                    {
+                        "month": month,
+                        "deposit_net": Decimal(str(r["deposit_net"] or 0)),
+                        "deposit_fee": Decimal(str(r["deposit_fee"] or 0)),
+                        "expense_net": Decimal(str(r["expense_net"] or 0)),
+                        "expense_fee": Decimal(str(r["expense_fee"] or 0)),
+                        "categories": parsed,
+                    }
+                )
+            return out
+        except Exception as e:
+            logger.error("ledger_monthly_report: %s", e, exc_info=True)
+            return []
 
     async def get_ledger_entry(self, entry_id: int) -> Optional[Dict[str, Any]]:
         try:

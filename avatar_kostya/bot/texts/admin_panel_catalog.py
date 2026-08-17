@@ -71,15 +71,9 @@ ADMIN_CATALOG: Tuple[AdminEntry, ...] = (
     AdminEntry("/affiliate", "Реферальная ссылка", "user", "users"),
     AdminEntry(
         "/expenses, /rashody",
-        "Депозит и расходы (USDT)",
+        "то же меню расходов, что кнопка «💸 Расходы»",
         "admin",
-        "money",
-    ),
-    AdminEntry(
-        "—",
-        "Пополнение: брутто → комиссия → нетто на баланс. Расход: статья → брутто → комиссия → списание брутто+комиссия. Отчёты: брутто и нетто.",
-        "admin",
-        "money",
+        "notes",
     ),
     AdminEntry(
         "/code_id",

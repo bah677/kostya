@@ -20,6 +20,7 @@ from bot.texts.admin_panel_catalog import (
 CB_PREFIX = "apnl"
 CB_HOME = f"{CB_PREFIX}:h"
 CB_GROUP_PREFIX = f"{CB_PREFIX}:g:"
+LEDGER_OPEN_CB = "ldg:home"
 
 
 def admin_panel_cb_group(group_key: str) -> str:
@@ -39,6 +40,8 @@ def _panel_entries(viewer_tier: HelpTier) -> List[AdminEntry]:
 
 def _groups_for_viewer(viewer_tier: HelpTier) -> List[str]:
     present = {e.group for e in _panel_entries(viewer_tier)}
+    if viewer_tier in ("admin", "superadmin"):
+        present.add("money")
     if viewer_tier != "superadmin":
         present.discard("access")
     return [g for g in ADMIN_GROUP_ORDER if g in present]
@@ -69,6 +72,16 @@ def build_admin_panel_home(
         f"<i>{html_mod.escape(HELP_FOOTER)}</i>",
     ]
     rows: List[List[InlineKeyboardButton]] = []
+    if "money" in groups:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text="💸 Расходы",
+                    callback_data=LEDGER_OPEN_CB,
+                )
+            ]
+        )
+        groups = [g for g in groups if g != "money"]
     row: List[InlineKeyboardButton] = []
     for key in groups:
         title = ADMIN_GROUP_TITLES.get(key, key)

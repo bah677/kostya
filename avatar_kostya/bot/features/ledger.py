@@ -36,6 +36,21 @@ from bot.services.tg_rich import edit_rich_message, send_rich_message
 logger = logging.getLogger(__name__)
 
 _CB = "ldg"
+_MONTHS_RU = (
+    "",
+    "январь",
+    "февраль",
+    "март",
+    "апрель",
+    "май",
+    "июнь",
+    "июль",
+    "август",
+    "сентябрь",
+    "октябрь",
+    "ноябрь",
+    "декабрь",
+)
 
 
 class LedgerStates(StatesGroup):
@@ -576,20 +591,19 @@ class LedgerFeature(BaseFeature):
         acc = await self.user_storage.get_default_ledger_account()
         cur = str((acc or {}).get("currency") or DEFAULT_CURRENCY)
         bal = format_money((acc or {}).get("balance") or 0, cur)
-        recent = await self.user_storage.list_recent_ledger_entries(
-            limit=5, account_id=int(acc["id"]) if acc else None
-        )
+        month_start = today_msk().replace(day=1)
+        month_gross = Decimal("0")
+        if acc:
+            month = await self.user_storage.ledger_totals(
+                account_id=int(acc["id"]), since=month_start
+            )
+            month_gross = month.get("expense_gross") or Decimal("0")
         lines = [
             "💸 <b>Расходы</b>",
-            f"Счёт: <b>{html.escape(str((acc or {}).get('name') or 'USDT'))}</b>",
-            f"Остаток: <b>{html.escape(bal)}</b>",
-            "",
+            f"Текущий баланс: <b>{html.escape(bal)}</b>",
+            f"Расходы брутто за {html.escape(_MONTHS_RU[month_start.month])}: "
+            f"<b>{html.escape(format_money(month_gross, cur))}</b>",
         ]
-        if recent:
-            lines.append("Последние операции:")
-            for e in recent:
-                lines.append(self._entry_line(e))
-            lines.append("")
         kb = InlineKeyboardMarkup(
             inline_keyboard=[
                 [InlineKeyboardButton(text="📥 Пополнить депозит", callback_data=_cb("dep"))],
@@ -611,103 +625,74 @@ class LedgerFeature(BaseFeature):
             await self._edit_or_answer(callback, "Счёт ещё не создан.", kb)
             return
         cur = str(acc.get("currency") or DEFAULT_CURRENCY)
-        month_start = today_msk().replace(day=1)
-        month = await self.user_storage.ledger_totals(
-            account_id=int(acc["id"]), since=month_start
-        )
-        all_t = await self.user_storage.ledger_totals(account_id=int(acc["id"]))
-        recent = await self.user_storage.list_recent_ledger_entries(
-            limit=8, account_id=int(acc["id"])
-        )
-        rich = self._report_rich_html(acc, cur, month_start, month, all_t, recent)
-        fallback = self._report_fallback_html(acc, cur, month_start, month, all_t)
+        months = await self.user_storage.ledger_monthly_report(int(acc["id"]))
+        rich = self._report_rich_html(acc, cur, months)
+        fallback = self._report_fallback_html(acc, cur, months)
         await self._edit_or_answer_rich(callback, rich, kb, fallback=fallback)
 
     def _report_rich_html(
         self,
         acc: Dict[str, Any],
         cur: str,
-        month_start: date,
-        month: Dict[str, Decimal],
-        all_t: Dict[str, Decimal],
-        recent: List[Dict[str, Any]],
+        months: List[Dict[str, Any]],
     ) -> str:
-        month_label = html.escape(month_start.strftime("%m.%Y"))
         bal = html.escape(format_money(acc.get("balance"), cur))
-        name = html.escape(str(acc.get("name") or cur))
-        rows = [
-            ("🟢 Депозит брутто", "deposit_gross", "in"),
-            ("Депозит комиссия", "deposit_fee", "fee"),
-            ("🟢 Депозит нетто", "deposit_net", "in"),
-            ("🔴 Расходы брутто", "expense_gross", "out"),
-            ("Расходы нетто", "expense_net", "out"),
-            ("Комиссия расходов", "expense_fee", "fee"),
-            ("🔴 Списано с депозита", "expense_cash", "out"),
+        parts = [
+            "<h2>📊 Отчёт</h2>",
+            f"<p>Текущий баланс: <mark><b>{bal}</b></mark></p>",
         ]
-        body: List[str] = []
-        for title, key, kind in rows:
-            body.append(
-                "<tr>"
-                f"<td>{html.escape(title)}</td>"
-                f"<td align=\"right\">{self._rich_amt(month[key], kind)}</td>"
-                f"<td align=\"right\">{self._rich_amt(all_t[key], kind)}</td>"
-                "</tr>"
-            )
-        ops = ""
-        if recent:
-            op_rows = []
-            for e in recent:
-                if e.get("kind") == "deposit":
-                    kind_l = "🟢 Ввод"
-                    amt = self._rich_amt(e.get("amount_net"), "in")
-                    cat = "депозит"
-                else:
-                    kind_l = "🔴 Расход"
-                    cash = Decimal(str(e.get("amount_gross") or 0)) + Decimal(
-                        str(e.get("amount_fee") or 0)
-                    )
-                    amt = self._rich_amt(cash, "out")
-                    cat = str(e.get("category_name") or "—")
-                op_rows.append(
-                    "<tr>"
-                    f"<td>{html.escape(self._fmt_occurred(e.get('occurred_on')))}</td>"
-                    f"<td>{html.escape(kind_l)}</td>"
-                    f"<td>{html.escape(cat)}</td>"
-                    f"<td align=\"right\">{amt}</td>"
-                    "</tr>"
-                )
-            ops = (
-                "<h3>Последние операции</h3>"
+        if not months:
+            parts.append("<p>Пока нет операций.</p>")
+            return "".join(parts)
+        for m in months:
+            title = self._month_title(m["month"])
+            parts.append(f"<h3>{html.escape(title)}</h3>")
+            parts.append(
                 "<table bordered striped>"
-                "<tr>"
-                "<th align=\"left\">Дата</th>"
-                "<th align=\"left\">Тип</th>"
-                "<th align=\"left\">Статья</th>"
-                "<th align=\"right\">Сумма</th>"
-                "</tr>"
-                + "".join(op_rows)
-                + "</table>"
+                f"<caption>Суммы в {html.escape(cur)}</caption>"
+                "<tr><th align=\"left\">Показатель</th>"
+                "<th align=\"right\">Сумма</th></tr>"
+                "<tr><td>🟢 Приход нетто</td>"
+                f"<td align=\"right\">{self._rich_amt(m['deposit_net'], 'in')}</td></tr>"
+                "<tr><td>Комса прихода</td>"
+                f"<td align=\"right\">{self._rich_amt(m['deposit_fee'], 'fee')}</td></tr>"
+                "<tr><td>Комса расходов</td>"
+                f"<td align=\"right\">{self._rich_amt(m['expense_fee'], 'fee')}</td></tr>"
+                "</table>"
             )
-        return (
-            "<h2>📊 Отчёт</h2>"
-            f"<p>Счёт: <b>{name}</b><br>Остаток: <mark><b>{bal}</b></mark></p>"
-            f"<table bordered striped>"
-            f"<caption>Суммы в {html.escape(cur)}</caption>"
-            "<tr>"
-            "<th align=\"left\">Показатель</th>"
-            f"<th align=\"right\">{month_label}</th>"
-            "<th align=\"right\">Всё время</th>"
-            "</tr>"
-            + "".join(body)
-            + "</table>"
-            + ops
-            + "<details>"
-            "<summary>Как читать</summary>"
-            "<p>🟢 пополнения подсвечены. 🔴 списания выделены жирным.<br>"
-            "Депозит нетто = брутто − комиссия. "
-            "Списание с депозита = брутто + комиссия.</p>"
-            "</details>"
-        )
+            cats = m.get("categories") or []
+            if cats:
+                cat_rows = []
+                for c in cats:
+                    cat_rows.append(
+                        "<tr>"
+                        f"<td>{html.escape(str(c.get('name') or 'без статьи'))}</td>"
+                        f"<td align=\"right\">{self._rich_amt(c.get('expense_net'), 'out')}</td>"
+                        "</tr>"
+                    )
+                parts.append(
+                    "<table bordered striped>"
+                    "<caption>Расходы нетто по статьям</caption>"
+                    "<tr><th align=\"left\">Статья</th>"
+                    "<th align=\"right\">Нетто</th></tr>"
+                    + "".join(cat_rows)
+                    + "<tr><td><b>Итого нетто</b></td>"
+                    f"<td align=\"right\"><b>{html.escape(format_amount(m['expense_net']))}</b></td></tr>"
+                    "</table>"
+                )
+            else:
+                parts.append("<p>Расходов в этом месяце нет.</p>")
+        return "".join(parts)
+
+    @staticmethod
+    def _month_title(value: Any) -> str:
+        d = value
+        if isinstance(d, datetime):
+            d = d.date()
+        if not isinstance(d, date):
+            return str(value or "")
+        name = _MONTHS_RU[d.month] if 1 <= d.month <= 12 else str(d.month)
+        return f"{name} {d.year}".capitalize()
 
     @staticmethod
     def _rich_amt(value: Any, kind: str) -> str:
@@ -722,18 +707,43 @@ class LedgerFeature(BaseFeature):
     def _report_fallback_html(
         acc: Dict[str, Any],
         cur: str,
-        month_start: date,
-        month: Dict[str, Decimal],
-        all_t: Dict[str, Decimal],
+        months: List[Dict[str, Any]],
     ) -> str:
-        return (
-            "📊 <b>Отчёт</b>\n"
-            f"Остаток: <b>{html.escape(format_money(acc.get('balance'), cur))}</b>\n\n"
-            f"<b>Этот месяц</b> ({month_start.strftime('%m.%Y')})\n"
-            f"{LedgerFeature._totals_html(month, cur)}\n"
-            f"<b>Всё время</b>\n"
-            f"{LedgerFeature._totals_html(all_t, cur)}"
-        )
+        lines = [
+            "📊 <b>Отчёт</b>",
+            f"Текущий баланс: <b>{html.escape(format_money(acc.get('balance'), cur))}</b>",
+            "",
+        ]
+        if not months:
+            lines.append("Пока нет операций.")
+            return "\n".join(lines)
+        for m in months:
+            title = LedgerFeature._month_title(m["month"])
+            lines.append(f"<b>{html.escape(title)}</b>")
+            lines.append(
+                f"• Приход нетто: {html.escape(format_money(m['deposit_net'], cur))}"
+            )
+            lines.append(
+                f"• Комса прихода: {html.escape(format_money(m['deposit_fee'], cur))}"
+            )
+            lines.append(
+                f"• Комса расходов: {html.escape(format_money(m['expense_fee'], cur))}"
+            )
+            cats = m.get("categories") or []
+            if cats:
+                lines.append("Расходы нетто:")
+                for c in cats:
+                    lines.append(
+                        f"  — {html.escape(str(c.get('name') or 'без статьи'))}: "
+                        f"{html.escape(format_money(c.get('expense_net'), cur))}"
+                    )
+                lines.append(
+                    f"  Итого нетто: {html.escape(format_money(m['expense_net'], cur))}"
+                )
+            else:
+                lines.append("Расходов нет.")
+            lines.append("")
+        return "\n".join(lines)
 
     async def _edit_or_answer_rich(
         self,
@@ -759,18 +769,6 @@ class LedgerFeature(BaseFeature):
         except Exception as e:
             logger.warning("send rich report: %s", e)
         await self._edit_or_answer(callback, fallback, kb)
-
-    @staticmethod
-    def _totals_html(t: Dict[str, Decimal], cur: str) -> str:
-        return (
-            f"• Депозит брутто: {html.escape(format_money(t['deposit_gross'], cur))}\n"
-            f"• Депозит комиссия: {html.escape(format_money(t['deposit_fee'], cur))}\n"
-            f"• Депозит нетто: {html.escape(format_money(t['deposit_net'], cur))}\n"
-            f"• Расходы брутто: {html.escape(format_money(t['expense_gross'], cur))}\n"
-            f"• Расходы нетто (без комиссии): {html.escape(format_money(t['expense_net'], cur))}\n"
-            f"• Комиссия расходов: {html.escape(format_money(t['expense_fee'], cur))}\n"
-            f"• Списано с депозита: {html.escape(format_money(t['expense_cash'], cur))}\n"
-        )
 
     @staticmethod
     def _as_date(value: Any) -> Optional[date]:

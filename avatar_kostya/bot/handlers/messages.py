@@ -100,6 +100,7 @@ class MessageHandlers:
             CALLBACK_PRIVATE_CHAT,
             ~F.data.startswith("payment_"),
             ~F.data.startswith("ldg:"),
+            ~F.data.startswith("apnl:"),
         )
         self.dp.edited_message.register(
             self._edited_message_handler, PRIVATE_CHAT
