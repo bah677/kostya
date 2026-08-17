@@ -679,6 +679,8 @@ class LedgerFeature(BaseFeature):
                 f"<td align=\"right\"><b>{html.escape(format_amount(m['expense_net']))}</b></td></tr>"
                 "<tr><td>Комиссия расходов</td>"
                 f"<td align=\"right\">{self._rich_amt(m['expense_fee'])}</td></tr>"
+                "<tr><td><b>Итого брутто</b></td>"
+                f"<td align=\"right\"><b>{html.escape(format_amount(m.get('expense_gross')))}</b></td></tr>"
                 "</table>"
             )
         return "".join(parts)
@@ -737,6 +739,9 @@ class LedgerFeature(BaseFeature):
             )
             lines.append(
                 f"• Комиссия расходов: {html.escape(format_money(m['expense_fee'], cur))}"
+            )
+            lines.append(
+                f"• Итого брутто: {html.escape(format_money(m.get('expense_gross'), cur))}"
             )
             lines.append("")
         return "\n".join(lines)

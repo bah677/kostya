@@ -425,6 +425,8 @@ class LedgerMixin:
                                    AS deposit_fee,
                                COALESCE(SUM(amount_net) FILTER (WHERE kind = 'expense'), 0)
                                    AS expense_net,
+                               COALESCE(SUM(amount_gross) FILTER (WHERE kind = 'expense'), 0)
+                                   AS expense_gross,
                                COALESCE(SUM(amount_fee) FILTER (WHERE kind = 'expense'), 0)
                                    AS expense_fee
                           FROM ledger_entries
@@ -446,6 +448,7 @@ class LedgerMixin:
                            t.deposit_net,
                            t.deposit_fee,
                            t.expense_net,
+                           t.expense_gross,
                            t.expense_fee,
                            COALESCE(
                                (
@@ -491,6 +494,7 @@ class LedgerMixin:
                         "deposit_net": Decimal(str(r["deposit_net"] or 0)),
                         "deposit_fee": Decimal(str(r["deposit_fee"] or 0)),
                         "expense_net": Decimal(str(r["expense_net"] or 0)),
+                        "expense_gross": Decimal(str(r["expense_gross"] or 0)),
                         "expense_fee": Decimal(str(r["expense_fee"] or 0)),
                         "categories": parsed,
                     }
