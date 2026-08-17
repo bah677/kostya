@@ -417,6 +417,8 @@ class LedgerMixin:
                     """
                     WITH tot AS (
                         SELECT date_trunc('month', occurred_on)::date AS month,
+                               COALESCE(SUM(amount_gross) FILTER (WHERE kind = 'deposit'), 0)
+                                   AS deposit_gross,
                                COALESCE(SUM(amount_net) FILTER (WHERE kind = 'deposit'), 0)
                                    AS deposit_net,
                                COALESCE(SUM(amount_fee) FILTER (WHERE kind = 'deposit'), 0)
@@ -440,6 +442,7 @@ class LedgerMixin:
                          GROUP BY 1, 2
                     )
                     SELECT t.month,
+                           t.deposit_gross,
                            t.deposit_net,
                            t.deposit_fee,
                            t.expense_net,
@@ -484,6 +487,7 @@ class LedgerMixin:
                 out.append(
                     {
                         "month": month,
+                        "deposit_gross": Decimal(str(r["deposit_gross"] or 0)),
                         "deposit_net": Decimal(str(r["deposit_net"] or 0)),
                         "deposit_fee": Decimal(str(r["deposit_fee"] or 0)),
                         "expense_net": Decimal(str(r["expense_net"] or 0)),

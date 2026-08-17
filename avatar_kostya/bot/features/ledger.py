@@ -639,7 +639,7 @@ class LedgerFeature(BaseFeature):
         bal = html.escape(format_money(acc.get("balance"), cur))
         parts = [
             "<h2>📊 Отчёт</h2>",
-            f"<p>Текущий баланс: <mark><b>{bal}</b></mark></p>",
+            f"<p>Текущий баланс: <b>{bal}</b></p>",
         ]
         if not months:
             parts.append("<p>Пока нет операций.</p>")
@@ -649,39 +649,38 @@ class LedgerFeature(BaseFeature):
             parts.append(f"<h3>{html.escape(title)}</h3>")
             parts.append(
                 "<table bordered striped>"
-                f"<caption>Суммы в {html.escape(cur)}</caption>"
+                f"<caption>Приход, {html.escape(cur)}</caption>"
                 "<tr><th align=\"left\">Показатель</th>"
                 "<th align=\"right\">Сумма</th></tr>"
-                "<tr><td>🟢 Приход нетто</td>"
-                f"<td align=\"right\">{self._rich_amt(m['deposit_net'], 'in')}</td></tr>"
-                "<tr><td>Комса прихода</td>"
-                f"<td align=\"right\">{self._rich_amt(m['deposit_fee'], 'fee')}</td></tr>"
-                "<tr><td>Комса расходов</td>"
-                f"<td align=\"right\">{self._rich_amt(m['expense_fee'], 'fee')}</td></tr>"
+                "<tr><td>Приход брутто</td>"
+                f"<td align=\"right\">{self._rich_amt(m.get('deposit_gross'))}</td></tr>"
+                "<tr><td>Комиссия</td>"
+                f"<td align=\"right\">{self._rich_amt(m['deposit_fee'])}</td></tr>"
+                "<tr><td>Приход нетто</td>"
+                f"<td align=\"right\">{self._rich_amt(m['deposit_net'])}</td></tr>"
                 "</table>"
             )
             cats = m.get("categories") or []
-            if cats:
-                cat_rows = []
-                for c in cats:
-                    cat_rows.append(
-                        "<tr>"
-                        f"<td>{html.escape(str(c.get('name') or 'без статьи'))}</td>"
-                        f"<td align=\"right\">{self._rich_amt(c.get('expense_net'), 'out')}</td>"
-                        "</tr>"
-                    )
-                parts.append(
-                    "<table bordered striped>"
-                    "<caption>Расходы нетто по статьям</caption>"
-                    "<tr><th align=\"left\">Статья</th>"
-                    "<th align=\"right\">Нетто</th></tr>"
-                    + "".join(cat_rows)
-                    + "<tr><td><b>Итого нетто</b></td>"
-                    f"<td align=\"right\"><b>{html.escape(format_amount(m['expense_net']))}</b></td></tr>"
-                    "</table>"
+            cat_rows = []
+            for c in cats:
+                cat_rows.append(
+                    "<tr>"
+                    f"<td>{html.escape(str(c.get('name') or 'без статьи'))}</td>"
+                    f"<td align=\"right\">{self._rich_amt(c.get('expense_net'))}</td>"
+                    "</tr>"
                 )
-            else:
-                parts.append("<p>Расходов в этом месяце нет.</p>")
+            parts.append(
+                "<table bordered striped>"
+                f"<caption>Расходы, {html.escape(cur)}</caption>"
+                "<tr><th align=\"left\">Статья</th>"
+                "<th align=\"right\">Нетто</th></tr>"
+                + "".join(cat_rows)
+                + "<tr><td><b>Итого нетто</b></td>"
+                f"<td align=\"right\"><b>{html.escape(format_amount(m['expense_net']))}</b></td></tr>"
+                "<tr><td>Комиссия расходов</td>"
+                f"<td align=\"right\">{self._rich_amt(m['expense_fee'])}</td></tr>"
+                "</table>"
+            )
         return "".join(parts)
 
     @staticmethod
@@ -695,13 +694,8 @@ class LedgerFeature(BaseFeature):
         return f"{name} {d.year}".capitalize()
 
     @staticmethod
-    def _rich_amt(value: Any, kind: str) -> str:
-        s = html.escape(format_amount(value))
-        if kind == "in":
-            return f"<mark>{s}</mark>"
-        if kind == "out":
-            return f"<b>{s}</b>"
-        return s
+    def _rich_amt(value: Any) -> str:
+        return html.escape(format_amount(value))
 
     @staticmethod
     def _report_fallback_html(
@@ -720,28 +714,30 @@ class LedgerFeature(BaseFeature):
         for m in months:
             title = LedgerFeature._month_title(m["month"])
             lines.append(f"<b>{html.escape(title)}</b>")
+            lines.append("Приход")
             lines.append(
-                f"• Приход нетто: {html.escape(format_money(m['deposit_net'], cur))}"
+                f"• Брутто: {html.escape(format_money(m.get('deposit_gross'), cur))}"
             )
             lines.append(
-                f"• Комса прихода: {html.escape(format_money(m['deposit_fee'], cur))}"
+                f"• Комиссия: {html.escape(format_money(m['deposit_fee'], cur))}"
             )
             lines.append(
-                f"• Комса расходов: {html.escape(format_money(m['expense_fee'], cur))}"
+                f"• Нетто: {html.escape(format_money(m['deposit_net'], cur))}"
             )
             cats = m.get("categories") or []
+            lines.append("Расходы")
             if cats:
-                lines.append("Расходы нетто:")
                 for c in cats:
                     lines.append(
                         f"  — {html.escape(str(c.get('name') or 'без статьи'))}: "
                         f"{html.escape(format_money(c.get('expense_net'), cur))}"
                     )
-                lines.append(
-                    f"  Итого нетто: {html.escape(format_money(m['expense_net'], cur))}"
-                )
-            else:
-                lines.append("Расходов нет.")
+            lines.append(
+                f"• Итого нетто: {html.escape(format_money(m['expense_net'], cur))}"
+            )
+            lines.append(
+                f"• Комиссия расходов: {html.escape(format_money(m['expense_fee'], cur))}"
+            )
             lines.append("")
         return "\n".join(lines)
 
