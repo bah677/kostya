@@ -27,6 +27,9 @@
 | `019_telemost_recordings_audio.sql` | Аудио записей Телемоста. |
 | `020_caption_edit_sessions.sql` | `CaptionEditSessionsMixin`, итеративная редактура caption. |
 | `021_ledger.sql` | `LedgerMixin`, депозит и расходы (`ledger_*`). Сейчас USDT; поля FX — задел под мультивалютность. |
+| `022_ledger_occurred_on.sql` | Дата операции `occurred_on` (бизнес-день, отдельно от `created_at`). |
+| `023_ledger_drop_seed_categories.sql` | Удаляет неиспользованные зашитые статьи («Хостинг» и т.п.). |
+| `024_ledger_occurred_on_2026_08_17.sql` | Один раз ставит всем существующим операциям дату 17.08.2026. |
 
 В `.env`: `SUPER_ADMIN_ID=<telegram_user_id>` — полный доступ и единственный, кто добавляет/удаляет записи в `bot_admins`.
 

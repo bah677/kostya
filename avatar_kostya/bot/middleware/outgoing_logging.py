@@ -55,6 +55,8 @@ _OUTGOING_METHODS = {
     "EditMessageText",
     "EditMessageCaption",
     "EditMessageMedia",
+    "SendRichMessage",
+    "EditMessageRich",
 }
 
 
@@ -79,6 +81,8 @@ def _method_to_message_type(method_name: str) -> str:
         "EditMessageText": "edit_text",
         "EditMessageCaption": "edit_caption",
         "EditMessageMedia": "edit_media",
+        "SendRichMessage": "rich",
+        "EditMessageRich": "edit_rich",
     }.get(method_name, "text")
 
 

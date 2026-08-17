@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
-from bot.services.ledger import DEFAULT_CURRENCY, deposit_amounts, expense_amounts
+from bot.services.ledger import (
+    DEFAULT_CURRENCY,
+    deposit_amounts,
+    expense_amounts,
+    today_msk,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -59,10 +64,13 @@ CREATE TABLE IF NOT EXISTS ledger_entries (
     balance_delta_base      NUMERIC(20, 8),
     note                    TEXT,
     created_by              BIGINT,
-    created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    occurred_on             DATE NOT NULL DEFAULT CURRENT_DATE
 );
 CREATE INDEX IF NOT EXISTS idx_ledger_entries_account_created
     ON ledger_entries (account_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_ledger_entries_account_occurred
+    ON ledger_entries (account_id, occurred_on DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_ledger_entries_kind_created
     ON ledger_entries (kind, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_ledger_entries_category
@@ -74,10 +82,21 @@ ON CONFLICT (code) DO NOTHING;
 INSERT INTO ledger_accounts (currency, name)
 VALUES ('USDT', 'Основной USDT')
 ON CONFLICT (currency, name) DO NOTHING;
-INSERT INTO ledger_categories (name)
-VALUES ('Хостинг'), ('Реклама'), ('Подписки / API'), ('Прочее')
-ON CONFLICT DO NOTHING;
 """
+
+_OCCURRED_ON_SQL = (
+    "ALTER TABLE ledger_entries ADD COLUMN IF NOT EXISTS occurred_on DATE",
+    """
+    UPDATE ledger_entries
+       SET occurred_on = DATE '2026-08-17'
+     WHERE occurred_on IS NULL
+    """,
+    "ALTER TABLE ledger_entries ALTER COLUMN occurred_on SET DEFAULT CURRENT_DATE",
+    """
+    CREATE INDEX IF NOT EXISTS idx_ledger_entries_account_occurred
+        ON ledger_entries (account_id, occurred_on DESC, id DESC)
+    """,
+)
 
 
 class LedgerMixin:
@@ -87,6 +106,62 @@ class LedgerMixin:
                 await conn.execute(_SCHEMA_SQL)
         except Exception as e:
             logger.warning("ensure_ledger_schema: %s", e)
+        try:
+            async with self.get_connection() as conn:
+                for stmt in _OCCURRED_ON_SQL:
+                    await conn.execute(stmt)
+        except Exception as e:
+            logger.warning("ensure_ledger_schema occurred_on: %s", e)
+        try:
+            async with self.get_connection() as conn:
+                async with conn.transaction():
+                    await conn.execute(
+                        """
+                        CREATE TABLE IF NOT EXISTS ledger_meta (
+                            key         TEXT PRIMARY KEY,
+                            applied_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                        )
+                        """
+                    )
+                    already = await conn.fetchval(
+                        """
+                        SELECT 1 FROM ledger_meta
+                         WHERE key = 'occurred_on_all_2026_08_17'
+                        """
+                    )
+                    if not already:
+                        await conn.execute(
+                            "UPDATE ledger_entries SET occurred_on = DATE '2026-08-17'"
+                        )
+                        await conn.execute(
+                            """
+                            INSERT INTO ledger_meta (key)
+                            VALUES ('occurred_on_all_2026_08_17')
+                            """
+                        )
+        except Exception as e:
+            logger.warning("ensure_ledger_schema force occurred_on: %s", e)
+        try:
+            async with self.get_connection() as conn:
+                await conn.execute(
+                    """
+                    DELETE FROM ledger_categories c
+                     WHERE lower(btrim(c.name)) IN (
+                           'хостинг', 'реклама', 'подписки / api', 'прочее'
+                     )
+                       AND NOT EXISTS (
+                             SELECT 1 FROM ledger_entries e
+                              WHERE e.kind = 'expense'
+                                AND (
+                                      e.category_id = c.id
+                                      OR lower(btrim(coalesce(e.category_name, '')))
+                                         = lower(btrim(c.name))
+                                    )
+                           )
+                    """
+                )
+        except Exception as e:
+            logger.warning("ensure_ledger_schema drop seed categories: %s", e)
 
     async def get_default_ledger_account(
         self, currency: str = DEFAULT_CURRENCY
@@ -113,9 +188,20 @@ class LedgerMixin:
             async with self.get_connection() as conn:
                 rows = await conn.fetch(
                     """
-                    SELECT id, name FROM ledger_categories
-                     WHERE is_active
-                     ORDER BY name
+                    SELECT c.id, c.name
+                      FROM ledger_categories c
+                     WHERE c.is_active
+                       AND EXISTS (
+                             SELECT 1
+                               FROM ledger_entries e
+                              WHERE e.kind = 'expense'
+                                AND (
+                                      e.category_id = c.id
+                                      OR lower(btrim(coalesce(e.category_name, '')))
+                                         = lower(btrim(c.name))
+                                    )
+                           )
+                     ORDER BY c.name
                     """
                 )
             return [dict(r) for r in rows]
@@ -167,6 +253,7 @@ class LedgerMixin:
         category_name: Optional[str] = None,
         note: Optional[str] = None,
         currency: str = DEFAULT_CURRENCY,
+        occurred_on: Optional[date] = None,
     ) -> Optional[Dict[str, Any]]:
         if kind not in ("deposit", "expense"):
             raise ValueError("kind")
@@ -181,6 +268,7 @@ class LedgerMixin:
 
         cur = (currency or DEFAULT_CURRENCY).upper()
         note_s = (note or "").strip() or None
+        on_day = occurred_on or today_msk()
         try:
             async with self.get_connection() as conn:
                 async with conn.transaction():
@@ -209,12 +297,12 @@ class LedgerMixin:
                             amount_gross, amount_fee, amount_net, balance_delta,
                             balance_after, base_currency, fx_rate, fx_source,
                             amount_gross_base, amount_fee_base, amount_net_base,
-                            balance_delta_base, note, created_by
+                            balance_delta_base, note, created_by, occurred_on
                         ) VALUES (
                             $1, $2, $3, $4, $5,
                             $6, $7, $8, $9,
                             $10, $11, $12, 'identity',
-                            $6, $7, $8, $9, $13, $14
+                            $6, $7, $8, $9, $13, $14, $15
                         )
                         RETURNING *
                         """,
@@ -232,6 +320,7 @@ class LedgerMixin:
                         rate,
                         note_s,
                         int(created_by),
+                        on_day,
                     )
                     await conn.execute(
                         "UPDATE ledger_accounts SET balance = $1 WHERE id = $2",
@@ -253,7 +342,7 @@ class LedgerMixin:
                         """
                         SELECT * FROM ledger_entries
                          WHERE account_id = $1
-                         ORDER BY created_at DESC, id DESC
+                         ORDER BY occurred_on DESC, id DESC
                          LIMIT $2
                         """,
                         int(account_id),
@@ -263,7 +352,7 @@ class LedgerMixin:
                     rows = await conn.fetch(
                         """
                         SELECT * FROM ledger_entries
-                         ORDER BY created_at DESC, id DESC
+                         ORDER BY occurred_on DESC, id DESC
                          LIMIT $1
                         """,
                         int(limit),
@@ -277,8 +366,8 @@ class LedgerMixin:
         self,
         *,
         account_id: int,
-        since: Optional[datetime] = None,
-        until: Optional[datetime] = None,
+        since: Optional[datetime | date] = None,
+        until: Optional[datetime | date] = None,
     ) -> Dict[str, Decimal]:
         empty = {
             "deposit_gross": Decimal("0"),
@@ -303,12 +392,12 @@ class LedgerMixin:
                       COALESCE(SUM(-balance_delta) FILTER (WHERE kind = 'expense'), 0) AS expense_cash
                     FROM ledger_entries
                     WHERE account_id = $1
-                      AND ($2::timestamptz IS NULL OR created_at >= $2)
-                      AND ($3::timestamptz IS NULL OR created_at < $3)
+                      AND ($2::date IS NULL OR occurred_on >= $2)
+                      AND ($3::date IS NULL OR occurred_on < $3)
                     """,
                     int(account_id),
-                    since,
-                    until,
+                    since.date() if isinstance(since, datetime) else since,
+                    until.date() if isinstance(until, datetime) else until,
                 )
             if not row:
                 return empty
@@ -316,3 +405,56 @@ class LedgerMixin:
         except Exception as e:
             logger.error("ledger_totals: %s", e)
             return empty
+
+    async def get_ledger_entry(self, entry_id: int) -> Optional[Dict[str, Any]]:
+        try:
+            async with self.get_connection() as conn:
+                row = await conn.fetchrow(
+                    "SELECT * FROM ledger_entries WHERE id = $1",
+                    int(entry_id),
+                )
+            return dict(row) if row else None
+        except Exception as e:
+            logger.error("get_ledger_entry: %s", e)
+            return None
+
+    async def delete_ledger_entry(self, entry_id: int) -> Optional[Dict[str, Any]]:
+        """Удаляет запись и откатывает её влияние на остаток счёта."""
+        try:
+            async with self.get_connection() as conn:
+                async with conn.transaction():
+                    row = await conn.fetchrow(
+                        """
+                        SELECT * FROM ledger_entries
+                         WHERE id = $1
+                         FOR UPDATE
+                        """,
+                        int(entry_id),
+                    )
+                    if not row:
+                        return None
+                    await conn.execute(
+                        """
+                        SELECT id FROM ledger_accounts
+                         WHERE id = $1
+                         FOR UPDATE
+                        """,
+                        int(row["account_id"]),
+                    )
+                    await conn.execute(
+                        "DELETE FROM ledger_entries WHERE id = $1",
+                        int(entry_id),
+                    )
+                    await conn.execute(
+                        """
+                        UPDATE ledger_accounts
+                           SET balance = balance - $1
+                         WHERE id = $2
+                        """,
+                        Decimal(str(row["balance_delta"])),
+                        int(row["account_id"]),
+                    )
+            return dict(row)
+        except Exception as e:
+            logger.error("delete_ledger_entry: %s", e, exc_info=True)
+            return None

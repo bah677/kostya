@@ -57,11 +57,12 @@ CREATE TABLE IF NOT EXISTS ledger_entries (
     balance_delta_base      NUMERIC(20, 8),
     note                    TEXT,
     created_by              BIGINT,
-    created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    occurred_on             DATE NOT NULL DEFAULT CURRENT_DATE
 );
 
-CREATE INDEX IF NOT EXISTS idx_ledger_entries_account_created
-    ON ledger_entries (account_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_ledger_entries_account_occurred
+    ON ledger_entries (account_id, occurred_on DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_ledger_entries_kind_created
     ON ledger_entries (kind, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_ledger_entries_category
@@ -76,12 +77,8 @@ INSERT INTO ledger_accounts (currency, name)
 VALUES ('USDT', 'Основной USDT')
 ON CONFLICT (currency, name) DO NOTHING;
 
-INSERT INTO ledger_categories (name)
-VALUES ('Хостинг'), ('Реклама'), ('Подписки / API'), ('Прочее')
-ON CONFLICT DO NOTHING;
-
 COMMENT ON TABLE ledger_entries IS
-    'Неизменяемый журнал: брутто, комиссия и нетто всегда сохраняются.';
+    'Журнал: брутто, комиссия и нетто. Удаление откатывает balance_delta на счёт.';
 COMMENT ON COLUMN ledger_entries.amount_net IS
     'Брутто минус комиссия. Для расходов в отчёте это «нетто», списание с депозита — −balance_delta.';
 COMMENT ON COLUMN ledger_entries.balance_delta IS

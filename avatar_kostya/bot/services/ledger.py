@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+from datetime import date, datetime, timedelta
 from typing import Optional, Tuple
+from zoneinfo import ZoneInfo
 
 MONEY_Q = Decimal("0.00000001")
 DEFAULT_CURRENCY = "USDT"
+_MSK = ZoneInfo("Europe/Moscow")
 
 
 def parse_amount(text: str) -> Optional[Decimal]:
@@ -27,11 +30,15 @@ def _q(value: Decimal) -> Decimal:
 
 
 def format_money(amount, currency: str = DEFAULT_CURRENCY) -> str:
+    return f"{format_amount(amount)} {currency}"
+
+
+def format_amount(amount) -> str:
     d = _q(Decimal(str(amount or 0)))
     s = format(d, "f").rstrip("0").rstrip(".")
     if s in ("", "-"):
         s = "0"
-    return f"{s} {currency}"
+    return s
 
 
 def deposit_amounts(gross: Decimal, fee: Decimal) -> Tuple[Decimal, Decimal]:
@@ -45,3 +52,26 @@ def expense_amounts(gross: Decimal, fee: Decimal) -> Tuple[Decimal, Decimal]:
     net = _q(gross - fee)
     delta = _q(-(gross + fee))
     return net, delta
+
+
+def today_msk() -> date:
+    return datetime.now(_MSK).date()
+
+
+def parse_op_date(text: str, *, today: Optional[date] = None) -> Optional[date]:
+    """сегодня / вчера / ДД.ММ / ДД.ММ.ГГГГ / ГГГГ-ММ-ДД."""
+    raw = (text or "").strip().lower()
+    day = today or today_msk()
+    if not raw or raw in ("-", "сегодня", "today"):
+        return day
+    if raw in ("вчера", "yesterday"):
+        return day - timedelta(days=1)
+    for fmt in ("%d.%m.%Y", "%d.%m.%y", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(raw, fmt).date()
+        except ValueError:
+            continue
+    try:
+        return datetime.strptime(f"{raw}.{day.year}", "%d.%m.%Y").date()
+    except ValueError:
+        return None

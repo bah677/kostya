@@ -4,10 +4,9 @@ from __future__ import annotations
 
 import html
 import logging
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
-from typing import Any, Dict, List, Optional
-from zoneinfo import ZoneInfo
+from typing import Any, Dict, List, Optional, Union
 
 from aiogram import Dispatcher, F
 from aiogram.enums import ParseMode
@@ -26,12 +25,15 @@ from bot.features.base import BaseFeature
 from bot.filters.private_only import CALLBACK_PRIVATE_CHAT, PRIVATE_CHAT
 from bot.services.ledger import (
     DEFAULT_CURRENCY,
+    format_amount,
     format_money,
     parse_amount,
+    parse_op_date,
+    today_msk,
 )
+from bot.services.tg_rich import edit_rich_message, send_rich_message
 
 logger = logging.getLogger(__name__)
-MSK = ZoneInfo("Europe/Moscow")
 
 _CB = "ldg"
 
@@ -44,6 +46,7 @@ class LedgerStates(StatesGroup):
     expense_gross = State()
     expense_fee = State()
     expense_note = State()
+    op_date = State()
     confirm = State()
 
 
@@ -118,6 +121,12 @@ class LedgerFeature(BaseFeature):
             F.text,
         )
         dp.message.register(
+            self._on_op_date,
+            PRIVATE_CHAT,
+            StateFilter(LedgerStates.op_date),
+            F.text,
+        )
+        dp.message.register(
             self._on_unexpected,
             PRIVATE_CHAT,
             StateFilter(LedgerStates),
@@ -148,6 +157,12 @@ class LedgerFeature(BaseFeature):
         await message.answer(text, parse_mode=ParseMode.HTML, reply_markup=kb)
 
     async def _on_unexpected(self, message: Message, state: FSMContext) -> None:
+        cur = await state.get_state()
+        if cur and cur.endswith(":op_date"):
+            await message.answer(
+                "Дата: сегодня, вчера или ДД.ММ / ДД.ММ.ГГГГ. Или кнопка."
+            )
+            return
         await message.answer("Нажмите «Записать» или «Отмена» (/cancel).")
 
     async def on_callback(self, callback: CallbackQuery, state: FSMContext) -> None:
@@ -166,8 +181,7 @@ class LedgerFeature(BaseFeature):
             await callback.answer()
             return
         if action == "report":
-            text, kb = await self._report()
-            await self._edit_or_answer(callback, text, kb)
+            await self._show_report(callback)
             await callback.answer()
             return
         if action == "dep":
@@ -187,11 +201,21 @@ class LedgerFeature(BaseFeature):
             await state.clear()
             cats = await self.user_storage.list_ledger_categories()
             await state.update_data(kind="expense")
-            await self._edit_or_answer(
-                callback,
-                "📤 <b>Расход</b> (USDT)\n\nВыберите статью или введите свою:",
-                self._categories_kb(cats),
-            )
+            if not cats:
+                await state.set_state(LedgerStates.expense_custom)
+                await self._edit_or_answer(
+                    callback,
+                    "📤 <b>Расход</b> (USDT)\n\n"
+                    "Статей ещё нет — напишите название:",
+                    self._cancel_kb(),
+                )
+            else:
+                await self._edit_or_answer(
+                    callback,
+                    "📤 <b>Расход</b> (USDT)\n\n"
+                    "Выберите статью из уже записанных или введите свою:",
+                    self._categories_kb(cats),
+                )
             await callback.answer()
             return
         if action == "cat":
@@ -229,6 +253,20 @@ class LedgerFeature(BaseFeature):
             return
         if action == "ok":
             await self._commit(callback, state)
+            return
+        if action == "list":
+            text, kb = await self._ops_list()
+            await self._edit_or_answer(callback, text, kb)
+            await callback.answer()
+            return
+        if action == "date":
+            await self._on_date_callback(callback, state, value)
+            return
+        if action == "del":
+            await self._ask_delete(callback, value)
+            return
+        if action == "delok":
+            await self._do_delete(callback, value)
             return
         await callback.answer()
 
@@ -277,7 +315,7 @@ class LedgerFeature(BaseFeature):
         if note == "-":
             note = ""
         await state.update_data(note=note[:500])
-        await self._ask_confirm(message, state)
+        await self._ask_date(message, state)
 
     async def _on_expense_custom(self, message: Message, state: FSMContext) -> None:
         if not await self._ensure_admin(message.from_user.id if message.from_user else None):
@@ -345,25 +383,102 @@ class LedgerFeature(BaseFeature):
         if note == "-":
             note = ""
         await state.update_data(note=note[:500])
+        await self._ask_date(message, state)
+
+    async def _on_op_date(self, message: Message, state: FSMContext) -> None:
+        if not await self._ensure_admin(message.from_user.id if message.from_user else None):
+            return
+        parsed = parse_op_date(message.text or "")
+        if parsed is None:
+            await message.answer(
+                "Не понял дату. Напишите сегодня, вчера, ДД.ММ или ДД.ММ.ГГГГ."
+            )
+            return
+        await state.update_data(occurred_on=parsed.isoformat())
         await self._ask_confirm(message, state)
 
-    async def _ask_confirm(self, message: Message, state: FSMContext) -> None:
+    async def _on_date_callback(
+        self, callback: CallbackQuery, state: FSMContext, value: str
+    ) -> None:
+        cur = await state.get_state()
+        if not cur or not cur.endswith(":op_date"):
+            await callback.answer("Сначала заполните сумму", show_alert=True)
+            return
+        today = today_msk()
+        if value == "today":
+            parsed = today
+        elif value == "yday":
+            parsed = today - timedelta(days=1)
+        elif value == "custom":
+            await self._edit_or_answer(
+                callback,
+                "Напишите дату: ДД.ММ или ДД.ММ.ГГГГ",
+                self._cancel_kb(),
+            )
+            await callback.answer()
+            return
+        else:
+            await callback.answer("Дата?")
+            return
+        await state.update_data(occurred_on=parsed.isoformat())
+        await self._ask_confirm(callback, state)
+        await callback.answer()
+
+    async def _ask_date(
+        self, target: Union[Message, CallbackQuery], state: FSMContext
+    ) -> None:
+        await state.set_state(LedgerStates.op_date)
+        today = today_msk()
+        yday = today - timedelta(days=1)
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text=f"Сегодня ({today.strftime('%d.%m')})",
+                        callback_data=_cb("date", "today"),
+                    ),
+                    InlineKeyboardButton(
+                        text=f"Вчера ({yday.strftime('%d.%m')})",
+                        callback_data=_cb("date", "yday"),
+                    ),
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="Другая дата…",
+                        callback_data=_cb("date", "custom"),
+                    )
+                ],
+                [InlineKeyboardButton(text="❌ Отмена", callback_data=_cb("home"))],
+            ]
+        )
+        text = (
+            "Дата операции (когда было пополнение или расход).\n"
+            "Или напишите ДД.ММ / ДД.ММ.ГГГГ"
+        )
+        if isinstance(target, CallbackQuery):
+            await self._edit_or_answer(target, text, kb)
+        else:
+            await target.answer(text, reply_markup=kb)
+
+    async def _ask_confirm(
+        self, target: Union[Message, CallbackQuery], state: FSMContext
+    ) -> None:
         data = await state.get_data()
         acc = await self.user_storage.get_default_ledger_account()
         text = self._preview_html(data, acc)
         await state.set_state(LedgerStates.confirm)
-        await message.answer(
-            text,
-            parse_mode=ParseMode.HTML,
-            reply_markup=InlineKeyboardMarkup(
-                inline_keyboard=[
-                    [
-                        InlineKeyboardButton(text="✅ Записать", callback_data=_cb("ok")),
-                        InlineKeyboardButton(text="❌ Отмена", callback_data=_cb("home")),
-                    ]
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(text="✅ Записать", callback_data=_cb("ok")),
+                    InlineKeyboardButton(text="❌ Отмена", callback_data=_cb("home")),
                 ]
-            ),
+            ]
         )
+        if isinstance(target, CallbackQuery):
+            await self._edit_or_answer(target, text, kb)
+        else:
+            await target.answer(text, parse_mode=ParseMode.HTML, reply_markup=kb)
 
     def _preview_html(self, data: Dict[str, Any], acc: Optional[Dict[str, Any]]) -> str:
         kind = str(data.get("kind") or "")
@@ -395,6 +510,7 @@ class LedgerFeature(BaseFeature):
             ]
         note = str(data.get("note") or "").strip()
         lines.append(f"• Комментарий: {html.escape(note or '—')}")
+        lines.append(f"• Дата: <b>{html.escape(self._fmt_occurred(data.get('occurred_on')))}</b>")
         lines.append(f"• Остаток сейчас: {html.escape(format_money(balance, cur))}")
         lines.append(f"• Остаток после: <b>{html.escape(format_money(after, cur))}</b>")
         lines.append("\nЗаписать?")
@@ -415,6 +531,7 @@ class LedgerFeature(BaseFeature):
             await state.clear()
             return
         uid = callback.from_user.id if callback.from_user else 0
+        occurred_on = self._parse_stored_date(data.get("occurred_on"))
         row = await self.user_storage.add_ledger_entry(
             kind=kind,
             gross=gross,
@@ -423,6 +540,7 @@ class LedgerFeature(BaseFeature):
             category_id=int(data["category_id"]) if data.get("category_id") else None,
             category_name=str(data.get("category_name") or "") or None,
             note=str(data.get("note") or "") or None,
+            occurred_on=occurred_on,
         )
         await state.clear()
         if not row:
@@ -434,6 +552,7 @@ class LedgerFeature(BaseFeature):
         if kind == "deposit":
             msg = (
                 f"✅ Депозит +{html.escape(format_money(row['amount_net'], cur))}\n"
+                f"{html.escape(self._fmt_occurred(row.get('occurred_on')))}: "
                 f"брутто {html.escape(format_money(row['amount_gross'], cur))}, "
                 f"комиссия {html.escape(format_money(row['amount_fee'], cur))}\n"
                 f"Остаток: <b>{html.escape(after)}</b>"
@@ -442,6 +561,7 @@ class LedgerFeature(BaseFeature):
             cash = Decimal(str(row["amount_gross"])) + Decimal(str(row["amount_fee"]))
             msg = (
                 f"✅ Расход «{html.escape(str(row.get('category_name') or ''))}»\n"
+                f"{html.escape(self._fmt_occurred(row.get('occurred_on')))}: "
                 f"брутто {html.escape(format_money(row['amount_gross'], cur))}, "
                 f"нетто {html.escape(format_money(row['amount_net'], cur))}, "
                 f"списано {html.escape(format_money(cash, cur))}\n"
@@ -474,12 +594,13 @@ class LedgerFeature(BaseFeature):
             inline_keyboard=[
                 [InlineKeyboardButton(text="📥 Пополнить депозит", callback_data=_cb("dep"))],
                 [InlineKeyboardButton(text="📤 Расход", callback_data=_cb("exp"))],
+                [InlineKeyboardButton(text="🗑 Операции", callback_data=_cb("list"))],
                 [InlineKeyboardButton(text="📊 Отчёт", callback_data=_cb("report"))],
             ]
         )
         return "\n".join(lines), kb
 
-    async def _report(self) -> tuple[str, InlineKeyboardMarkup]:
+    async def _show_report(self, callback: CallbackQuery) -> None:
         acc = await self.user_storage.get_default_ledger_account()
         kb = InlineKeyboardMarkup(
             inline_keyboard=[
@@ -487,23 +608,157 @@ class LedgerFeature(BaseFeature):
             ]
         )
         if not acc:
-            return "Счёт ещё не создан.", kb
+            await self._edit_or_answer(callback, "Счёт ещё не создан.", kb)
+            return
         cur = str(acc.get("currency") or DEFAULT_CURRENCY)
-        now = datetime.now(MSK)
-        month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        month_start = today_msk().replace(day=1)
         month = await self.user_storage.ledger_totals(
             account_id=int(acc["id"]), since=month_start
         )
         all_t = await self.user_storage.ledger_totals(account_id=int(acc["id"]))
-        text = (
+        recent = await self.user_storage.list_recent_ledger_entries(
+            limit=8, account_id=int(acc["id"])
+        )
+        rich = self._report_rich_html(acc, cur, month_start, month, all_t, recent)
+        fallback = self._report_fallback_html(acc, cur, month_start, month, all_t)
+        await self._edit_or_answer_rich(callback, rich, kb, fallback=fallback)
+
+    def _report_rich_html(
+        self,
+        acc: Dict[str, Any],
+        cur: str,
+        month_start: date,
+        month: Dict[str, Decimal],
+        all_t: Dict[str, Decimal],
+        recent: List[Dict[str, Any]],
+    ) -> str:
+        month_label = html.escape(month_start.strftime("%m.%Y"))
+        bal = html.escape(format_money(acc.get("balance"), cur))
+        name = html.escape(str(acc.get("name") or cur))
+        rows = [
+            ("🟢 Депозит брутто", "deposit_gross", "in"),
+            ("Депозит комиссия", "deposit_fee", "fee"),
+            ("🟢 Депозит нетто", "deposit_net", "in"),
+            ("🔴 Расходы брутто", "expense_gross", "out"),
+            ("Расходы нетто", "expense_net", "out"),
+            ("Комиссия расходов", "expense_fee", "fee"),
+            ("🔴 Списано с депозита", "expense_cash", "out"),
+        ]
+        body: List[str] = []
+        for title, key, kind in rows:
+            body.append(
+                "<tr>"
+                f"<td>{html.escape(title)}</td>"
+                f"<td align=\"right\">{self._rich_amt(month[key], kind)}</td>"
+                f"<td align=\"right\">{self._rich_amt(all_t[key], kind)}</td>"
+                "</tr>"
+            )
+        ops = ""
+        if recent:
+            op_rows = []
+            for e in recent:
+                if e.get("kind") == "deposit":
+                    kind_l = "🟢 Ввод"
+                    amt = self._rich_amt(e.get("amount_net"), "in")
+                    cat = "депозит"
+                else:
+                    kind_l = "🔴 Расход"
+                    cash = Decimal(str(e.get("amount_gross") or 0)) + Decimal(
+                        str(e.get("amount_fee") or 0)
+                    )
+                    amt = self._rich_amt(cash, "out")
+                    cat = str(e.get("category_name") or "—")
+                op_rows.append(
+                    "<tr>"
+                    f"<td>{html.escape(self._fmt_occurred(e.get('occurred_on')))}</td>"
+                    f"<td>{html.escape(kind_l)}</td>"
+                    f"<td>{html.escape(cat)}</td>"
+                    f"<td align=\"right\">{amt}</td>"
+                    "</tr>"
+                )
+            ops = (
+                "<h3>Последние операции</h3>"
+                "<table bordered striped>"
+                "<tr>"
+                "<th align=\"left\">Дата</th>"
+                "<th align=\"left\">Тип</th>"
+                "<th align=\"left\">Статья</th>"
+                "<th align=\"right\">Сумма</th>"
+                "</tr>"
+                + "".join(op_rows)
+                + "</table>"
+            )
+        return (
+            "<h2>📊 Отчёт</h2>"
+            f"<p>Счёт: <b>{name}</b><br>Остаток: <mark><b>{bal}</b></mark></p>"
+            f"<table bordered striped>"
+            f"<caption>Суммы в {html.escape(cur)}</caption>"
+            "<tr>"
+            "<th align=\"left\">Показатель</th>"
+            f"<th align=\"right\">{month_label}</th>"
+            "<th align=\"right\">Всё время</th>"
+            "</tr>"
+            + "".join(body)
+            + "</table>"
+            + ops
+            + "<details>"
+            "<summary>Как читать</summary>"
+            "<p>🟢 пополнения подсвечены. 🔴 списания выделены жирным.<br>"
+            "Депозит нетто = брутто − комиссия. "
+            "Списание с депозита = брутто + комиссия.</p>"
+            "</details>"
+        )
+
+    @staticmethod
+    def _rich_amt(value: Any, kind: str) -> str:
+        s = html.escape(format_amount(value))
+        if kind == "in":
+            return f"<mark>{s}</mark>"
+        if kind == "out":
+            return f"<b>{s}</b>"
+        return s
+
+    @staticmethod
+    def _report_fallback_html(
+        acc: Dict[str, Any],
+        cur: str,
+        month_start: date,
+        month: Dict[str, Decimal],
+        all_t: Dict[str, Decimal],
+    ) -> str:
+        return (
             "📊 <b>Отчёт</b>\n"
             f"Остаток: <b>{html.escape(format_money(acc.get('balance'), cur))}</b>\n\n"
             f"<b>Этот месяц</b> ({month_start.strftime('%m.%Y')})\n"
-            f"{self._totals_html(month, cur)}\n"
+            f"{LedgerFeature._totals_html(month, cur)}\n"
             f"<b>Всё время</b>\n"
-            f"{self._totals_html(all_t, cur)}"
+            f"{LedgerFeature._totals_html(all_t, cur)}"
         )
-        return text, kb
+
+    async def _edit_or_answer_rich(
+        self,
+        callback: CallbackQuery,
+        html_text: str,
+        kb: InlineKeyboardMarkup,
+        *,
+        fallback: str,
+    ) -> None:
+        msg = callback.message
+        bot = callback.bot
+        if not msg or not bot:
+            return
+        chat_id = msg.chat.id
+        try:
+            await edit_rich_message(bot, chat_id, msg.message_id, html_text, kb)
+            return
+        except Exception as e:
+            logger.warning("edit rich report: %s", e)
+        try:
+            await send_rich_message(bot, chat_id, html_text, kb)
+            return
+        except Exception as e:
+            logger.warning("send rich report: %s", e)
+        await self._edit_or_answer(callback, fallback, kb)
 
     @staticmethod
     def _totals_html(t: Dict[str, Decimal], cur: str) -> str:
@@ -518,23 +773,129 @@ class LedgerFeature(BaseFeature):
         )
 
     @staticmethod
-    def _entry_line(e: Dict[str, Any]) -> str:
+    def _as_date(value: Any) -> Optional[date]:
+        if isinstance(value, datetime):
+            return value.date()
+        if isinstance(value, date):
+            return value
+        if isinstance(value, str) and value.strip():
+            try:
+                return date.fromisoformat(value.strip()[:10])
+            except ValueError:
+                return None
+        return None
+
+    @classmethod
+    def _parse_stored_date(cls, value: Any) -> date:
+        return cls._as_date(value) or today_msk()
+
+    @classmethod
+    def _fmt_occurred(cls, value: Any) -> str:
+        d = cls._as_date(value)
+        return d.strftime("%d.%m.%Y") if d else "—"
+
+    @classmethod
+    def _entry_plain(cls, e: Dict[str, Any]) -> str:
         cur = str(e.get("currency") or DEFAULT_CURRENCY)
-        when = e.get("created_at")
-        ts = ""
-        if isinstance(when, datetime):
-            ts = when.astimezone(MSK).strftime("%d.%m %H:%M")
+        d = cls._as_date(e.get("occurred_on"))
+        ts = d.strftime("%d.%m") if d else ""
         if e.get("kind") == "deposit":
-            mark = "📥"
             body = f"+{format_money(e.get('amount_net'), cur)}"
         else:
-            mark = "📤"
             cash = Decimal(str(e.get("amount_gross") or 0)) + Decimal(
                 str(e.get("amount_fee") or 0)
             )
             cat = e.get("category_name") or "расход"
             body = f"{cat} −{format_money(cash, cur)}"
-        return f"• {html.escape(ts)} {mark} {html.escape(body)}"
+        return f"{ts} {body}".strip()
+
+    @classmethod
+    def _entry_line(cls, e: Dict[str, Any]) -> str:
+        return f"• {html.escape(cls._entry_plain(e))}"
+
+    async def _ops_list(self) -> tuple[str, InlineKeyboardMarkup]:
+        acc = await self.user_storage.get_default_ledger_account()
+        recent = await self.user_storage.list_recent_ledger_entries(
+            limit=12, account_id=int(acc["id"]) if acc else None
+        )
+        lines = [
+            "🗑 <b>Операции</b>",
+            "Нажмите запись, чтобы удалить. Остаток счёта откатится.\n",
+        ]
+        rows: List[List[InlineKeyboardButton]] = []
+        if not recent:
+            lines.append("Пока нет записей.")
+        for e in recent:
+            label = self._entry_plain(e)[:58]
+            rows.append(
+                [
+                    InlineKeyboardButton(
+                        text=f"🗑 {label}",
+                        callback_data=_cb("del", str(int(e["id"]))),
+                    )
+                ]
+            )
+        rows.append([InlineKeyboardButton(text="« Меню", callback_data=_cb("home"))])
+        return "\n".join(lines), InlineKeyboardMarkup(inline_keyboard=rows)
+
+    async def _ask_delete(self, callback: CallbackQuery, value: str) -> None:
+        try:
+            entry_id = int(value)
+        except ValueError:
+            await callback.answer("Запись?")
+            return
+        row = await self.user_storage.get_ledger_entry(entry_id)
+        if not row:
+            await callback.answer("Уже нет такой записи", show_alert=True)
+            text, kb = await self._ops_list()
+            await self._edit_or_answer(callback, text, kb)
+            return
+        cur = str(row.get("currency") or DEFAULT_CURRENCY)
+        delta = Decimal(str(row.get("balance_delta") or 0))
+        reverse = format_money(-delta, cur)
+        note = str(row.get("note") or "").strip()
+        text = (
+            "🗑 <b>Удалить запись?</b>\n\n"
+            f"{html.escape(self._entry_plain(row))}\n"
+            f"Комментарий: {html.escape(note or '—')}\n"
+            f"Откат остатка: <b>{html.escape(reverse)}</b>"
+        )
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="🗑 Удалить",
+                        callback_data=_cb("delok", str(entry_id)),
+                    ),
+                    InlineKeyboardButton(text="Назад", callback_data=_cb("list")),
+                ]
+            ]
+        )
+        await self._edit_or_answer(callback, text, kb)
+        await callback.answer()
+
+    async def _do_delete(self, callback: CallbackQuery, value: str) -> None:
+        try:
+            entry_id = int(value)
+        except ValueError:
+            await callback.answer("Запись?")
+            return
+        row = await self.user_storage.delete_ledger_entry(entry_id)
+        if not row:
+            await callback.answer("Не удалось удалить", show_alert=True)
+            text, kb = await self._ops_list()
+            await self._edit_or_answer(callback, text, kb)
+            return
+        acc = await self.user_storage.get_default_ledger_account()
+        cur = str((acc or {}).get("currency") or DEFAULT_CURRENCY)
+        bal = format_money((acc or {}).get("balance") or 0, cur)
+        await callback.answer("Удалено")
+        text, kb = await self._ops_list()
+        header = (
+            f"✅ Удалено: {html.escape(self._entry_plain(row))}\n"
+            f"Остаток: <b>{html.escape(bal)}</b>\n\n"
+        )
+        await self._edit_or_answer(callback, header + text, kb)
 
     def _categories_kb(self, cats: List[Dict[str, Any]]) -> InlineKeyboardMarkup:
         rows: List[List[InlineKeyboardButton]] = []
