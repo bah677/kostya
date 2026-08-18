@@ -39,6 +39,21 @@ def wants_shorts_clips(kind: Optional[str]) -> bool:
     return k in _MEDIA_KINDS and k != KIND_MOLITVA
 
 
+def clips_include_all_speakers(kind: Optional[str]) -> bool:
+    """Покаяние: в массив нарезки — Костя и участник. Эфир/QA — только Костя."""
+    return (kind or "").strip().lower() == KIND_POKAYANIE
+
+
+def recording_kind_from_pending(row: Optional[dict], meta: Optional[dict] = None) -> str:
+    content_type = ""
+    clf = (row or {}).get("classification") if isinstance(row, dict) else None
+    if isinstance(clf, dict):
+        content_type = str(clf.get("content_type") or "")
+    if not content_type and isinstance(meta, dict):
+        content_type = str(meta.get("content_type") or "")
+    return recording_kind_from_content_type(content_type)
+
+
 def ensure_kind_title_prefix(title: str, kind: Optional[str]) -> str:
     """Гарантирует префикс типа в начале названия."""
     t = (title or "").strip()

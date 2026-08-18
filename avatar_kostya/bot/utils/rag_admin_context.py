@@ -49,6 +49,26 @@ def rag_shorts_chat_topic() -> Tuple[int, Optional[int]]:
     return chat, tid if tid else None
 
 
+def rag_full_voice_chat_topic() -> Tuple[int, Optional[int]]:
+    chat = int(getattr(config, "TELEMOST_FULL_VOICE_CHAT_ID", 0) or 0)
+    if not chat:
+        chat, _ = rag_shorts_chat_topic()
+        chat = int(chat or 0)
+    if not chat:
+        chat = rag_admin_chat_id()
+    tid = int(getattr(config, "TELEMOST_FULL_VOICE_TOPIC_ID", 0) or 0)
+    return chat, tid if tid else None
+
+
+def is_full_voice_topic_message(chat_id: int, thread_id: Optional[int]) -> bool:
+    fv_chat, fv_topic = rag_full_voice_chat_topic()
+    if not fv_chat or int(chat_id) != fv_chat:
+        return False
+    if fv_topic is None:
+        return False
+    return thread_id is not None and int(thread_id) == fv_topic
+
+
 def is_rag_shorts_message(chat_id: int, thread_id: Optional[int]) -> bool:
     shorts_chat, shorts_topic = rag_shorts_chat_topic()
     if not shorts_chat or int(chat_id) != shorts_chat:

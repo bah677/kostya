@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any, List, Optional
+from typing import Any, Optional
 
 from aiogram.types import FSInputFile
 
@@ -23,14 +23,12 @@ async def deliver_topic_pack(
     topic: PrayerTopic,
     day: str,
     index: int,
-    prayer_text: str,
     horizontal: Path,
-    ogg: Optional[Path] = None,
     lang: str = "ru",
     covers: Optional[CoverPack] = None,
     metadata: Optional[VideoMetadata] = None,
 ) -> None:
-    """Шлёт метаданные + текст + обложку + горизонталь (+ опц. voice) в forum topic."""
+    """Шлёт шапку, описание YouTube, обложку и видео 16:9 в forum topic."""
     lang_l = (lang or "ru").lower()
     lang_tag = "EN · US" if lang_l == "en" else "RU"
     yt_title = (metadata.title if metadata else "") or (covers.title if covers else "")
@@ -78,27 +76,6 @@ async def deliver_topic_pack(
                 )
         except Exception as e:
             logger.warning("send covers failed: %s", e)
-
-    body = (prayer_text or "").strip()
-    if len(body) > 3500:
-        body = body[:3400] + "…"
-    await bot.send_message(
-        chat_id,
-        f"<b>Текст молитвы</b>\n\n{_esc(body)}",
-        parse_mode="HTML",
-        **kwargs,
-    )
-
-    if ogg and ogg.is_file() and ogg.stat().st_size < 20_000_000:
-        try:
-            await bot.send_voice(
-                chat_id,
-                FSInputFile(str(ogg), filename=f"prayer_{index}.ogg"),
-                caption=f"Аудио · #{index} · {_esc(topic.trend)[:60]}",
-                **kwargs,
-            )
-        except Exception as e:
-            logger.warning("send_voice failed: %s", e)
 
     cap_title = yt_title[:80] if yt_title else topic.trend[:80]
     await _send_video_or_doc(
@@ -169,19 +146,6 @@ async def _send_video_or_doc(
             )
         except Exception as e2:
             logger.error("send_document failed %s: %s", path.name, e2)
-
-
-async def deliver_run_summary(
-    bot: Any,
-    *,
-    chat_id: int,
-    topic_id: int,
-    day: str,
-    lines: List[str],
-) -> None:
-    kwargs = {"message_thread_id": int(topic_id)} if topic_id else {}
-    text = f"✅ <b>YouTube-молитвы за {day}</b>\n" + "\n".join(lines)
-    await bot.send_message(chat_id, text, parse_mode="HTML", **kwargs)
 
 
 async def deliver_pipeline_stopped(

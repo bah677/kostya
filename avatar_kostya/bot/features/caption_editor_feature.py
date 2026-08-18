@@ -14,7 +14,7 @@ from aiogram.filters import StateFilter
 from aiogram.types import Message
 
 from bot.features.base import BaseFeature
-from bot.utils.rag_admin_context import is_rag_shorts_message
+from bot.utils.rag_admin_context import is_full_voice_topic_message, is_rag_shorts_message
 from config import config
 from telemost_audio.caption_revision import (
     format_audio_caption_html,
@@ -67,7 +67,10 @@ class CaptionEditorFeature(BaseFeature):
     async def on_reply_feedback(self, message: Message) -> None:
         if message.from_user is None or message.reply_to_message is None:
             raise SkipHandler
-        if not is_rag_shorts_message(message.chat.id, message.message_thread_id):
+        if not (
+            is_rag_shorts_message(message.chat.id, message.message_thread_id)
+            or is_full_voice_topic_message(message.chat.id, message.message_thread_id)
+        ):
             raise SkipHandler
         # Не перехватываем #club / #biblia (shorts mail wizard)
         text_raw = (message.text or "").strip()

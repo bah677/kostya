@@ -67,6 +67,7 @@ async def wait_and_download_audio(
     public_fail_streak = 0
     skip_public_url = False
     notified_wait = False
+    notified_download = False
     notified_fail = False
     deadline = time.monotonic() + max(60, wait_sec)
 
@@ -137,7 +138,9 @@ async def wait_and_download_audio(
             continue
 
         url = ((row or {}).get("audio_url") or "").strip()
-        await _notify(notify, "⬇️ Скачиваю аудио-запись…")
+        if not notified_download:
+            await _notify(notify, "⬇️ Скачиваю аудио-запись…")
+            notified_download = True
         path = await _try_once(url)
         if path:
             await storage.set_telemost_recording_local_audio_path(mid, path)

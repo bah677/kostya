@@ -78,6 +78,50 @@ hook — ОДНО короткое яркое предложение для по
 
 start/end — реальные секунды из расшифровки."""
 
+_SYSTEM_POKAYANIE = """Ты редактор аудио-мини-подкастов покаяния. В расшифровке — диалог: речь Константина (Кости) И речь участника покаяния. Не выдумывай реплик и не отбрасывай участника.
+
+Работай СТРОГО В ДВА ШАГА (не наоборот):
+
+ШАГ 1 — ВЫБОР МОМЕНТА (самое важное).
+Выбери законченный живой кусок покаяния:
+- диалог Кости и участника (вопрос, ответ, разбор, наставление) ИЛИ цельная мысль Кости в этом диалоге;
+- начало → развитие → смысловой финал;
+- НЕ приветствие, НЕ техничку, НЕ обрывки.
+В reason своими словами (1–2 предложения): о чём кусок и чем цепляет.
+Только после этого переходи к шагу 2.
+
+ШАГ 2 — НАРЕЗКА ПОД УЖЕ ВЫБРАННЫЙ КУСОК.
+start_sec / end_sec покрывают этот кусок целиком, включая реплики участника, без которых мысль Кости не держится.
+Длительность ЛЮБАЯ в диапазоне {min_sec}–{max_sec} секунд — столько, сколько нужно.
+- Не режь посередине реплики или ответа.
+- Не добивай пустотой до лимита.
+- Убери края без смысла: оговорки, повторы, уходы в сторону.
+
+Выбери ровно {count} разных кусков (слабое пересечение по времени).
+hook — ОДНО короткое яркое предложение для подписи в Telegram (до 120 символов).
+Без кликбейта. Тон: честный разговор с Богом.
+
+Для КАЖДОГО выбранного момента оцени score по шкале 0..100:
+- насколько хочется переслать/поделиться этим кусочком,
+- насколько мысль/диалог завершенные и понятные,
+- насколько «усиливает» суть покаяния.
+
+Верни ТОЛЬКО JSON:
+{{
+  "clips": [
+    {{
+      "start_sec": 412.0,
+      "end_sec": 518.0,
+      "title": "суть мысли",
+      "hook": "Одно предложение — почему стоит послушать.",
+      "reason": "Усиление мысли для caption в Telegram (1–2 предложения). Не раскрывай весь эфир и не делай спойлеров.",
+      "score": 0.0
+    }}
+  ]
+}}
+
+start/end — реальные секунды из расшифровки."""
+
 
 def _segments_for_prompt(
     segments: Sequence[SpeechSegment],
@@ -251,6 +295,12 @@ def _rerank_candidates(
     return picked[:final_count]
 
 
+def _is_pokayanie(recording_kind: str) -> bool:
+    from telemost_audio.recording_kind import KIND_POKAYANIE
+
+    return (recording_kind or "").strip().lower() == KIND_POKAYANIE
+
+
 async def pick_audio_moments(
     segments: Sequence[SpeechSegment],
     *,
@@ -259,6 +309,7 @@ async def pick_audio_moments(
     count: int = 5,
     max_duration_sec: int = 120,
     regenerate: bool = False,
+    recording_kind: str = "",
 ) -> List[AudioClipMoment]:
     from config import config
 
@@ -297,20 +348,32 @@ async def pick_audio_moments(
                 prompt_body = _segments_for_prompt(segments, skip_first=skip_first)
                 if not prompt_body.strip():
                     continue
-                user = (
-                    f"Запись: {title}\n\n"
-                    f"Источник: только речь Константина (Кости).\n"
-                    f"Это ОДНО окно расшифровки (не весь эфир). "
-                    f"Найди до {per_window} законченных цепляющих МЫСЛЕЙ Константина "
-                    f"и поставь таймкоды ({int(min_sec)}–{int(max_sec)} с).\n"
-                    f"Старайся не повторять одно и то же.\n\n"
-                    f"Речь Константина блоками (сек → текст):\n{prompt_body}"
-                )
+                pokayanie = _is_pokayanie(recording_kind)
+                if pokayanie:
+                    user = (
+                        f"Запись: {title}\n\n"
+                        f"Источник: речь Константина (Кости) и речь участника покаяния.\n"
+                        f"Это ОДНО окно расшифровки (не вся запись). "
+                        f"Найди до {per_window} законченных кусков диалога "
+                        f"и поставь таймкоды ({int(min_sec)}–{int(max_sec)} с).\n"
+                        f"Старайся не повторять одно и то же.\n\n"
+                        f"Диалог блоками (сек → кто говорит → текст):\n{prompt_body}"
+                    )
+                else:
+                    user = (
+                        f"Запись: {title}\n\n"
+                        f"Источник: только речь Константина (Кости).\n"
+                        f"Это ОДНО окно расшифровки (не весь эфир). "
+                        f"Найди до {per_window} законченных цепляющих МЫСЛЕЙ Константина "
+                        f"и поставь таймкоды ({int(min_sec)}–{int(max_sec)} с).\n"
+                        f"Старайся не повторять одно и то же.\n\n"
+                        f"Речь Константина блоками (сек → текст):\n{prompt_body}"
+                    )
                 if regenerate:
                     user = f"Повтор #{variation}: нужны ДРУГИЕ мысли.\n\n{user}"
                 if hint:
                     user = f"Философия:\n{hint}\n\n{user}"
-                sys_prompt = _SYSTEM.format(
+                sys_prompt = (_SYSTEM_POKAYANIE if pokayanie else _SYSTEM).format(
                     count=per_window, min_sec=int(min_sec), max_sec=int(max_sec)
                 )
                 r = await client.chat.completions.create(

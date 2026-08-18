@@ -17,7 +17,7 @@ from aiogram.types import FSInputFile
 from config import config
 from telemost_mail.classifier_llm import TelemostClassification
 from telemost_mail.imap_client import YandexImapClient
-from telemost_mail.timestamped_speech import parse_expert_segments
+from telemost_mail.timestamped_speech import parse_speech_segments
 from telemost_audio.caption_llm import build_audio_captions
 from telemost_audio.ffmpeg_render import render_audio_clips, ogg_path_duration_sec
 from telemost_audio.moments_llm import AudioClipMoment, pick_audio_moments
@@ -231,22 +231,37 @@ async def _run_audio_pipeline(
             prefix = "🎙 <b>Новая аудио-нарезка</b>"
         await bot.send_message(
             chat_id,
-            f"{prefix}: подбираю фрагменты (~1 мин) для «{html_escape(str(title)[:120])}»…",
+            f"{prefix}: подбираю фрагменты (до 90 сек) для «{html_escape(str(title)[:120])}»…",
             parse_mode=ParseMode.HTML,
             message_thread_id=topic_id,
         )
 
+        from telemost_audio.recording_kind import (
+            clips_include_all_speakers,
+            recording_kind_from_pending,
+        )
+
+        kind = recording_kind_from_pending(row, meta)
         speakers = [
             s.strip()
             for s in (getattr(config, "TELEMOST_MAIL_AVATAR_SPEAKER_NAMES", "") or "").split(",")
             if s.strip()
         ]
         transcript = (row.get("transcript_text") or "").strip()
-        segments = parse_expert_segments(transcript, speakers)
+        segments = parse_speech_segments(
+            transcript,
+            speakers,
+            all_speakers=clips_include_all_speakers(kind),
+        )
         if not segments:
+            empty_msg = (
+                "⚠️ Аудио: в TXT нет таймкодов речи Кости и участника."
+                if clips_include_all_speakers(kind)
+                else "⚠️ Аудио: в TXT нет таймкодов речи эксперта."
+            )
             await bot.send_message(
                 chat_id,
-                "⚠️ Аудио: в TXT нет таймкодов речи эксперта.",
+                empty_msg,
                 message_thread_id=topic_id,
             )
             return
@@ -296,7 +311,7 @@ async def _run_audio_pipeline(
         work_dir = None
 
         count = int(getattr(config, "TELEMOST_AUDIO_CLIPS_COUNT", 5) or 5)
-        max_dur = int(getattr(config, "TELEMOST_AUDIO_CLIPS_MAX_DURATION_SEC", 120) or 120)
+        max_dur = int(getattr(config, "TELEMOST_AUDIO_CLIPS_MAX_DURATION_SEC", 90) or 90)
         philosophy = getattr(config, "TELEMOST_SHORTS_PHILOSOPHY_HINT", "") or ""
 
         moments: List[AudioClipMoment] = await pick_audio_moments(
@@ -306,6 +321,7 @@ async def _run_audio_pipeline(
             count=count,
             max_duration_sec=max_dur,
             regenerate=regenerate_moments,
+            recording_kind=kind,
         )
         if not moments:
             await bot.send_message(
@@ -414,7 +430,7 @@ async def _run_audio_pipeline(
 
         await bot.send_message(
             chat_id,
-            f"✅ <b>Аудио готово</b>: {sent} голосовых (~1 мин каждое).\n"
+            f"✅ <b>Аудио готово</b>: {sent} голосовых (до 90 сек каждое).\n"
             f"Источник: {html_escape(str(title)[:120])}",
             parse_mode=ParseMode.HTML,
             message_thread_id=topic_id,

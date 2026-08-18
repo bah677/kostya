@@ -45,6 +45,9 @@ class SupportFeature(BaseFeature):
 
     async def initialize(self) -> None:
         await super().initialize()
+        if not config.SUPPORT_TICKET_MONITOR_ENABLED:
+            logger.info("[%s] мониторинг ответов поддержки выключен", self.name)
+            return
         self._monitor_running = True
         self._monitor_task = asyncio.create_task(self._answered_tickets_loop())
         logger.info(

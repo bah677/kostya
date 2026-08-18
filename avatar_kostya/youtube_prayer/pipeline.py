@@ -22,7 +22,6 @@ from youtube_prayer.compose import (
 from youtube_prayer.covers import generate_cover_pack
 from youtube_prayer.deliver import (
     deliver_pipeline_stopped,
-    deliver_run_summary,
     deliver_topic_pack,
 )
 from youtube_prayer.metadata import generate_video_metadata
@@ -141,7 +140,6 @@ async def _run_lang_pack(
     pack_root = day_dir / lang
     pack_root.mkdir(parents=True, exist_ok=True)
     theme_names: List[str] = []
-    summary_lines: List[str] = []
     _apply_broll_env()
 
     for i, topic in enumerate(topics, 1):
@@ -199,7 +197,7 @@ async def _run_lang_pack(
         )
 
         await notify(f"🎙 [{label} {i}/{len(topics)}] TTS+фон…")
-        wav, ogg, dur, _tts = await synthesize_prayer_audio(
+        wav, _ogg, dur, _tts = await synthesize_prayer_audio(
             prayer,
             work_dir=item_dir,
             voice_id=voice_id,
@@ -250,26 +248,14 @@ async def _run_lang_pack(
             topic=topic,
             day=day,
             index=i,
-            prayer_text=prayer,
             horizontal=horizontal,
-            ogg=ogg,
             lang=lang,
             covers=covers,
             metadata=meta,
         )
         theme_names.append(topic.trend)
-        summary_lines.append(
-            f"{label} {i}. {_esc_plain(topic.trend)} — 16:9 · {_esc_plain(meta.title)[:60]}"
-        )
         logger.info("yt_prayer %s item %s done trend=%r", lang, i, topic.trend)
 
-    await deliver_run_summary(
-        bot,
-        chat_id=chat_id,
-        topic_id=topic_id,
-        day=f"{day} [{label}]",
-        lines=summary_lines,
-    )
     append_used_trends(work_root, day=day, themes=theme_names, lang=lang)
     (pack_root / "done.json").write_text(
         json.dumps(

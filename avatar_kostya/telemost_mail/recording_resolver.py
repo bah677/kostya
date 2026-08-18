@@ -168,6 +168,7 @@ async def wait_and_download_recording(
 
     deadline = time.monotonic() + max(60, wait_sec)
     notified_wait = False
+    notified_download = False
     notified_download_fail = False
 
     while time.monotonic() < deadline:
@@ -196,7 +197,9 @@ async def wait_and_download_recording(
             continue
 
         url = ((row or {}).get("video_url") or "").strip()
-        await _notify(notify, "⬇️ Скачиваю запись эфира…")
+        if not notified_download:
+            await _notify(notify, "⬇️ Скачиваю запись эфира…")
+            notified_download = True
         path = await _try_download(url)
         if path:
             await storage.set_telemost_recording_local_path(mid, path)

@@ -154,6 +154,8 @@ class AppConfig:
 
     # Фоновый опрос статусов YooKassa/BZB (PaymentChecker). По умолчанию выключен.
     PAYMENT_CHECKER_ENABLED: bool = False
+    # Фоновый опрос answered-тикетов → пользователь. В аватаре выключен.
+    SUPPORT_TICKET_MONITOR_ENABLED: bool = False
 
     # Telegram user_id суперадмина: полный доступ без лицензии; единственный, кто /admin_add и /admin_block.
     SUPER_ADMIN_ID: int = 0
@@ -241,7 +243,7 @@ class AppConfig:
 
     TELEMOST_AUDIO_CLIPS_ENABLED: bool = False
     TELEMOST_AUDIO_CLIPS_COUNT: int = 5
-    TELEMOST_AUDIO_CLIPS_MAX_DURATION_SEC: int = 120
+    TELEMOST_AUDIO_CLIPS_MAX_DURATION_SEC: int = 90
     TELEMOST_AUDIO_CLIPS_OFFSET_SEC: float = -0.5
     TELEMOST_AUDIO_MIN_FULL_DURATION_SEC: int = 180
     TELEMOST_AUDIO_DIR: str = "data/telemost_audio"
@@ -251,6 +253,7 @@ class AppConfig:
 
     TELEMOST_FULL_VOICE_ENABLED: bool = True
     TELEMOST_FULL_VOICE_CHAT_ID: int = 0
+    TELEMOST_FULL_VOICE_TOPIC_ID: int = 1448
     TELEMOST_EFIR_TOPIC_ID: int = 3
     TELEMOST_MOLITVA_TOPIC_ID: int = 2
     # Топик «Покаяние» — задать позже (0 = пока не публиковать в клубной ветке).
@@ -310,7 +313,7 @@ class AppConfig:
     YT_PRAYER_IMAGE_COUNT: int = 3
     YT_PRAYER_SUBTITLE_OFFSET_SEC: float = -0.35
     # EN-пакет: 1×16:9 + 3 шортса, тренды USA, отдельный голос ElevenLabs.
-    YT_PRAYER_EN_ENABLED: bool = True
+    YT_PRAYER_EN_ENABLED: bool = False
     YT_PRAYER_EN_COUNT: int = 1
     YT_PRAYER_EN_VOICE_ID: str = "a4CnuaYbALRvW39mDitg"
     # Опционально: сток Pexels; без ключа — lavfi-фон.
@@ -617,6 +620,9 @@ def load_app_config() -> AppConfig:
         LOG_LEVEL=os.getenv("LOG_LEVEL", "INFO"),
         MEDIA_INBOUND_ARCHIVE_DIR=media_raw,
         PAYMENT_CHECKER_ENABLED=_env_flag_true("PAYMENT_CHECKER_ENABLED", default=False),
+        SUPPORT_TICKET_MONITOR_ENABLED=_env_flag_true(
+            "SUPPORT_TICKET_MONITOR_ENABLED", default=False
+        ),
         SUPER_ADMIN_ID=_parse_super_admin_id(os.getenv("SUPER_ADMIN_ID")),
         BOT_ACCESS_ADMIN_ONLY=_env_flag_true("BOT_ACCESS_ADMIN_ONLY", default=False),
         RAG_ENABLED=_env_flag_true("RAG_ENABLED", default=False),
@@ -749,7 +755,7 @@ def load_app_config() -> AppConfig:
             "TELEMOST_AUDIO_CLIPS_COUNT", 5, min_v=1, max_v=10
         ),
         TELEMOST_AUDIO_CLIPS_MAX_DURATION_SEC=_safe_int_env(
-            "TELEMOST_AUDIO_CLIPS_MAX_DURATION_SEC", 120, min_v=45, max_v=120
+            "TELEMOST_AUDIO_CLIPS_MAX_DURATION_SEC", 90, min_v=45, max_v=120
         ),
         TELEMOST_AUDIO_CLIPS_OFFSET_SEC=float(
             os.getenv("TELEMOST_AUDIO_CLIPS_OFFSET_SEC", "-0.5") or -0.5
@@ -776,9 +782,13 @@ def load_app_config() -> AppConfig:
         TELEMOST_FULL_VOICE_CHAT_ID=_normalize_supergroup_chat_id(
             int(
                 os.getenv("TELEMOST_FULL_VOICE_CHAT_ID")
-                or os.getenv("RAG_GROUP_CHAT_ID", "0")
+                or os.getenv("RAG_SHORTS_CHAT_ID", "0")
+                or os.getenv("RAG_ADMIN_CHAT_ID", "0")
                 or 0
             )
+        ),
+        TELEMOST_FULL_VOICE_TOPIC_ID=int(
+            os.getenv("TELEMOST_FULL_VOICE_TOPIC_ID", "1448") or 1448
         ),
         TELEMOST_EFIR_TOPIC_ID=int(os.getenv("TELEMOST_EFIR_TOPIC_ID", "3") or 3),
         TELEMOST_MOLITVA_TOPIC_ID=int(
@@ -860,7 +870,7 @@ def load_app_config() -> AppConfig:
         YT_PRAYER_SUBTITLE_OFFSET_SEC=float(
             os.getenv("YT_PRAYER_SUBTITLE_OFFSET_SEC", "-0.35") or -0.35
         ),
-        YT_PRAYER_EN_ENABLED=_env_flag_true("YT_PRAYER_EN_ENABLED", default=True),
+        YT_PRAYER_EN_ENABLED=_env_flag_true("YT_PRAYER_EN_ENABLED", default=False),
         YT_PRAYER_EN_COUNT=max(
             0, min(3, int(os.getenv("YT_PRAYER_EN_COUNT", "1") or 1))
         ),

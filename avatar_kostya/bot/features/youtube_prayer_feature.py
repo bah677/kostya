@@ -143,7 +143,7 @@ class YoutubePrayerFeature(BaseFeature):
             history_days = int(
                 getattr(config, "YT_PRAYER_TREND_HISTORY_DAYS", 14) or 14
             )
-            en_enabled = bool(getattr(config, "YT_PRAYER_EN_ENABLED", True))
+            en_enabled = bool(getattr(config, "YT_PRAYER_EN_ENABLED", False))
             en_count = int(getattr(config, "YT_PRAYER_EN_COUNT", 1) or 1)
             en_voice = (
                 getattr(config, "YT_PRAYER_EN_VOICE_ID", None)

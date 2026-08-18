@@ -1,7 +1,4 @@
-"""Публикация полной аудио-записи эфира/молитвы голосовым.
-
-Временно: в топик шортсов админ-группы (как клипы), не в клубные топики эфир/молитва.
-"""
+"""Публикация полной аудио-записи эфира/молитвы голосовым в отдельный топик."""
 
 from __future__ import annotations
 
@@ -14,7 +11,7 @@ from typing import Any, Dict, Optional
 from aiogram.enums import ParseMode
 from aiogram.types import FSInputFile
 
-from bot.utils.rag_admin_context import rag_shorts_chat_topic
+from bot.utils.rag_admin_context import rag_full_voice_chat_topic
 from config import config
 from telemost_audio.ffmpeg_render import (
     ogg_path_duration_sec,
@@ -22,11 +19,7 @@ from telemost_audio.ffmpeg_render import (
 )
 from telemost_audio.full_voice_caption import build_full_voice_caption_parts
 from telemost_audio.recording_kind import (
-    KIND_EFIR,
     KIND_LABELS,
-    KIND_MOLITVA,
-    KIND_POKAYANIE,
-    KIND_QA,
     is_media_recording_kind,
 )
 from telemost_mail.imap_client import YandexImapClient
@@ -36,43 +29,19 @@ logger = logging.getLogger(__name__)
 
 _active_full: set[str] = set()
 
-# Временно True: полная запись → топик шортсов. Вернуть False → клуб (эфир/молитва/покаяние).
-_FULL_VOICE_TO_SHORTS_TOPIC = True
-
 
 def _target_topic(recording_kind: str) -> tuple[int, Optional[int]]:
     kind = (recording_kind or "").strip().lower()
     if not is_media_recording_kind(kind):
         return 0, None
-
-    if _FULL_VOICE_TO_SHORTS_TOPIC:
-        chat, topic = rag_shorts_chat_topic()
-        return int(chat or 0), topic
-
-    chat = int(
-        getattr(config, "TELEMOST_FULL_VOICE_CHAT_ID", 0)
-        or getattr(config, "RAG_GROUP_CHAT_ID", 0)
-        or 0
-    )
-    if kind == KIND_MOLITVA:
-        topic = int(getattr(config, "TELEMOST_MOLITVA_TOPIC_ID", 2) or 2)
-    elif kind == KIND_POKAYANIE:
-        topic = int(getattr(config, "TELEMOST_POKAYANIE_TOPIC_ID", 0) or 0)
-        if not topic:
-            logger.warning(
-                "telemost_full_voice: TELEMOST_POKAYANIE_TOPIC_ID не задан — пропуск клубной выкладки"
-            )
-            return 0, None
-    elif kind == KIND_QA:
-        topic = int(getattr(config, "TELEMOST_QA_TOPIC_ID", 0) or 0)
-        if not topic:
-            logger.warning(
-                "telemost_full_voice: TELEMOST_QA_TOPIC_ID не задан — пропуск клубной выкладки"
-            )
-            return 0, None
-    else:
-        topic = int(getattr(config, "TELEMOST_EFIR_TOPIC_ID", 3) or 3)
-    return chat, topic or None
+    chat, topic = rag_full_voice_chat_topic()
+    if not chat or not topic:
+        logger.warning(
+            "telemost_full_voice: не задан чат/топик полной записи "
+            "(TELEMOST_FULL_VOICE_CHAT_ID / TELEMOST_FULL_VOICE_TOPIC_ID)"
+        )
+        return 0, None
+    return int(chat), int(topic)
 
 
 def enqueue_telemost_full_voice(
@@ -277,14 +246,13 @@ async def _run_full_voice_pipeline(
                 recording_kind=recording_kind,
                 philosophy_hint=philosophy,
             )
-            if _FULL_VOICE_TO_SHORTS_TOPIC:
-                prefix = f"📻 Полная запись · {kind_label}\n\n"
-                if caption and not caption.startswith("📻"):
-                    caption = prefix + caption
-                elif not caption:
-                    caption = prefix.strip()
-                if len(caption) > 1024:
-                    caption = caption[:1021].rstrip() + "…"
+            prefix = f"📻 Полная запись · {kind_label}\n\n"
+            if caption and not caption.startswith("📻"):
+                caption = prefix + caption
+            elif not caption:
+                caption = prefix.strip()
+            if len(caption) > 1024:
+                caption = caption[:1021].rstrip() + "…"
 
             voice_kwargs: Dict[str, Any] = {
                 "caption": caption,
@@ -327,7 +295,7 @@ async def _run_full_voice_pipeline(
                 chat_id,
                 topic_id,
                 pid,
-                "shorts_topic" if _FULL_VOICE_TO_SHORTS_TOPIC else "club_topic",
+                "full_voice_topic",
                 voice_path.stat().st_size if voice_path.is_file() else 0,
                 dur,
             )

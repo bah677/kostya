@@ -18,7 +18,7 @@ from config import config
 from telemost_mail.classifier_llm import TelemostClassification
 from telemost_mail.imap_client import YandexImapClient
 from telemost_mail.recording_resolver import wait_and_download_recording
-from telemost_mail.timestamped_speech import parse_expert_segments
+from telemost_mail.timestamped_speech import parse_speech_segments
 from telemost_shorts.arena_runner import format_clips_for_shorts
 from telemost_shorts.ffmpeg_render import render_vertical_clips
 from telemost_shorts.moments_llm import ClipMoment, pick_viral_moments
@@ -205,17 +205,32 @@ async def _run_shorts_pipeline(
             message_thread_id=topic_id,
         )
 
+        from telemost_audio.recording_kind import (
+            clips_include_all_speakers,
+            recording_kind_from_pending,
+        )
+
+        kind = recording_kind_from_pending(row, meta)
         speakers = [
             s.strip()
             for s in (getattr(config, "TELEMOST_MAIL_AVATAR_SPEAKER_NAMES", "") or "").split(",")
             if s.strip()
         ]
         transcript = (row.get("transcript_text") or "").strip()
-        segments = parse_expert_segments(transcript, speakers)
+        segments = parse_speech_segments(
+            transcript,
+            speakers,
+            all_speakers=clips_include_all_speakers(kind),
+        )
         if not segments:
+            empty_msg = (
+                "⚠️ Шортсы: в TXT нет таймкодов речи Кости и участника."
+                if clips_include_all_speakers(kind)
+                else "⚠️ Шортсы: в TXT нет таймкодов речи эксперта."
+            )
             await bot.send_message(
                 chat_id,
-                "⚠️ Шортсы: в TXT нет таймкодов речи эксперта.",
+                empty_msg,
                 message_thread_id=topic_id,
             )
             return
@@ -258,6 +273,7 @@ async def _run_shorts_pipeline(
             count=count,
             max_duration_sec=max_dur,
             regenerate=regenerate_moments,
+            recording_kind=kind,
         )
         if not moments:
             await bot.send_message(

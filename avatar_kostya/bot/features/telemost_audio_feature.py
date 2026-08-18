@@ -154,7 +154,7 @@ class TelemostAudioFeature(BaseFeature):
         if not await self._ensure_shorts_admin(message):
             return
         await message.answer(
-            "🎙 Мини-подкасты ~1 мин → голосовые в Telegram.\n"
+            "🎙 Мини-подкасты до 90 сек → голосовые в Telegram.\n"
             "Каждое нажатие — новые фрагменты.\n\n"
             "Или текстом:\n"
             "<code>нарезать шортцы 1234567890</code>\n"

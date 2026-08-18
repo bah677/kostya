@@ -227,7 +227,6 @@ class TelemostMailService:
                 await self._storage.telemost_recording_imap_uid_exists(mail.uid)
                 and old_url == video_url
                 and old_audio == audio_url
-                and (existing.get("local_audio_path") or "").strip()
             ):
                 return
         pending = await self._storage.get_telemost_pending_by_meeting_id(meeting_id)
@@ -361,6 +360,7 @@ class TelemostMailService:
         )
 
         transcript = (row.get("transcript_text") or "").strip()
+        # RAG: по всем типам (эфир / QA / покаяние / молитва) — только речь Кости.
         expert = extract_expert_speech(transcript, self._speaker_names)
         if len(expert.strip()) < 80:
             expert = await extract_expert_speech_llm_fallback(
