@@ -254,6 +254,11 @@ class AppConfig:
     TELEMOST_FULL_VOICE_ENABLED: bool = True
     TELEMOST_FULL_VOICE_CHAT_ID: int = 0
     TELEMOST_FULL_VOICE_TOPIC_ID: int = 1448
+    TELEMOST_REELS_BRIEF_ENABLED: bool = True
+    TELEMOST_REELS_BRIEF_CHAT_ID: int = 0
+    TELEMOST_REELS_BRIEF_TOPIC_ID: int = 1492
+    TELEMOST_REELS_BRIEF_MODEL: str = "gpt-4.1"
+    TELEMOST_REELS_BRIEF_MAX_TOKENS: int = 16000
     TELEMOST_EFIR_TOPIC_ID: int = 3
     TELEMOST_MOLITVA_TOPIC_ID: int = 2
     # Топик «Покаяние» — задать позже (0 = пока не публиковать в клубной ветке).
@@ -789,6 +794,27 @@ def load_app_config() -> AppConfig:
         ),
         TELEMOST_FULL_VOICE_TOPIC_ID=int(
             os.getenv("TELEMOST_FULL_VOICE_TOPIC_ID", "1448") or 1448
+        ),
+        TELEMOST_REELS_BRIEF_ENABLED=_env_flag_true(
+            "TELEMOST_REELS_BRIEF_ENABLED", default=True
+        ),
+        TELEMOST_REELS_BRIEF_CHAT_ID=_normalize_supergroup_chat_id(
+            int(
+                os.getenv("TELEMOST_REELS_BRIEF_CHAT_ID")
+                or os.getenv("RAG_SHORTS_CHAT_ID", "0")
+                or os.getenv("RAG_ADMIN_CHAT_ID", "0")
+                or 0
+            )
+        ),
+        TELEMOST_REELS_BRIEF_TOPIC_ID=int(
+            os.getenv("TELEMOST_REELS_BRIEF_TOPIC_ID", "1492") or 1492
+        ),
+        TELEMOST_REELS_BRIEF_MODEL=(
+            os.getenv("TELEMOST_REELS_BRIEF_MODEL") or "gpt-4.1"
+        ).strip()
+        or "gpt-4.1",
+        TELEMOST_REELS_BRIEF_MAX_TOKENS=_safe_int_env(
+            "TELEMOST_REELS_BRIEF_MAX_TOKENS", 16000, min_v=4000, max_v=32000
         ),
         TELEMOST_EFIR_TOPIC_ID=int(os.getenv("TELEMOST_EFIR_TOPIC_ID", "3") or 3),
         TELEMOST_MOLITVA_TOPIC_ID=int(

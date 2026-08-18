@@ -443,6 +443,15 @@ class TelemostMailService:
                         enqueue_telemost_audio(
                             self._bot_app, pending_id, fresh, meta
                         )
+                    from telemost_audio.reels_director import enqueue_telemost_reels_brief
+
+                    enqueue_telemost_reels_brief(
+                        self._bot_app,
+                        pending_id,
+                        fresh,
+                        meta,
+                        recording_kind=str(recording_kind or ""),
+                    )
                 from telemost_audio.full_voice_pipeline import enqueue_telemost_full_voice
 
                 enqueue_telemost_full_voice(

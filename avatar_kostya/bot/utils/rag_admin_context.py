@@ -49,6 +49,17 @@ def rag_shorts_chat_topic() -> Tuple[int, Optional[int]]:
     return chat, tid if tid else None
 
 
+def rag_reels_brief_chat_topic() -> Tuple[int, Optional[int]]:
+    chat = int(getattr(config, "TELEMOST_REELS_BRIEF_CHAT_ID", 0) or 0)
+    if not chat:
+        chat, _ = rag_shorts_chat_topic()
+        chat = int(chat or 0)
+    if not chat:
+        chat = rag_admin_chat_id()
+    tid = int(getattr(config, "TELEMOST_REELS_BRIEF_TOPIC_ID", 0) or 0)
+    return chat, tid if tid else None
+
+
 def rag_full_voice_chat_topic() -> Tuple[int, Optional[int]]:
     chat = int(getattr(config, "TELEMOST_FULL_VOICE_CHAT_ID", 0) or 0)
     if not chat:
