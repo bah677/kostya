@@ -476,13 +476,9 @@ class TelemostMailMixin:
                     FROM telemost_mail_pending
                     WHERE
                         length(coalesce(transcript_text, '')) > 200
-                        AND (
-                            classification->>'content_type' ILIKE '%эфир%'
-                            OR classification->>'content_type' ILIKE '%вопрос%'
-                            OR classification->>'content_type' IS NULL
-                        )
-                        AND classification->>'content_type' NOT ILIKE '%молитв%'
-                        AND classification->>'content_type' NOT ILIKE '%покаян%'
+                        AND coalesce(classification->>'content_type', '') NOT ILIKE '%молитв%'
+                        AND coalesce(classification->>'content_type', '') NOT ILIKE '%покаян%'
+                        AND coalesce(classification->>'title', subject, '') NOT ILIKE '%молитв%'
                     ORDER BY created_at DESC
                     LIMIT $1
                     """,
