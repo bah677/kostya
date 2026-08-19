@@ -235,7 +235,7 @@ class AppConfig:
     TELEMOST_SHORTS_VIDEO_DIR: str = "data/telemost_video"
     TELEMOST_SHORTS_WORK_DIR: str = "data/telemost_shorts"
     TELEMOST_SHORTS_PHILOSOPHY_HINT: str = ""
-    TELEMOST_SHORTS_WAIT_RECORDING_SEC: int = 7200
+    TELEMOST_SHORTS_WAIT_RECORDING_SEC: int = 21_600
     TELEMOST_SHORTS_POLL_INTERVAL_SEC: int = 120
     TELEMOST_RECORDINGS_WEBDAV_DIR: str = "/Записи Телемоста"
     TELEMOST_SHORTS_SUBTITLE_OFFSET_SEC: float = -0.5
@@ -739,7 +739,7 @@ def load_app_config() -> AppConfig:
             os.getenv("TELEMOST_SHORTS_PHILOSOPHY_HINT") or ""
         ).strip(),
         TELEMOST_SHORTS_WAIT_RECORDING_SEC=_safe_int_env(
-            "TELEMOST_SHORTS_WAIT_RECORDING_SEC", 7200, min_v=300, max_v=86_400
+            "TELEMOST_SHORTS_WAIT_RECORDING_SEC", 21_600, min_v=300, max_v=86_400
         ),
         TELEMOST_SHORTS_POLL_INTERVAL_SEC=_safe_int_env(
             "TELEMOST_SHORTS_POLL_INTERVAL_SEC", 120, min_v=30, max_v=600

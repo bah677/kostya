@@ -18,7 +18,10 @@ from bot.texts.prompts.club_schedule_extractor import SCHEDULE_EXTRACTOR_SYSTEM
 logger = logging.getLogger(__name__)
 
 MSK = ZoneInfo("Europe/Moscow")
-CHAT_MODEL = "deepseek-v4-flash"
+# deepseek-v4-flash тратит max_tokens на reasoning_tokens — JSON часто пустой (finish_reason=length).
+# Для структурированного JSON надёжнее deepseek-chat.
+CHAT_MODEL = "deepseek-chat"
+_FALLBACK_MODEL = "deepseek-v4-flash"
 
 _SCHEDULE_HINT = re.compile(
     r"расписан|эфир|молитв|подкаст|покаян|вопрос.?ответ|перенес|отмен|"
@@ -81,6 +84,43 @@ def _parse_dt_iso(val: Any) -> Optional[datetime]:
         return None
 
 
+async def _call_schedule_llm(
+    client: AsyncOpenAI,
+    *,
+    model: str,
+    system: str,
+    user_block: str,
+    max_tokens: int,
+) -> tuple[str, str]:
+    """Возвращает (content, finish_reason)."""
+    resp = await client.chat.completions.create(
+        model=model,
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user", "content": user_block},
+        ],
+        temperature=0.15,
+        max_tokens=max_tokens,
+        response_format={"type": "json_object"},
+    )
+    choice = resp.choices[0]
+    content = (choice.message.content or "").strip()
+    finish = str(getattr(choice, "finish_reason", "") or "")
+    usage = resp.usage
+    reasoning = None
+    if usage and getattr(usage, "completion_tokens_details", None):
+        reasoning = getattr(usage.completion_tokens_details, "reasoning_tokens", None)
+    if not content or finish == "length":
+        logger.warning(
+            "schedule extract empty model=%s finish=%s completion=%s reasoning=%s",
+            model,
+            finish,
+            getattr(usage, "completion_tokens", None),
+            reasoning,
+        )
+    return content, finish
+
+
 async def extract_schedule_events_from_text(
     client: AsyncOpenAI,
     text: str,
@@ -95,18 +135,31 @@ async def extract_schedule_events_from_text(
         f"Источник: {context_label}\n\n"
         f"Текст:\n{body[:8000]}"
     )
+    system = prepend_datetime_context(SCHEDULE_EXTRACTOR_SYSTEM)
+    raw = ""
     try:
-        resp = await client.chat.completions.create(
+        raw, finish = await _call_schedule_llm(
+            client,
             model=CHAT_MODEL,
-            messages=[
-                {"role": "system", "content": prepend_datetime_context(SCHEDULE_EXTRACTOR_SYSTEM)},
-                {"role": "user", "content": user_block},
-            ],
-            temperature=0.15,
-            max_tokens=1500,
+            system=system,
+            user_block=user_block,
+            max_tokens=2000,
         )
-        raw = resp.choices[0].message.content or ""
+        if not raw:
+            raw, finish = await _call_schedule_llm(
+                client,
+                model=_FALLBACK_MODEL,
+                system=system,
+                user_block=user_block,
+                max_tokens=8000,
+            )
+        if not raw:
+            logger.warning("schedule extract failed: empty LLM response (finish=%s)", finish)
+            return [], 0.0
         data = json.loads(_strip_json_fence(raw))
+    except json.JSONDecodeError as e:
+        logger.warning("schedule extract failed: invalid JSON %s raw=%r", e, raw[:300])
+        return [], 0.0
     except Exception as e:
         logger.warning("schedule extract failed: %s", e)
         return [], 0.0
