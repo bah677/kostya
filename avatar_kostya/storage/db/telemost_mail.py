@@ -466,6 +466,70 @@ class TelemostMailMixin:
             logger.error("get_last_indexed_telemost_mail: %s", e)
             return None
 
+    async def list_telemost_for_reels(self, limit: int = 50) -> list[Dict[str, Any]]:
+        """Список эфиров (не молитвы) с расшифровкой для /reels-команды."""
+        try:
+            async with self.get_connection() as conn:
+                rows = await conn.fetch(
+                    """
+                    SELECT id, subject, created_at, classification
+                    FROM telemost_mail_pending
+                    WHERE
+                        length(coalesce(transcript_text, '')) > 200
+                        AND (
+                            classification->>'content_type' ILIKE '%эфир%'
+                            OR classification->>'content_type' ILIKE '%вопрос%'
+                            OR classification->>'content_type' IS NULL
+                        )
+                        AND classification->>'content_type' NOT ILIKE '%молитв%'
+                        AND classification->>'content_type' NOT ILIKE '%покаян%'
+                    ORDER BY created_at DESC
+                    LIMIT $1
+                    """,
+                    int(limit),
+                )
+                result = []
+                for row in rows:
+                    d = dict(row)
+                    clf = d.get("classification")
+                    if isinstance(clf, str):
+                        try:
+                            d["classification"] = json.loads(clf)
+                        except json.JSONDecodeError:
+                            d["classification"] = {}
+                    result.append(d)
+                return result
+        except Exception as e:
+            logger.error("list_telemost_for_reels: %s", e)
+            return []
+
+    async def get_telemost_pending_with_transcript(
+        self, pending_id: uuid.UUID
+    ) -> Optional[Dict[str, Any]]:
+        """Полная строка pending вместе с transcript_text."""
+        try:
+            async with self.get_connection() as conn:
+                row = await conn.fetchrow(
+                    "SELECT * FROM telemost_mail_pending WHERE id = $1",
+                    pending_id,
+                )
+                if not row:
+                    return None
+                d = dict(row)
+                clf = d.get("classification")
+                if isinstance(clf, str):
+                    try:
+                        d["classification"] = json.loads(clf)
+                    except json.JSONDecodeError:
+                        d["classification"] = {}
+                clf_dict = d.get("classification") or {}
+                if isinstance(clf_dict, dict):
+                    d["extra_metadata"] = clf_dict.get("extra") or {}
+                return d
+        except Exception as e:
+            logger.error("get_telemost_pending_with_transcript: %s", e)
+            return None
+
     async def set_telemost_notify_message_id(
         self, pending_id: uuid.UUID, message_id: int
     ) -> None:

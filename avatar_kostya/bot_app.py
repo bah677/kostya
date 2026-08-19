@@ -22,6 +22,7 @@ from bot.features.voicebox_admin import VoiceboxAdminFeature
 from bot.features.admin_panel import AdminPanelFeature
 from bot.features.ledger import LedgerFeature
 from bot.features.youtube_prayer_feature import YoutubePrayerFeature
+from bot.features.reels_feature import ReelsFeature
 from bot.handlers.messages import MessageHandlers
 
 from command_handlers import AppCommandHandlers
@@ -75,6 +76,7 @@ class BotApplication(TelegramBotApp):
         admin_panel = AdminPanelFeature(user_storage=self.user_storage)
         ledger = LedgerFeature(user_storage=self.user_storage)
         youtube_prayer = YoutubePrayerFeature()
+        reels = ReelsFeature(user_storage=self.user_storage)
 
         features = [
             admin_panel,
@@ -97,6 +99,7 @@ class BotApplication(TelegramBotApp):
             media_id_helper,
             voicebox_admin,
             youtube_prayer,
+            reels,
         ]
         for feature in features:
             self.feature_manager.register(feature)
