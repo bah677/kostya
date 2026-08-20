@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional
 
 from rag.types import normalize_chroma_metadata
 from rag.vector_store import VectorStoreService
+from rag.embeddings import truncate_for_embedding
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +72,7 @@ class GoldenExamplesStore:
         top_k: int = 2,
     ) -> str:
         """Текст блока few-shot для подстановки в промпт."""
-        q = (query or "").strip()
+        q = truncate_for_embedding((query or "").strip())
         if not q:
             return ""
 
@@ -118,7 +119,7 @@ class GoldenExamplesStore:
         top_k: int = 2,
     ) -> str:
         """Few-shot с фильтром по метаданным; при пустом результате — без фильтра."""
-        q = (query or "").strip()
+        q = truncate_for_embedding((query or "").strip())
         if not q:
             return ""
         p = (product or "").strip()

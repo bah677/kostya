@@ -14,6 +14,7 @@ from rag.retrieval_planner import (
 )
 from rag.types import format_retrieval_line, format_retrieval_sections
 from rag.vector_store import VectorStoreService
+from rag.embeddings import truncate_for_embedding
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +43,7 @@ class ExpertRetriever:
         Аналог ТЗ: ``collection.query`` + склейка блоков ``[source - tags]: chunk``.
         ``where`` — фильтр Chroma (metadata), или None.
         """
-        q = (query or "").strip()
+        q = truncate_for_embedding((query or "").strip())
         if not q:
             return ""
 
@@ -79,7 +80,7 @@ class ExpertRetriever:
         top_k: int,
         where: Optional[Dict[str, Any]],
     ) -> Dict[str, Any]:
-        q = (query or "").strip()
+        q = truncate_for_embedding((query or "").strip())
         if not q:
             return {}
         kwargs: Dict[str, Any] = {
@@ -104,7 +105,7 @@ class ExpertRetriever:
         Два запроса в expert_materials: с фильтром (product ИЛИ content_type) и без;
         склейка без дубликатов по id, порядок — сначала целевые, затем общие, обрезка.
         """
-        q = (query or "").strip()
+        q = truncate_for_embedding((query or "").strip())
         if not q:
             return ""
 
@@ -186,7 +187,7 @@ class ExpertRetriever:
         max_chunks: int,
         base_where: Optional[Dict[str, Any]],
     ) -> str:
-        q = (query or "").strip()
+        q = truncate_for_embedding((query or "").strip())
         if not q:
             return ""
 
