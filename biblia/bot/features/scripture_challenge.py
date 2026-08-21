@@ -11,6 +11,7 @@ from zoneinfo import ZoneInfo
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.enums import ParseMode
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import (
@@ -24,7 +25,13 @@ from bot.features.base import BaseFeature
 from bot.services.scripture_challenge_service import ScriptureChallengeService
 from bot.states import ScriptureChallengeStates
 from bot.utils.donation_reply import maybe_donation_keyboard
-from bot.utils.telegram_html import split_telegram_html_message_chunks
+from bot.utils.telegram_html import (
+    balance_telegram_html_tags,
+    html_to_plain,
+    sanitize_telegram_html,
+    split_telegram_html_message_chunks,
+)
+from bot.utils.telegram_html_async import normalize_llm_reply_for_telegram_async
 from storage.db.scripture_challenge import ScriptureChallengeMixin, parse_intake_transcript
 
 logger = logging.getLogger(__name__)
@@ -137,6 +144,71 @@ class ScriptureChallengeFeature(BaseFeature):
             "[%s] /challenge, /challenge_cancel + callback challenge_start",
             self.name,
         )
+
+    async def _normalize_llm_html(self, text: str, *, user_id: int) -> str:
+        agents = self.service.agents if self.service else None
+        return await normalize_llm_reply_for_telegram_async(
+            text,
+            user_id=user_id,
+            agents_client=agents,
+        )
+
+    async def _reply_html(
+        self,
+        message: Message,
+        html_text: str,
+        *,
+        keyboard: Optional[InlineKeyboardMarkup] = None,
+    ) -> None:
+        safe = balance_telegram_html_tags(sanitize_telegram_html(html_text))
+        chunks = split_telegram_html_message_chunks(safe, max_len=_MSG_CHUNK) or [""]
+        for idx, chunk in enumerate(chunks):
+            is_last = idx == len(chunks) - 1
+            kb = keyboard if is_last else None
+            try:
+                await message.answer(chunk, parse_mode=ParseMode.HTML, reply_markup=kb)
+            except TelegramBadRequest as e:
+                err = str(e).lower()
+                if "message is too long" in err:
+                    subs = split_telegram_html_message_chunks(chunk, max_len=3000)
+                    for j, sub in enumerate(subs):
+                        await message.answer(
+                            sub,
+                            parse_mode=ParseMode.HTML,
+                            reply_markup=kb if (is_last and j == len(subs) - 1) else None,
+                        )
+                    continue
+                if "can't parse entities" in err or "can't find end tag" in err:
+                    await message.answer(html_to_plain(chunk)[:4096], reply_markup=kb)
+                    continue
+                raise
+
+    async def _send_html(
+        self,
+        chat_id: int,
+        html_text: str,
+        *,
+        keyboard: Optional[InlineKeyboardMarkup] = None,
+    ) -> None:
+        if not self.bot:
+            return
+        safe = balance_telegram_html_tags(sanitize_telegram_html(html_text))
+        chunks = split_telegram_html_message_chunks(safe, max_len=_MSG_CHUNK) or [""]
+        for idx, chunk in enumerate(chunks):
+            is_last = idx == len(chunks) - 1
+            kb = keyboard if is_last else None
+            try:
+                await self.bot.send_message(
+                    chat_id, chunk, parse_mode=ParseMode.HTML, reply_markup=kb
+                )
+            except TelegramBadRequest as e:
+                err = str(e).lower()
+                if "can't parse entities" in err or "can't find end tag" in err:
+                    await self.bot.send_message(
+                        chat_id, html_to_plain(chunk)[:4096], reply_markup=kb
+                    )
+                    continue
+                raise
 
     async def on_challenge_command(self, message: Message, state: FSMContext) -> None:
         if not message.from_user:
@@ -331,8 +403,13 @@ class ScriptureChallengeFeature(BaseFeature):
             return
 
         if reply:
-            await self.user_storage.append_intake_message(challenge_id, "assistant", reply)
-            await message.answer(reply)
+            html_reply = await self._normalize_llm_html(
+                reply, user_id=message.from_user.id
+            )
+            await self.user_storage.append_intake_message(
+                challenge_id, "assistant", html_reply
+            )
+            await self._reply_html(message, html_reply)
 
         if summary:
             await self.user_storage.update_scripture_challenge(
@@ -486,9 +563,12 @@ class ScriptureChallengeFeature(BaseFeature):
         if not reply:
             await message.answer("Сейчас не получилось ответить. Попробуйте чуть позже.")
             return
-        await self.user_storage.add_challenge_message(cid, "assistant", reply)
+        html_reply = await self._normalize_llm_html(
+            reply, user_id=message.from_user.id
+        )
+        await self.user_storage.add_challenge_message(cid, "assistant", html_reply)
         keyboard, _ = await maybe_donation_keyboard(self.user_storage, message.from_user.id)
-        await message.answer(reply, reply_markup=keyboard)
+        await self._reply_html(message, html_reply, keyboard=keyboard)
 
     async def send_daily_passage(self, challenge: Dict[str, Any]) -> None:
         if not self.bot:
@@ -540,25 +620,19 @@ class ScriptureChallengeFeature(BaseFeature):
             today_passage=item["passage_text"],
         )
         if comment:
-            body += f"\n\n{html.escape(comment)}"
+            comment_html = await self._normalize_llm_html(comment, user_id=user_id)
+            body += f"\n\n{comment_html}"
         body += "\n\n<i>Напишите мысли или вопрос — продолжим диалог.</i>"
 
-        chunks = split_telegram_html_message_chunks(body, max_len=_MSG_CHUNK) or [body]
         keyboard, _ = await maybe_donation_keyboard(self.user_storage, user_id)
-        for idx, chunk in enumerate(chunks):
-            await self.bot.send_message(
-                user_id,
-                chunk,
-                parse_mode=ParseMode.HTML,
-                reply_markup=keyboard if idx == len(chunks) - 1 else None,
-            )
+        await self._send_html(user_id, body, keyboard=keyboard)
 
         await self.user_storage.mark_plan_item_sent(item["id"])
         await self.user_storage.add_challenge_message(
             cid, "assistant", f"[День {day}] {item['reference']}\n{item['passage_text']}"
         )
         if comment:
-            await self.user_storage.add_challenge_message(cid, "assistant", comment)
+            await self.user_storage.add_challenge_message(cid, "assistant", comment_html)
 
         hour = int(challenge.get("delivery_hour") or 9)
         minute = int(challenge.get("delivery_minute") or 0)
