@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import html
 import logging
+import math
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from typing import Any, Dict, List, Optional, Union
@@ -803,6 +804,33 @@ class LedgerFeature(BaseFeature):
             return ""
         return d.strftime("%d.%m.%Y")
 
+    @staticmethod
+    def _ceil_int(value: Any) -> int:
+        try:
+            return int(math.ceil(float(value or 0)))
+        except (TypeError, ValueError):
+            return 0
+
+    @staticmethod
+    def _ceil_money(value: Any, cur: str) -> str:
+        """Целое число вверх (11.96 → 12)."""
+        return f"{LedgerFeature._ceil_int(value)} {cur}"
+
+    @classmethod
+    def _expected_rub_ceil(cls, row: Dict[str, Any]) -> Optional[int]:
+        """USDT (ceil) × курс USD→RUB на дату строки журнала."""
+        rate = row.get("usd_rub_rate")
+        if rate is None:
+            return None
+        try:
+            r = float(rate)
+        except (TypeError, ValueError):
+            return None
+        if r <= 0:
+            return None
+        usd_i = cls._ceil_int(row.get("cumulative_share_usd"))
+        return cls._ceil_int(usd_i * r)
+
     @classmethod
     def _expected_income_rich(
         cls, row: Optional[Dict[str, Any]], cur: str
@@ -813,12 +841,16 @@ class LedgerFeature(BaseFeature):
                 f"{JOURNAL_START.strftime('%d.%m.%Y')}): <i>нет данных</i></p>"
             )
         as_of = cls._expected_as_of_label(row)
-        amt = html.escape(
-            format_money(row.get("cumulative_share_usd"), cur)
+        amt = html.escape(cls._ceil_money(row.get("cumulative_share_usd"), cur))
+        rub_i = cls._expected_rub_ceil(row)
+        rub_part = (
+            f" / <b>{rub_i} ₽</b>"
+            if rub_i is not None
+            else ""
         )
         return (
             f"<p>Ожидаемый приход брутто на <b>{html.escape(as_of)}</b> "
-            f"(35% донатов Библии, нарастающий итог): <b>{amt}</b></p>"
+            f"(35% донатов Библии, нарастающий итог): <b>{amt}</b>{rub_part}</p>"
         )
 
     @classmethod
@@ -831,10 +863,12 @@ class LedgerFeature(BaseFeature):
                 f"{JOURNAL_START.strftime('%d.%m.%Y')}): нет данных"
             )
         as_of = cls._expected_as_of_label(row)
-        amt = format_money(row.get("cumulative_share_usd"), cur)
+        amt = cls._ceil_money(row.get("cumulative_share_usd"), cur)
+        rub_i = cls._expected_rub_ceil(row)
+        rub_part = f" / <b>{rub_i} ₽</b>" if rub_i is not None else ""
         return (
             f"Ожидаемый приход брутто на {as_of} "
-            f"(35% донатов Библии): <b>{html.escape(amt)}</b>"
+            f"(35% донатов Библии): <b>{html.escape(amt)}</b>{rub_part}"
         )
 
     @staticmethod
