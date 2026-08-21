@@ -48,9 +48,9 @@ def deposit_amounts(gross: Decimal, fee: Decimal) -> Tuple[Decimal, Decimal]:
 
 
 def expense_amounts(gross: Decimal, fee: Decimal) -> Tuple[Decimal, Decimal]:
-    """Нетто = брутто − комиссия; списание с депозита = брутто + комиссия."""
+    """Нетто = брутто − комиссия (зачисление на сервис); списание с депозита = брутто."""
     net = _q(gross - fee)
-    delta = _q(-(gross + fee))
+    delta = _q(-gross)
     return net, delta
 
 

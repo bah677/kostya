@@ -30,6 +30,8 @@
 | `022_ledger_occurred_on.sql` | Дата операции `occurred_on` (бизнес-день, отдельно от `created_at`). |
 | `023_ledger_drop_seed_categories.sql` | Удаляет неиспользованные зашитые статьи («Хостинг» и т.п.). |
 | `024_ledger_occurred_on_2026_08_17.sql` | Один раз ставит всем существующим операциям дату 17.08.2026. |
+| `025_ledger_expense_cash_is_gross.sql` | Расход: списание = брутто (не брутто+комиссия); пересчёт `balance_delta` / остатка. |
+| `026_ledger_expected_income.sql` | Журнал ожидаемого прихода брутто (35% донатов Biblia → USD), `ledger_expected_income_days`. |
 
 В `.env`: `SUPER_ADMIN_ID=<telegram_user_id>` — полный доступ и единственный, кто добавляет/удаляет записи в `bot_admins`.
 

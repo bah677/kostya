@@ -82,4 +82,4 @@ COMMENT ON TABLE ledger_entries IS
 COMMENT ON COLUMN ledger_entries.amount_net IS
     'Брутто минус комиссия. Для расходов в отчёте это «нетто», списание с депозита — −balance_delta.';
 COMMENT ON COLUMN ledger_entries.balance_delta IS
-    'Депозит: +(gross-fee). Расход: −(gross+fee).';
+    'Депозит: +(gross-fee). Расход: −gross (брутто = списание с кошелька; нетто = на сервис).';

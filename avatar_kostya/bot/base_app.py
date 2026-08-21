@@ -230,6 +230,10 @@ class TelegramBotApp:
             if yt is not None:
                 await yt.start_background_tasks()
 
+            ledger = self.feature_manager.get_optional("ledger")
+            if ledger is not None and hasattr(ledger, "start_background_tasks"):
+                await ledger.start_background_tasks()
+
         except Exception as e:
             logger.error(f"❌ Ошибка запуска фоновых задач: {e}")
 
@@ -250,6 +254,10 @@ class TelegramBotApp:
             yt = self.feature_manager.get_optional("youtube_prayer")
             if yt is not None:
                 await yt.stop_background_tasks()
+
+            ledger = self.feature_manager.get_optional("ledger")
+            if ledger is not None and hasattr(ledger, "stop_background_tasks"):
+                await ledger.stop_background_tasks()
 
             if self.payment_checker:
                 await self.payment_checker.stop()

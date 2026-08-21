@@ -260,9 +260,9 @@ class LedgerMixin:
             raise ValueError("kind")
         if gross <= 0 or fee < 0:
             raise ValueError("amounts")
+        if fee > gross:
+            raise ValueError("fee > gross")
         if kind == "deposit":
-            if fee > gross:
-                raise ValueError("fee > gross")
             net, delta = deposit_amounts(gross, fee)
         else:
             net, delta = expense_amounts(gross, fee)
@@ -555,4 +555,120 @@ class LedgerMixin:
             return dict(row)
         except Exception as e:
             logger.error("delete_ledger_entry: %s", e, exc_info=True)
+            return None
+
+    async def ensure_ledger_expected_income_schema(self) -> None:
+        try:
+            async with self.get_connection() as conn:
+                await conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS ledger_expected_income_days (
+                        day                     DATE PRIMARY KEY,
+                        donations_count         INTEGER NOT NULL DEFAULT 0,
+                        donations_rub           NUMERIC(20, 8) NOT NULL DEFAULT 0,
+                        usd_rub_rate            NUMERIC(20, 8),
+                        donations_usd           NUMERIC(20, 8) NOT NULL DEFAULT 0,
+                        share_pct               NUMERIC(10, 6) NOT NULL DEFAULT 0.35,
+                        day_share_usd           NUMERIC(20, 8) NOT NULL DEFAULT 0,
+                        cumulative_share_usd    NUMERIC(20, 8) NOT NULL DEFAULT 0,
+                        source                  TEXT NOT NULL DEFAULT 'biblia_bot',
+                        computed_at             TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                    )
+                    """
+                )
+        except Exception as e:
+            logger.warning("ensure_ledger_expected_income_schema: %s", e)
+
+    async def list_ledger_expected_income_days(self) -> List[date]:
+        try:
+            async with self.get_connection() as conn:
+                rows = await conn.fetch(
+                    "SELECT day FROM ledger_expected_income_days ORDER BY day"
+                )
+            out: List[date] = []
+            for r in rows:
+                d = r["day"]
+                if isinstance(d, datetime):
+                    d = d.date()
+                out.append(d)
+            return out
+        except Exception as e:
+            logger.error("list_ledger_expected_income_days: %s", e)
+            return []
+
+    async def upsert_ledger_expected_income_day(
+        self,
+        *,
+        day: date,
+        donations_count: int,
+        donations_rub: Decimal,
+        usd_rub_rate: Optional[Decimal],
+        donations_usd: Decimal,
+        share_pct: Decimal,
+        day_share_usd: Decimal,
+        source: str = "biblia_bot",
+    ) -> None:
+        async with self.get_connection() as conn:
+            await conn.execute(
+                """
+                INSERT INTO ledger_expected_income_days (
+                    day, donations_count, donations_rub, usd_rub_rate,
+                    donations_usd, share_pct, day_share_usd, source, computed_at
+                ) VALUES (
+                    $1, $2, $3, $4, $5, $6, $7, $8, NOW()
+                )
+                ON CONFLICT (day) DO UPDATE SET
+                    donations_count = EXCLUDED.donations_count,
+                    donations_rub = EXCLUDED.donations_rub,
+                    usd_rub_rate = EXCLUDED.usd_rub_rate,
+                    donations_usd = EXCLUDED.donations_usd,
+                    share_pct = EXCLUDED.share_pct,
+                    day_share_usd = EXCLUDED.day_share_usd,
+                    source = EXCLUDED.source,
+                    computed_at = NOW()
+                """,
+                day,
+                int(donations_count),
+                donations_rub,
+                usd_rub_rate,
+                donations_usd,
+                share_pct,
+                day_share_usd,
+                source,
+            )
+
+    async def recompute_ledger_expected_income_cumulative(self) -> None:
+        async with self.get_connection() as conn:
+            await conn.execute(
+                """
+                WITH ordered AS (
+                    SELECT day,
+                           SUM(day_share_usd) OVER (ORDER BY day) AS cum
+                      FROM ledger_expected_income_days
+                )
+                UPDATE ledger_expected_income_days e
+                   SET cumulative_share_usd = o.cum
+                  FROM ordered o
+                 WHERE e.day = o.day
+                """
+            )
+
+    async def get_ledger_expected_income_as_of(
+        self, day: date
+    ) -> Optional[Dict[str, Any]]:
+        try:
+            async with self.get_connection() as conn:
+                row = await conn.fetchrow(
+                    """
+                    SELECT *
+                      FROM ledger_expected_income_days
+                     WHERE day <= $1
+                     ORDER BY day DESC
+                     LIMIT 1
+                    """,
+                    day,
+                )
+            return dict(row) if row else None
+        except Exception as e:
+            logger.error("get_ledger_expected_income_as_of: %s", e)
             return None

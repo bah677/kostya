@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import html
 import logging
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from typing import Any, Dict, List, Optional, Union
+from zoneinfo import ZoneInfo
 
 from aiogram import Dispatcher, F
 from aiogram.enums import ParseMode
@@ -31,10 +33,17 @@ from bot.services.ledger import (
     parse_op_date,
     today_msk,
 )
+from bot.services.ledger_expected_income import (
+    JOURNAL_START,
+    LedgerExpectedIncomeService,
+    completed_day_for_report,
+)
 from bot.services.tg_rich import edit_rich_message, send_rich_message
+from config import config
 
 logger = logging.getLogger(__name__)
 
+_MSK = ZoneInfo("Europe/Moscow")
 _CB = "ldg"
 _MONTHS_RU = (
     "",
@@ -59,7 +68,7 @@ class LedgerStates(StatesGroup):
     deposit_note = State()
     expense_custom = State()
     expense_gross = State()
-    expense_fee = State()
+    expense_net = State()
     expense_note = State()
     op_date = State()
     confirm = State()
@@ -75,10 +84,78 @@ class LedgerFeature(BaseFeature):
     def __init__(self, user_storage) -> None:
         super().__init__()
         self.user_storage = user_storage
+        self._app: Any = None
+        self._expected: Optional[LedgerExpectedIncomeService] = None
+        self._task: Optional[asyncio.Task] = None
+
+    def set_bot(self, app: Any) -> None:
+        self._app = app
 
     async def initialize(self) -> None:
         await self.user_storage.ensure_ledger_schema()
+        await self.user_storage.ensure_ledger_expected_income_schema()
+        conv = getattr(self._app, "currency_converter", None) if self._app else None
+        dsn = config.biblia_mail_database_url or ""
+        if conv and dsn:
+            self._expected = LedgerExpectedIncomeService(
+                self.user_storage,
+                currency_converter=conv,
+                biblia_dsn=dsn,
+            )
+            try:
+                await self._expected.start()
+            except Exception as e:
+                logger.exception("[%s] expected income start: %s", self.name, e)
+        else:
+            logger.warning(
+                "[%s] expected income: нет converter/DSN Biblia", self.name
+            )
         logger.info("[%s] схема журнала проверена", self.name)
+
+    async def start_background_tasks(self) -> None:
+        if self._task and not self._task.done():
+            return
+        self._task = asyncio.create_task(
+            self._expected_income_loop(), name="ledger_expected_income"
+        )
+
+    async def stop_background_tasks(self) -> None:
+        if self._task and not self._task.done():
+            self._task.cancel()
+            try:
+                await self._task
+            except asyncio.CancelledError:
+                pass
+        self._task = None
+        if self._expected:
+            await self._expected.close()
+
+    async def _expected_income_loop(self) -> None:
+        """После полуночи МСК пересчитывает вчерашний день журнала."""
+        while True:
+            try:
+                now = datetime.now(_MSK)
+                tomorrow = (now.date() + timedelta(days=1))
+                target = datetime.combine(tomorrow, time(0, 5), tzinfo=_MSK)
+                delay = max(30.0, (target - now).total_seconds())
+                await asyncio.sleep(delay)
+                if not self._expected:
+                    continue
+                yesterday = completed_day_for_report()
+                n = await self._expected.sync_through(
+                    yesterday, force_from=yesterday
+                )
+                logger.info(
+                    "[%s] expected income nightly: upserted=%s as_of=%s",
+                    self.name,
+                    n,
+                    yesterday,
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.exception("[%s] expected income loop: %s", self.name, e)
+                await asyncio.sleep(300)
 
     def register_handlers(self, dp: Dispatcher) -> None:
         dp.message.register(
@@ -124,9 +201,9 @@ class LedgerFeature(BaseFeature):
             F.text,
         )
         dp.message.register(
-            self._on_expense_fee,
+            self._on_expense_net,
             PRIVATE_CHAT,
-            StateFilter(LedgerStates.expense_fee),
+            StateFilter(LedgerStates.expense_net),
             F.text,
         )
         dp.message.register(
@@ -261,7 +338,7 @@ class LedgerFeature(BaseFeature):
             await self._edit_or_answer(
                 callback,
                 f"Статья: <b>{html.escape(str(found['name']))}</b>\n\n"
-                "Сумма <b>брутто</b>:",
+                "Сколько <b>списано с кошелька</b> (расход брутто):",
                 self._cancel_kb(),
             )
             await callback.answer()
@@ -349,7 +426,8 @@ class LedgerFeature(BaseFeature):
         )
         await state.set_state(LedgerStates.expense_gross)
         await message.answer(
-            f"Статья: <b>{html.escape(str(cat['name']))}</b>\n\nСумма <b>брутто</b>:",
+            f"Статья: <b>{html.escape(str(cat['name']))}</b>\n\n"
+            "Сколько <b>списано с кошелька</b> (расход брутто):",
             parse_mode=ParseMode.HTML,
             reply_markup=self._cancel_kb(),
         )
@@ -369,21 +447,29 @@ class LedgerFeature(BaseFeature):
             )
             return
         await state.update_data(gross=str(amount))
-        await state.set_state(LedgerStates.expense_fee)
+        await state.set_state(LedgerStates.expense_net)
         await message.answer(
-            "Сумма <b>комиссии</b> (0, если без комиссии):",
+            "Сколько <b>зачислено на баланс сервиса</b> (расход нетто):",
             parse_mode=ParseMode.HTML,
             reply_markup=self._cancel_kb(),
         )
 
-    async def _on_expense_fee(self, message: Message, state: FSMContext) -> None:
+    async def _on_expense_net(self, message: Message, state: FSMContext) -> None:
         if not await self._ensure_admin(message.from_user.id if message.from_user else None):
             return
-        fee = parse_amount(message.text or "")
-        if fee is None or fee < 0:
-            await message.answer("Комиссия — число ≥ 0.")
+        net = parse_amount(message.text or "")
+        if net is None or net < 0:
+            await message.answer("Нетто — число ≥ 0.")
             return
-        await state.update_data(fee=str(fee))
+        data = await state.get_data()
+        gross = Decimal(str(data.get("gross") or 0))
+        if net > gross:
+            await message.answer(
+                "Нетто не может быть больше брутто (списания с кошелька)."
+            )
+            return
+        fee = gross - net
+        await state.update_data(fee=str(fee), net=str(net))
         await state.set_state(LedgerStates.expense_note)
         await message.answer(
             "Комментарий (или <code>-</code>):",
@@ -513,15 +599,13 @@ class LedgerFeature(BaseFeature):
             ]
         else:
             net = gross - fee
-            cash = gross + fee
-            after = balance - cash
+            after = balance - gross
             lines += [
                 "📤 Расход",
                 f"• Статья: <b>{html.escape(str(data.get('category_name') or '—'))}</b>",
-                f"• Брутто: <b>{html.escape(format_money(gross, cur))}</b>",
-                f"• Комиссия: <b>{html.escape(format_money(fee, cur))}</b>",
-                f"• Нетто (брутто − комиссия): <b>{html.escape(format_money(net, cur))}</b>",
-                f"• Списание с депозита (брутто + комиссия): <b>{html.escape(format_money(cash, cur))}</b>",
+                f"• Списано с кошелька (брутто): <b>{html.escape(format_money(gross, cur))}</b>",
+                f"• На сервис (нетто): <b>{html.escape(format_money(net, cur))}</b>",
+                f"• Комиссия (брутто − нетто): <b>{html.escape(format_money(fee, cur))}</b>",
             ]
         note = str(data.get("note") or "").strip()
         lines.append(f"• Комментарий: {html.escape(note or '—')}")
@@ -573,13 +657,11 @@ class LedgerFeature(BaseFeature):
                 f"Остаток: <b>{html.escape(after)}</b>"
             )
         else:
-            cash = Decimal(str(row["amount_gross"])) + Decimal(str(row["amount_fee"]))
             msg = (
                 f"✅ Расход «{html.escape(str(row.get('category_name') or ''))}»\n"
                 f"{html.escape(self._fmt_occurred(row.get('occurred_on')))}: "
-                f"брутто {html.escape(format_money(row['amount_gross'], cur))}, "
-                f"нетто {html.escape(format_money(row['amount_net'], cur))}, "
-                f"списано {html.escape(format_money(cash, cur))}\n"
+                f"списано {html.escape(format_money(row['amount_gross'], cur))}, "
+                f"нетто {html.escape(format_money(row['amount_net'], cur))}\n"
                 f"Остаток: <b>{html.escape(after)}</b>"
             )
         await callback.message.edit_text(msg, parse_mode=ParseMode.HTML)
@@ -626,8 +708,14 @@ class LedgerFeature(BaseFeature):
             return
         cur = str(acc.get("currency") or DEFAULT_CURRENCY)
         months = await self.user_storage.ledger_monthly_report(int(acc["id"]))
-        rich = self._report_rich_html(acc, cur, months)
-        fallback = self._report_fallback_html(acc, cur, months)
+        expected = None
+        if self._expected:
+            try:
+                expected = await self._expected.get_for_report()
+            except Exception as e:
+                logger.exception("[%s] expected income report: %s", self.name, e)
+        rich = self._report_rich_html(acc, cur, months, expected=expected)
+        fallback = self._report_fallback_html(acc, cur, months, expected=expected)
         await self._edit_or_answer_rich(callback, rich, kb, fallback=fallback)
 
     def _report_rich_html(
@@ -635,12 +723,17 @@ class LedgerFeature(BaseFeature):
         acc: Dict[str, Any],
         cur: str,
         months: List[Dict[str, Any]],
+        *,
+        expected: Optional[Dict[str, Any]] = None,
     ) -> str:
         bal = html.escape(format_money(acc.get("balance"), cur))
         parts = [
             "<h2>📊 Отчёт</h2>",
             f"<p>Текущий баланс: <b>{bal}</b></p>",
         ]
+        exp_line = self._expected_income_rich(expected, cur)
+        if exp_line:
+            parts.append(exp_line)
         if not months:
             parts.append("<p>Пока нет операций.</p>")
             return "".join(parts)
@@ -700,14 +793,62 @@ class LedgerFeature(BaseFeature):
         return html.escape(format_amount(value))
 
     @staticmethod
+    def _expected_as_of_label(row: Optional[Dict[str, Any]]) -> str:
+        if not row:
+            return ""
+        d = row.get("day")
+        if isinstance(d, datetime):
+            d = d.date()
+        if not isinstance(d, date):
+            return ""
+        return d.strftime("%d.%m.%Y")
+
+    @classmethod
+    def _expected_income_rich(
+        cls, row: Optional[Dict[str, Any]], cur: str
+    ) -> str:
+        if not row:
+            return (
+                f"<p>Ожидаемый приход брутто (35% донатов Библии с "
+                f"{JOURNAL_START.strftime('%d.%m.%Y')}): <i>нет данных</i></p>"
+            )
+        as_of = cls._expected_as_of_label(row)
+        amt = html.escape(
+            format_money(row.get("cumulative_share_usd"), cur)
+        )
+        return (
+            f"<p>Ожидаемый приход брутто на <b>{html.escape(as_of)}</b> "
+            f"(35% донатов Библии, нарастающий итог): <b>{amt}</b></p>"
+        )
+
+    @classmethod
+    def _expected_income_plain(
+        cls, row: Optional[Dict[str, Any]], cur: str
+    ) -> str:
+        if not row:
+            return (
+                f"Ожидаемый приход брутто (35% донатов Библии с "
+                f"{JOURNAL_START.strftime('%d.%m.%Y')}): нет данных"
+            )
+        as_of = cls._expected_as_of_label(row)
+        amt = format_money(row.get("cumulative_share_usd"), cur)
+        return (
+            f"Ожидаемый приход брутто на {as_of} "
+            f"(35% донатов Библии): <b>{html.escape(amt)}</b>"
+        )
+
+    @staticmethod
     def _report_fallback_html(
         acc: Dict[str, Any],
         cur: str,
         months: List[Dict[str, Any]],
+        *,
+        expected: Optional[Dict[str, Any]] = None,
     ) -> str:
         lines = [
             "📊 <b>Отчёт</b>",
             f"Текущий баланс: <b>{html.escape(format_money(acc.get('balance'), cur))}</b>",
+            LedgerFeature._expected_income_plain(expected, cur),
             "",
         ]
         if not months:
@@ -801,11 +942,8 @@ class LedgerFeature(BaseFeature):
         if e.get("kind") == "deposit":
             body = f"+{format_money(e.get('amount_net'), cur)}"
         else:
-            cash = Decimal(str(e.get("amount_gross") or 0)) + Decimal(
-                str(e.get("amount_fee") or 0)
-            )
             cat = e.get("category_name") or "расход"
-            body = f"{cat} −{format_money(cash, cur)}"
+            body = f"{cat} −{format_money(e.get('amount_gross'), cur)}"
         return f"{ts} {body}".strip()
 
     @classmethod
