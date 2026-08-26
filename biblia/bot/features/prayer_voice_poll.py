@@ -1,9 +1,10 @@
-"""Опрос голосов молитвы: образцы + оценки 1–5 (только админы)."""
+"""Опрос голосов молитвы: образцы + оценки 1–5."""
 
 from __future__ import annotations
 
 import asyncio
 import logging
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from aiogram import Bot, Dispatcher, F
@@ -25,6 +26,7 @@ from bot.services.prayer_voice_poll import (
     PRAYER_VOICE_POLL_SAMPLE,
     build_poll_voices,
     build_rating_keyboard,
+    format_poll_intro_html,
     format_poll_scores_html,
     parse_rating_callback,
 )
@@ -80,8 +82,8 @@ class PrayerVoicePollFeature(BaseFeature):
 
     async def on_rating(self, callback: CallbackQuery) -> None:
         uid = callback.from_user.id if callback.from_user else 0
-        if not await self._ensure_admin(uid):
-            await callback.answer("Нет доступа", show_alert=True)
+        if not uid:
+            await callback.answer("?")
             return
         parsed = parse_rating_callback(callback.data or "")
         if not parsed:
@@ -114,7 +116,16 @@ class PrayerVoicePollFeature(BaseFeature):
     async def _reply_scores(self, message: Message) -> None:
         voices = build_poll_voices(config.ELEVENLABS_VOICE_ID)
         agg = await self.user_storage.list_prayer_voice_ratings_aggregate(POLL_SLUG)
-        text = format_poll_scores_html(voices, agg, poll_slug=POLL_SLUG)
+        stats = await self.user_storage.get_prayer_voice_poll_participant_stats(
+            POLL_SLUG,
+            voice_count=len(voices),
+        )
+        text = format_poll_scores_html(
+            voices,
+            agg,
+            poll_slug=POLL_SLUG,
+            participant_stats=stats,
+        )
         await message.answer(text, parse_mode=ParseMode.HTML)
 
     async def _synthesize_voice(self, voice_id: str, tts_text: str) -> Optional[bytes]:
@@ -155,6 +166,46 @@ class PrayerVoicePollFeature(BaseFeature):
                 logger.error("[%s] synth idx=%s: %s", self.name, idx, e)
         return out
 
+    def poll_cache_dir(self) -> Path:
+        return (
+            Path(__file__).resolve().parents[2]
+            / "data"
+            / "prayer_voice_poll_cache"
+            / POLL_SLUG
+        )
+
+    def load_cached_audio(self) -> Optional[Dict[int, bytes]]:
+        voices = build_poll_voices(config.ELEVENLABS_VOICE_ID)
+        cache = self.poll_cache_dir()
+        out: Dict[int, bytes] = {}
+        for v in voices:
+            idx = int(v["idx"])
+            path = cache / f"voice_poll_{idx}.ogg"
+            if not path.is_file():
+                return None
+            out[idx] = path.read_bytes()
+        return out if len(out) == len(voices) else None
+
+    def save_cached_audio(self, audio_by_idx: Dict[int, bytes]) -> Path:
+        cache = self.poll_cache_dir()
+        cache.mkdir(parents=True, exist_ok=True)
+        for idx, data in audio_by_idx.items():
+            (cache / f"voice_poll_{idx}.ogg").write_bytes(data)
+        return cache
+
+    async def resolve_poll_audio(
+        self, audio_by_idx: Optional[Dict[int, bytes]] = None
+    ) -> Dict[int, bytes]:
+        if audio_by_idx is not None:
+            return audio_by_idx
+        cached = self.load_cached_audio()
+        if cached:
+            return cached
+        audio = await self.synthesize_all()
+        if audio:
+            self.save_cached_audio(audio)
+        return audio
+
     async def send_poll_to_user(
         self,
         user_id: int,
@@ -164,21 +215,14 @@ class PrayerVoicePollFeature(BaseFeature):
         if not self.bot:
             raise RuntimeError("bot not set")
         voices = build_poll_voices(config.ELEVENLABS_VOICE_ID)
-        if audio_by_idx is None:
-            audio_by_idx = await self.synthesize_all()
+        audio_by_idx = await self.resolve_poll_audio(audio_by_idx)
         existing = await self.user_storage.list_prayer_voice_ratings_by_admin(
             POLL_SLUG, user_id
         )
         n = len(voices)
         await self.bot.send_message(
             user_id,
-            (
-                f"<b>🎧 Выбор голоса для молитвы</b>\n\n"
-                f"Послушайте {n} образцов (~40 с). Под каждым — оценка "
-                f"<b>1</b> (не подходит) … <b>5</b> (отлично).\n"
-                f"Оценку можно менять.\n\n"
-                f"Сводка: /prayer_voice_scores"
-            ),
+            format_poll_intro_html(n),
             parse_mode=ParseMode.HTML,
         )
         total = len(voices)
@@ -188,7 +232,7 @@ class PrayerVoicePollFeature(BaseFeature):
             title = str(v["title"])
             vid = str(v["voice_id"])
             selected = existing.get(vid)
-            caption = f"{idx + 1}/{total}. {title}\n<code>{vid}</code>"
+            caption = f"{idx + 1}/{total}. {title}"
             kb = build_rating_keyboard(idx, selected=selected)
             if not ogg:
                 await self.bot.send_message(
@@ -223,7 +267,7 @@ class PrayerVoicePollFeature(BaseFeature):
             tid = int(row.get("telegram_user_id") or 0)
             if tid > 0:
                 admin_ids.add(tid)
-        audio = await self.synthesize_all()
+        audio = await self.resolve_poll_audio()
         sent = 0
         for uid in sorted(admin_ids):
             try:

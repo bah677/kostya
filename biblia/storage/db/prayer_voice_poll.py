@@ -100,6 +100,55 @@ class PrayerVoicePollMixin:
             )
         return [dict(r) for r in rows]
 
+    async def get_prayer_voice_poll_participant_stats(
+        self, poll_slug: str, *, voice_count: int
+    ) -> Dict[str, int]:
+        await self.ensure_prayer_voice_poll_schema()
+        async with self.get_connection() as conn:
+            row = await conn.fetchrow(
+                """
+                WITH per_user AS (
+                    SELECT admin_user_id, COUNT(*)::int AS rated_n
+                      FROM prayer_voice_ratings
+                     WHERE poll_slug = $1
+                     GROUP BY admin_user_id
+                )
+                SELECT
+                    COALESCE(COUNT(*), 0)::int AS voters,
+                    COALESCE(
+                        COUNT(*) FILTER (WHERE rated_n >= $2),
+                        0
+                    )::int AS complete_voters,
+                    COALESCE(
+                        COUNT(*) FILTER (
+                            WHERE rated_n > 0 AND rated_n < $2
+                        ),
+                        0
+                    )::int AS partial_voters,
+                    COALESCE(
+                        (SELECT COUNT(*)::int FROM prayer_voice_ratings
+                          WHERE poll_slug = $1),
+                        0
+                    ) AS total_ratings
+                  FROM per_user
+                """,
+                poll_slug,
+                int(voice_count),
+            )
+        if not row:
+            return {
+                "voters": 0,
+                "complete_voters": 0,
+                "partial_voters": 0,
+                "total_ratings": 0,
+            }
+        return {
+            "voters": int(row["voters"] or 0),
+            "complete_voters": int(row["complete_voters"] or 0),
+            "partial_voters": int(row["partial_voters"] or 0),
+            "total_ratings": int(row["total_ratings"] or 0),
+        }
+
     async def list_prayer_voice_ratings_by_admin(
         self, poll_slug: str, admin_user_id: int
     ) -> Dict[str, int]:
