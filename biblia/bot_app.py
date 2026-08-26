@@ -13,6 +13,7 @@ from bot.features.frequent_questions import FrequentQuestionsFeature
 from bot.features.mailing import MailingFeature
 from bot.features.media_id_helper import MediaIdHelperFeature
 from bot.features.admin_panel import AdminPanelFeature
+from bot.features.prayer_voice_poll import PrayerVoicePollFeature
 from bot.features.personal_prayer import PersonalPrayerFeature
 from bot.features.scripture_challenge import ScriptureChallengeFeature
 from bot.features.scripture_challenge_scheduler import ScriptureChallengeSchedulerFeature
@@ -95,6 +96,7 @@ class BotApplication(TelegramBotApp):
             user_storage=self.user_storage,
         )
         personal_prayer = PersonalPrayerFeature(user_storage=self.user_storage)
+        prayer_voice_poll = PrayerVoicePollFeature(user_storage=self.user_storage)
         scripture_challenge = ScriptureChallengeFeature(user_storage=self.user_storage)
         scripture_challenge_scheduler = ScriptureChallengeSchedulerFeature(
             user_storage=self.user_storage,
@@ -121,6 +123,7 @@ class BotApplication(TelegramBotApp):
             scripture_mailing,
             faq_feature,
             personal_prayer,
+            prayer_voice_poll,
             scripture_challenge,
             scripture_challenge_scheduler,
             media_id_helper,

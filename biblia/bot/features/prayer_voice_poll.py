@@ -1,0 +1,234 @@
+"""Опрос голосов молитвы: образцы + оценки 1–5 (только админы)."""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+from typing import Any, Dict, List, Optional
+
+from aiogram import Bot, Dispatcher, F
+from aiogram.enums import ParseMode
+from aiogram.filters import Command
+from aiogram.types import BufferedInputFile, CallbackQuery, Message
+
+from bot.admin_guard import is_admin_or_super
+from bot.features.base import BaseFeature
+from bot.services.elevenlabs_tts import ElevenLabsTTS
+from bot.services.prayer_bg_music import mix_voice_with_bg_music
+from bot.services.prayer_tts_style import (
+    audio_bytes_to_ogg_opus,
+    ogg_opus_duration_sec,
+    resolve_prayer_tts_atempo,
+)
+from bot.services.prayer_voice_poll import (
+    POLL_SLUG,
+    PRAYER_VOICE_POLL_SAMPLE,
+    build_poll_voices,
+    build_rating_keyboard,
+    format_poll_scores_html,
+    parse_rating_callback,
+)
+from bot.services.voicebox_tts import format_prayer_for_tts
+from config import config
+
+logger = logging.getLogger(__name__)
+
+
+class PrayerVoicePollFeature(BaseFeature):
+    name = "prayer_voice_poll"
+
+    def __init__(self, user_storage) -> None:
+        super().__init__()
+        self.user_storage = user_storage
+        self.bot: Optional[Bot] = None
+        self._tts = ElevenLabsTTS()
+
+    def set_bot(self, app: Any) -> None:
+        self.bot = app.bot if app is not None else None
+
+    async def initialize(self) -> None:
+        await self.user_storage.ensure_prayer_voice_poll_schema()
+        logger.info("[%s] schema ok", self.name)
+
+    def register_handlers(self, dp: Dispatcher) -> None:
+        dp.message.register(self.cmd_scores, Command("prayer_voice_scores"))
+        dp.message.register(self.cmd_send_poll, Command("prayer_voice_poll"))
+        dp.callback_query.register(self.on_rating, F.data.startswith("pvp:"))
+        logger.info("[%s] /prayer_voice_scores /prayer_voice_poll + pvp:*", self.name)
+
+    async def _ensure_admin(self, uid: Optional[int]) -> bool:
+        if not uid:
+            return False
+        return await is_admin_or_super(self.user_storage, uid)
+
+    async def cmd_scores(self, message: Message) -> None:
+        if not message.from_user or not await self._ensure_admin(message.from_user.id):
+            return
+        await self._reply_scores(message)
+
+    async def cmd_send_poll(self, message: Message) -> None:
+        """Повторно прислать опрос вызвавшему админу (тест / догон)."""
+        if not message.from_user or not await self._ensure_admin(message.from_user.id):
+            return
+        wait = await message.answer("⏳ Готовлю образцы голосов (~40 с каждый)…")
+        try:
+            await self.send_poll_to_user(message.from_user.id)
+            await wait.edit_text("✅ Образцы отправлены. Оцените каждый голос кнопками 1–5.")
+        except Exception as e:
+            logger.exception("[%s] send poll: %s", self.name, e)
+            await wait.edit_text(f"❌ Ошибка: {e}")
+
+    async def on_rating(self, callback: CallbackQuery) -> None:
+        uid = callback.from_user.id if callback.from_user else 0
+        if not await self._ensure_admin(uid):
+            await callback.answer("Нет доступа", show_alert=True)
+            return
+        parsed = parse_rating_callback(callback.data or "")
+        if not parsed:
+            await callback.answer("?")
+            return
+        voice_idx, score = parsed
+        if score < 1 or score > 5:
+            await callback.answer("?")
+            return
+        voices = build_poll_voices(config.ELEVENLABS_VOICE_ID)
+        voice = next((v for v in voices if int(v["idx"]) == voice_idx), None)
+        if not voice:
+            await callback.answer("Голос не найден", show_alert=True)
+            return
+        await self.user_storage.upsert_prayer_voice_rating(
+            poll_slug=POLL_SLUG,
+            admin_user_id=uid,
+            voice_id=str(voice["voice_id"]),
+            voice_idx=voice_idx,
+            score=score,
+        )
+        kb = build_rating_keyboard(voice_idx, selected=score)
+        try:
+            if callback.message:
+                await callback.message.edit_reply_markup(reply_markup=kb)
+        except Exception as e:
+            logger.debug("[%s] edit markup: %s", self.name, e)
+        await callback.answer(f"Оценка {score} сохранена")
+
+    async def _reply_scores(self, message: Message) -> None:
+        voices = build_poll_voices(config.ELEVENLABS_VOICE_ID)
+        agg = await self.user_storage.list_prayer_voice_ratings_aggregate(POLL_SLUG)
+        text = format_poll_scores_html(voices, agg, poll_slug=POLL_SLUG)
+        await message.answer(text, parse_mode=ParseMode.HTML)
+
+    async def _synthesize_voice(self, voice_id: str, tts_text: str) -> Optional[bytes]:
+        if not self._tts.api_key:
+            return None
+        tempo = resolve_prayer_tts_atempo()
+        raw_mp3 = await self._tts.synthesize_ogg_opus(
+            tts_text, voice_id=voice_id, as_ogg=False
+        )
+        mixed = await asyncio.to_thread(
+            mix_voice_with_bg_music,
+            raw_mp3,
+            atempo=tempo,
+            voice_suffix=".mp3",
+        )
+        if mixed:
+            return mixed
+        return await asyncio.to_thread(
+            audio_bytes_to_ogg_opus,
+            raw_mp3,
+            atempo=tempo,
+            prefix="elabs_poll_",
+        )
+
+    async def synthesize_all(self) -> Dict[int, bytes]:
+        tts_text = format_prayer_for_tts(PRAYER_VOICE_POLL_SAMPLE)
+        voices = build_poll_voices(config.ELEVENLABS_VOICE_ID)
+        out: Dict[int, bytes] = {}
+        for v in voices:
+            idx = int(v["idx"])
+            vid = str(v["voice_id"])
+            logger.info("[%s] synthesize idx=%s voice=%s", self.name, idx, vid[:8])
+            try:
+                ogg = await self._synthesize_voice(vid, tts_text)
+                if ogg:
+                    out[idx] = ogg
+            except Exception as e:
+                logger.error("[%s] synth idx=%s: %s", self.name, idx, e)
+        return out
+
+    async def send_poll_to_user(
+        self,
+        user_id: int,
+        *,
+        audio_by_idx: Optional[Dict[int, bytes]] = None,
+    ) -> None:
+        if not self.bot:
+            raise RuntimeError("bot not set")
+        voices = build_poll_voices(config.ELEVENLABS_VOICE_ID)
+        if audio_by_idx is None:
+            audio_by_idx = await self.synthesize_all()
+        existing = await self.user_storage.list_prayer_voice_ratings_by_admin(
+            POLL_SLUG, user_id
+        )
+        n = len(voices)
+        await self.bot.send_message(
+            user_id,
+            (
+                f"<b>🎧 Выбор голоса для молитвы</b>\n\n"
+                f"Послушайте {n} образцов (~40 с). Под каждым — оценка "
+                f"<b>1</b> (не подходит) … <b>5</b> (отлично).\n"
+                f"Оценку можно менять.\n\n"
+                f"Сводка: /prayer_voice_scores"
+            ),
+            parse_mode=ParseMode.HTML,
+        )
+        total = len(voices)
+        for v in voices:
+            idx = int(v["idx"])
+            ogg = audio_by_idx.get(idx)
+            title = str(v["title"])
+            vid = str(v["voice_id"])
+            selected = existing.get(vid)
+            caption = f"{idx + 1}/{total}. {title}\n<code>{vid}</code>"
+            kb = build_rating_keyboard(idx, selected=selected)
+            if not ogg:
+                await self.bot.send_message(
+                    user_id,
+                    f"<i>{idx + 1}/{total}. {title} — не удалось озвучить</i>",
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=kb,
+                )
+                continue
+            dur = ogg_opus_duration_sec(ogg)
+            kw: dict[str, Any] = {
+                "caption": caption[:1024],
+                "parse_mode": ParseMode.HTML,
+                "reply_markup": kb,
+            }
+            if dur is not None:
+                kw["duration"] = dur
+            await self.bot.send_voice(
+                user_id,
+                BufferedInputFile(ogg, filename=f"voice_poll_{idx}.ogg"),
+                **kw,
+            )
+
+    async def send_poll_to_all_admins(self) -> int:
+        if not self.bot:
+            raise RuntimeError("bot not set")
+        admin_ids: set[int] = set()
+        sid = int(getattr(config, "SUPER_ADMIN_ID", 0) or 0)
+        if sid > 0:
+            admin_ids.add(sid)
+        for row in await self.user_storage.list_telegram_admin_ids():
+            tid = int(row.get("telegram_user_id") or 0)
+            if tid > 0:
+                admin_ids.add(tid)
+        audio = await self.synthesize_all()
+        sent = 0
+        for uid in sorted(admin_ids):
+            try:
+                await self.send_poll_to_user(uid, audio_by_idx=audio)
+                sent += 1
+            except Exception as e:
+                logger.error("[%s] send poll uid=%s: %s", self.name, uid, e)
+        return sent

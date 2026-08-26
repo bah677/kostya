@@ -252,6 +252,8 @@ class AppConfig:
     # ElevenLabs
     ELEVENLABS_API_KEY: str = ""
     ELEVENLABS_VOICE_ID: str = ""
+    # Кандидат на замену основного голоса молитвы (сравнение только для админов).
+    ELEVENLABS_CANDIDATE_VOICE_ID: str = "a4CnuaYbALRvW39mDitg"
     # Доп. голоса только для админ-сравнения (через запятую).
     ELEVENLABS_COMPARE_VOICE_IDS: str = (
         "CritVAMVzFsSIWmMDe7v,"
@@ -455,6 +457,9 @@ def load_app_config() -> AppConfig:
         or "opus",
         ELEVENLABS_API_KEY=(os.getenv("ELEVENLABS_API_KEY") or "").strip(),
         ELEVENLABS_VOICE_ID=(os.getenv("ELEVENLABS_VOICE_ID") or "").strip(),
+        ELEVENLABS_CANDIDATE_VOICE_ID=(
+            os.getenv("ELEVENLABS_CANDIDATE_VOICE_ID") or "a4CnuaYbALRvW39mDitg"
+        ).strip(),
         ELEVENLABS_COMPARE_VOICE_IDS=(
             os.getenv("ELEVENLABS_COMPARE_VOICE_IDS")
             or (
