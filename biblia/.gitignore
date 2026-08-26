@@ -18,6 +18,9 @@ data/
 log/
 LogFromProd/
 
+# Крупные mp3 фона молитвы (скачиваются setup_prayer_bg_music.sh)
+assets/prayer_bg_music/*.mp3
+
 # IDE
 .cursor/
 .idea/

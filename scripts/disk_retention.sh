@@ -118,15 +118,18 @@ prune_data_tree() {
   local cnt sz
   cnt=$(find "$dir" -type f \
     ! -path '*/chroma_data/*' ! -path '*/chroma/*' ! -path '*/.chromadb/*' \
+    ! -path '*/prayer_bg_music/*' \
     -mtime +"$DATA_DAYS" 2>/dev/null | wc -l)
   sz=$(find "$dir" -type f \
     ! -path '*/chroma_data/*' ! -path '*/chroma/*' ! -path '*/.chromadb/*' \
+    ! -path '*/prayer_bg_music/*' \
     -mtime +"$DATA_DAYS" -printf '%s\n' 2>/dev/null \
     | awk '{s+=$1} END{printf "%.1fM", (s?s:0)/1024/1024}')
   log "  $label data: >${DATA_DAYS}d → $cnt ($sz) in $dir"
   if (( APPLY )) && (( cnt > 0 )); then
     find "$dir" -type f \
       ! -path '*/chroma_data/*' ! -path '*/chroma/*' ! -path '*/.chromadb/*' \
+      ! -path '*/prayer_bg_music/*' \
       -user "${RUN_USER}" \
       -mtime +"$DATA_DAYS" -delete 2>/dev/null || true
     find "$dir" -type d -empty \

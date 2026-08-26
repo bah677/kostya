@@ -23,6 +23,11 @@ p.add_argument(
     action="store_true",
     help="Если кеша нет — один раз синтезировать и сохранить (иначе ошибка)",
 )
+p.add_argument(
+    "--resynthesize",
+    action="store_true",
+    help="Пересинтезировать все образцы заново (игнорировать кеш)",
+)
 _args, _ = p.parse_known_args()
 if Path(_args.env).is_file():
     load_dotenv(_args.env, override=True)
@@ -80,6 +85,19 @@ RECIPIENT_USER_IDS: tuple[int, ...] = tuple(
 )
 
 
+async def collect_recipient_ids(storage: UserStorage) -> list[int]:
+    ids: set[int] = set(RECIPIENT_USER_IDS)
+    sid = int(getattr(config, "SUPER_ADMIN_ID", 0) or os.getenv("SUPER_ADMIN_ID", 0) or 0)
+    if sid > 0:
+        ids.add(sid)
+    for row in await storage.list_telegram_admin_ids():
+        tid = int(row.get("telegram_user_id") or 0)
+        if tid > 0:
+            ids.add(tid)
+    ids -= _EXCLUDED_USER_IDS
+    return sorted(ids)
+
+
 async def main() -> None:
     args = p.parse_args()
     if Path(args.env).is_file():
@@ -90,10 +108,6 @@ async def main() -> None:
         raise SystemExit("Нет BIBLIA_BOT_TOKEN")
 
     voices = build_poll_voices(config.ELEVENLABS_VOICE_ID or os.getenv("ELEVENLABS_VOICE_ID", ""))
-    print(
-        f"Опрос {POLL_SLUG}, голосов: {len(voices)}, "
-        f"получателей: {len(RECIPIENT_USER_IDS)}"
-    )
 
     db_url = (
         f"postgresql://{os.getenv('DB_USER')}:{os.getenv('DB_PASSWORD')}"
@@ -102,6 +116,7 @@ async def main() -> None:
     )
     storage = UserStorage(db_url)
     await storage.initialize()
+    recipient_ids = await collect_recipient_ids(storage)
 
     bot = Bot(token=token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     feature = PrayerVoicePollFeature(storage)
@@ -114,27 +129,42 @@ async def main() -> None:
     feature.set_bot(app)
     await feature.initialize()
 
+    print(
+        f"Опрос {POLL_SLUG}, голосов: {len(voices)}, "
+        f"получателей: {len(recipient_ids)} "
+        f"(юзеры {len(RECIPIENT_USER_IDS)} + админы)"
+    )
+
     cache_dir = feature.poll_cache_dir()
-    audio = feature.load_cached_audio()
-    if not audio:
-        if args.synthesize_if_missing:
-            print(f"Кеш не найден в {cache_dir}, синтезирую один раз…")
-            audio = await feature.synthesize_all()
-            if not audio or len(audio) != len(voices):
-                raise SystemExit(f"Синтез неполный: {len(audio or {})}/{len(voices)}")
-            feature.save_cached_audio(audio)
-            print(f"Кеш сохранён: {cache_dir} ({len(audio)} файлов)")
-        else:
-            raise SystemExit(
-                f"Нет кеша OGG в {cache_dir}. "
-                "Сначала отправьте админам или запустите с --synthesize-if-missing."
-            )
+    audio = None
+    if args.resynthesize:
+        print("Пересинтез всех образцов…")
+        audio = await feature.synthesize_all()
+        if not audio or len(audio) != len(voices):
+            raise SystemExit(f"Синтез неполный: {len(audio or {})}/{len(voices)}")
+        feature.save_cached_audio(audio)
+        print(f"Кеш обновлён: {cache_dir} ({len(audio)} файлов)")
     else:
-        print(f"Кеш OK: {cache_dir} ({len(audio)} файлов)")
+        audio = feature.load_cached_audio()
+        if not audio:
+            if args.synthesize_if_missing:
+                print(f"Кеш не найден в {cache_dir}, синтезирую один раз…")
+                audio = await feature.synthesize_all()
+                if not audio or len(audio) != len(voices):
+                    raise SystemExit(f"Синтез неполный: {len(audio or {})}/{len(voices)}")
+                feature.save_cached_audio(audio)
+                print(f"Кеш сохранён: {cache_dir} ({len(audio)} файлов)")
+            else:
+                raise SystemExit(
+                    f"Нет кеша OGG в {cache_dir}. "
+                    "Запустите с --synthesize-if-missing или --resynthesize."
+                )
+        else:
+            print(f"Кеш OK: {cache_dir} ({len(audio)} файлов)")
 
     if not args.send:
         print("DRY-RUN (добавьте --send для рассылки):")
-        for uid in RECIPIENT_USER_IDS:
+        for uid in recipient_ids:
             print(f"  uid={uid}")
         await bot.session.close()
         await storage.close()
@@ -143,7 +173,7 @@ async def main() -> None:
     sent = 0
     failed: list[tuple[int, str]] = []
     try:
-        for uid in RECIPIENT_USER_IDS:
+        for uid in recipient_ids:
             try:
                 await feature.send_poll_to_user(uid, audio_by_idx=audio)
                 sent += 1
@@ -156,7 +186,7 @@ async def main() -> None:
         await bot.session.close()
         await storage.close()
 
-    print(f"done sent={sent}/{len(RECIPIENT_USER_IDS)} failed={len(failed)}")
+    print(f"done sent={sent}/{len(recipient_ids)} failed={len(failed)}")
 
 
 if __name__ == "__main__":

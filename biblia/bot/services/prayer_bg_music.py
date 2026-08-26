@@ -32,7 +32,7 @@ def resolve_prayer_bg_music_dir() -> Path:
     raw = (getattr(config, "PRAYER_BG_MUSIC_DIR", None) or "").strip()
     if raw:
         return Path(raw).expanduser()
-    return Path("/home/appuser/biblia/data/prayer_bg_music")
+    return Path(__file__).resolve().parents[2] / "assets" / "prayer_bg_music"
 
 
 def resolve_prayer_bg_music_volume() -> float:

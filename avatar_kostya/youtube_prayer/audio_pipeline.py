@@ -44,12 +44,14 @@ def resolve_bg_music_dir() -> Path:
     if raw:
         return Path(raw).expanduser()
     for cand in (
+        Path("/home/appuser/biblia/assets/prayer_bg_music"),
+        Path("/home/appuser/dev/kostya/biblia/assets/prayer_bg_music"),
         Path("/home/appuser/biblia/data/prayer_bg_music"),
         Path("/home/appuser/dev/kostya/biblia/data/prayer_bg_music"),
     ):
         if cand.is_dir():
             return cand
-    return Path("/home/appuser/biblia/data/prayer_bg_music")
+    return Path("/home/appuser/biblia/assets/prayer_bg_music")
 
 
 def resolve_bg_volume() -> float:

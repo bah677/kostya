@@ -174,6 +174,7 @@ sudo rsync -a -h --info=stats1 --delete \
   --exclude='*.pyc' \
   --exclude='*.log' \
   --exclude='/data/' \
+  --exclude='/assets/prayer_bg_music/' \
   --exclude='/log/' \
   --exclude='/venv/' \
   --exclude='.env' \
