@@ -715,8 +715,21 @@ class LedgerFeature(BaseFeature):
                 expected = await self._expected.get_for_report()
             except Exception as e:
                 logger.exception("[%s] expected income report: %s", self.name, e)
-        rich = self._report_rich_html(acc, cur, months, expected=expected)
-        fallback = self._report_fallback_html(acc, cur, months, expected=expected)
+        deposit_gross = Decimal("0")
+        try:
+            totals = await self.user_storage.ledger_totals(
+                account_id=int(acc["id"]),
+                since=JOURNAL_START,
+            )
+            deposit_gross = Decimal(str(totals.get("deposit_gross") or 0))
+        except Exception as e:
+            logger.exception("[%s] deposit gross for report: %s", self.name, e)
+        rich = self._report_rich_html(
+            acc, cur, months, expected=expected, deposit_gross=deposit_gross
+        )
+        fallback = self._report_fallback_html(
+            acc, cur, months, expected=expected, deposit_gross=deposit_gross
+        )
         await self._edit_or_answer_rich(callback, rich, kb, fallback=fallback)
 
     def _report_rich_html(
@@ -726,13 +739,16 @@ class LedgerFeature(BaseFeature):
         months: List[Dict[str, Any]],
         *,
         expected: Optional[Dict[str, Any]] = None,
+        deposit_gross: Optional[Decimal] = None,
     ) -> str:
         bal = html.escape(format_money(acc.get("balance"), cur))
         parts = [
             "<h2>📊 Отчёт</h2>",
             f"<p>Текущий баланс: <b>{bal}</b></p>",
         ]
-        exp_line = self._expected_income_rich(expected, cur)
+        exp_line = self._expected_income_rich(
+            expected, cur, deposit_gross=deposit_gross
+        )
         if exp_line:
             parts.append(exp_line)
         if not months:
@@ -832,13 +848,31 @@ class LedgerFeature(BaseFeature):
         return cls._ceil_int(usd_i * r)
 
     @classmethod
+    def _expected_vs_deposit_diff(
+        cls,
+        row: Optional[Dict[str, Any]],
+        deposit_gross: Optional[Decimal],
+    ) -> Optional[int]:
+        """Ожидаемый (ceil) − приход брутто с JOURNAL_START (ceil)."""
+        if not row or deposit_gross is None:
+            return None
+        expected_i = cls._ceil_int(row.get("cumulative_share_usd"))
+        deposit_i = cls._ceil_int(deposit_gross)
+        return expected_i - deposit_i
+
+    @classmethod
     def _expected_income_rich(
-        cls, row: Optional[Dict[str, Any]], cur: str
+        cls,
+        row: Optional[Dict[str, Any]],
+        cur: str,
+        *,
+        deposit_gross: Optional[Decimal] = None,
     ) -> str:
+        since = JOURNAL_START.strftime("%d.%m.%Y")
         if not row:
             return (
                 f"<p>Ожидаемый приход брутто (35% донатов Библии с "
-                f"{JOURNAL_START.strftime('%d.%m.%Y')}): <i>нет данных</i></p>"
+                f"{since}): <i>нет данных</i></p>"
             )
         as_of = cls._expected_as_of_label(row)
         amt = html.escape(cls._ceil_money(row.get("cumulative_share_usd"), cur))
@@ -848,28 +882,59 @@ class LedgerFeature(BaseFeature):
             if rub_i is not None
             else ""
         )
-        return (
+        parts = [
             f"<p>Ожидаемый приход брутто на <b>{html.escape(as_of)}</b> "
             f"(35% донатов Библии, нарастающий итог): <b>{amt}</b>{rub_part}</p>"
-        )
+        ]
+        if deposit_gross is not None:
+            dep_amt = html.escape(cls._ceil_money(deposit_gross, cur))
+            parts.append(
+                f"<p>Приход брутто с {since}: <b>{dep_amt}</b></p>"
+            )
+            diff = cls._expected_vs_deposit_diff(row, deposit_gross)
+            if diff is not None:
+                sign = "+" if diff > 0 else ""
+                parts.append(
+                    f"<p>Разница (ожидаемый − приход): "
+                    f"<b>{sign}{diff} {html.escape(cur)}</b></p>"
+                )
+        return "".join(parts)
 
     @classmethod
     def _expected_income_plain(
-        cls, row: Optional[Dict[str, Any]], cur: str
+        cls,
+        row: Optional[Dict[str, Any]],
+        cur: str,
+        *,
+        deposit_gross: Optional[Decimal] = None,
     ) -> str:
+        since = JOURNAL_START.strftime("%d.%m.%Y")
         if not row:
             return (
                 f"Ожидаемый приход брутто (35% донатов Библии с "
-                f"{JOURNAL_START.strftime('%d.%m.%Y')}): нет данных"
+                f"{since}): нет данных"
             )
         as_of = cls._expected_as_of_label(row)
         amt = cls._ceil_money(row.get("cumulative_share_usd"), cur)
         rub_i = cls._expected_rub_ceil(row)
         rub_part = f" / <b>{rub_i} ₽</b>" if rub_i is not None else ""
-        return (
+        lines = [
             f"Ожидаемый приход брутто на {as_of} "
             f"(35% донатов Библии): <b>{html.escape(amt)}</b>{rub_part}"
-        )
+        ]
+        if deposit_gross is not None:
+            dep_amt = cls._ceil_money(deposit_gross, cur)
+            lines.append(
+                f"Приход брутто с {since}: <b>{html.escape(dep_amt)}</b>"
+            )
+            diff = cls._expected_vs_deposit_diff(row, deposit_gross)
+            if diff is not None:
+                sign = "+" if diff > 0 else ""
+                lines.append(
+                    f"Разница (ожидаемый − приход): "
+                    f"<b>{sign}{diff} {html.escape(cur)}</b>"
+                )
+        return "\n".join(lines)
 
     @staticmethod
     def _report_fallback_html(
@@ -878,11 +943,14 @@ class LedgerFeature(BaseFeature):
         months: List[Dict[str, Any]],
         *,
         expected: Optional[Dict[str, Any]] = None,
+        deposit_gross: Optional[Decimal] = None,
     ) -> str:
         lines = [
             "📊 <b>Отчёт</b>",
             f"Текущий баланс: <b>{html.escape(format_money(acc.get('balance'), cur))}</b>",
-            LedgerFeature._expected_income_plain(expected, cur),
+            LedgerFeature._expected_income_plain(
+                expected, cur, deposit_gross=deposit_gross
+            ),
             "",
         ]
         if not months:

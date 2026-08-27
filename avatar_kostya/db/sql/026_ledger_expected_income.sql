@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS ledger_expected_income_days (
 );
 
 COMMENT ON TABLE ledger_expected_income_days IS
-    'Ожидаемый приход брутто (USDT≈USD): 35% суммы донатов Biblia за день, нарастающий итог с 2026-08-20.';
+    'Ожидаемый приход брутто (USDT≈USD): 35% суммы донатов Biblia за день, нарастающий итог с 2026-08-16.';
 COMMENT ON COLUMN ledger_expected_income_days.day IS
     'Календарный день Europe/Moscow (сутки закрыты в 24:00).';
 COMMENT ON COLUMN ledger_expected_income_days.cumulative_share_usd IS

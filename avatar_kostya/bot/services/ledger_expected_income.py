@@ -15,7 +15,7 @@ from bot.services.ledger import MONEY_Q, today_msk
 logger = logging.getLogger(__name__)
 
 _MSK = ZoneInfo("Europe/Moscow")
-JOURNAL_START = date(2026, 8, 20)
+JOURNAL_START = date(2026, 8, 16)
 SHARE_PCT = Decimal("0.35")
 SOURCE = "biblia_bot"
 
