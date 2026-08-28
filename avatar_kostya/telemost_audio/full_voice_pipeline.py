@@ -9,14 +9,15 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from aiogram.enums import ParseMode
-from aiogram.types import FSInputFile
 
 from bot.utils.rag_admin_context import rag_full_voice_chat_topic
 from config import config
 from telemost_audio.ffmpeg_render import (
+    full_voice_delivery_kind,
     ogg_path_duration_sec,
     render_full_voice_ogg,
 )
+from telemost_audio.tg_voice_delivery import TgAudioKind, send_tg_audio_path
 from telemost_audio.full_voice_caption import build_full_voice_caption_parts
 from telemost_audio.recording_kind import (
     KIND_LABELS,
@@ -238,6 +239,9 @@ async def _run_full_voice_pipeline(
                 logger.error("telemost_full_voice: ffmpeg failed pending=%s", pid)
                 return
 
+            delivery_kind = full_voice_delivery_kind(voice_path)
+            media_kind = "voice" if delivery_kind == TgAudioKind.VOICE else "document"
+
             philosophy = getattr(config, "TELEMOST_SHORTS_PHILOSOPHY_HINT", "") or ""
             title_plain, desc_plain, caption = await build_full_voice_caption_parts(
                 meeting_title=str(title),
@@ -254,19 +258,19 @@ async def _run_full_voice_pipeline(
             if len(caption) > 1024:
                 caption = caption[:1021].rstrip() + "…"
 
-            voice_kwargs: Dict[str, Any] = {
+            send_kwargs: Dict[str, Any] = {
                 "caption": caption,
                 "parse_mode": ParseMode.HTML,
                 "message_thread_id": topic_id,
+                "kind": delivery_kind,
             }
-            dur = ogg_path_duration_sec(voice_path)
-            if dur is not None:
-                voice_kwargs["duration"] = dur
-            sent = await bot.send_voice(
+            sent = await send_tg_audio_path(
+                bot,
                 chat_id,
-                FSInputFile(str(voice_path)),
-                **voice_kwargs,
+                voice_path,
+                **send_kwargs,
             )
+            dur = ogg_path_duration_sec(voice_path) if delivery_kind == TgAudioKind.VOICE else None
             try:
                 await storage.create_caption_edit_session(
                     entity_type="full_voice",
@@ -275,7 +279,7 @@ async def _run_full_voice_pipeline(
                     caption_html=caption,
                     title=title_plain,
                     description=desc_plain,
-                    media_kind="voice",
+                    media_kind=media_kind,
                     topic_id=int(topic_id or 0),
                     pending_id=pending_id,
                     meeting_id=str(meeting_id or ""),
@@ -290,7 +294,7 @@ async def _run_full_voice_pipeline(
             except Exception as e:
                 logger.warning("full_voice caption session: %s", e)
             logger.info(
-                "telemost_full_voice sent kind=%s chat=%s topic=%s pending=%s dest=%s bytes=%s duration=%s",
+                "telemost_full_voice sent kind=%s chat=%s topic=%s pending=%s dest=%s bytes=%s duration=%s delivery=%s",
                 recording_kind,
                 chat_id,
                 topic_id,
@@ -298,6 +302,7 @@ async def _run_full_voice_pipeline(
                 "full_voice_topic",
                 voice_path.stat().st_size if voice_path.is_file() else 0,
                 dur,
+                delivery_kind.value,
             )
             if work_dir is not None:
                 rmtree_workdir(work_dir, label="telemost_full_voice_workdir")

@@ -1,15 +1,17 @@
 """Параллельно с нарезкой: готовые тексты Reels по полной расшифровке → топик 1492.
 
-Алгоритм двухшаговый:
-  1. Из расшифровки извлекаем главные мысли (STEP_EXTRACT).
-  2. Для каждой мысли — готовый к публикации текст (обложка, речь, описания).
-     Каждый сценарий — отдельное сообщение в топик.
+Алгоритм:
+  1. Из расшифровки извлекаем главные мысли (OpenAI).
+  2. Для каждой мысли — сценарий (OpenAI) → перекрёстная проверка (DeepSeek) →
+     доработка с сохранением контекста диалога (OpenAI, второй раунд).
+  3. Финальный сценарий — отдельное сообщение в топик.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
 import uuid
 from typing import Any, Dict, List, Optional
@@ -80,6 +82,30 @@ _SYSTEM_SCENARIO = """Ты — копирайтер для коротких ви
 — Вариант 3 (на телеграм-канал): [текст]
 
 Пиши по-русски."""
+
+_DEFAULT_PROJECT_DESC = """Проект Константина (Кости) в нише духовного развития:
+- Клуб «Разговоры с Богом» — закрытое сообщество для духовных бесед и практики
+- Бот «Ответ из Библии» — персональные молитвы и ответы из Писания
+- Телеграм-канал с эфирами и размышлениями
+
+Цель Reels: виральность, удержание досмотра, мягкий переход на один из продуктов проекта."""
+
+_SYSTEM_DEEPSEEK_REVIEW = """Ты — редактор коротких видео и вирального контента. Твоя задача — перекрёстная проверка сценария Reels перед публикацией.
+
+Тебе дан черновик сценария, мысль из эфира и описание проекта.
+
+Проанализируй: что ещё нужно изменить в сценарии, чтобы он стал более виральным и досматриваемым с учётом аудитории проекта.
+
+Дай минимум 3 конкретные правки для сценариста — не общие советы, а точечные замечания по тексту (обложка, речь, описания). Формулируй как задачи: «замени…», «усиль…», «сократи…».
+
+Пиши по-русски. Не переписывай весь сценарий — только нумерованный список правок."""
+
+_REVISION_USER_SUFFIX = (
+    "Перекрёстная проверка сценария. Редактор дал замечания ниже — учти их и выдай "
+    "обновлённый сценарий строго по шаблону из инструкции. "
+    "Только финальный текст (обложка, речь, описания), без комментариев о правках.\n\n"
+    "Замечания редактора:\n"
+)
 
 
 def enqueue_telemost_reels_brief(
@@ -155,22 +181,40 @@ def _get_max_tokens() -> int:
     return int(getattr(config, "TELEMOST_REELS_BRIEF_MAX_TOKENS", 16000) or 16000)
 
 
-async def _call_openai(
+def _crosscheck_enabled() -> bool:
+    return bool(getattr(config, "TELEMOST_REELS_BRIEF_CROSSCHECK_ENABLED", True))
+
+
+def _get_review_model() -> str:
+    return (
+        (getattr(config, "TELEMOST_REELS_BRIEF_REVIEW_MODEL", None) or "deepseek-chat").strip()
+        or "deepseek-chat"
+    )
+
+
+def _project_description() -> str:
+    custom = (getattr(config, "TELEMOST_REELS_BRIEF_PROJECT_DESC", None) or "").strip()
+    if custom:
+        return custom
+    hint = (getattr(config, "TELEMOST_SHORTS_PHILOSOPHY_HINT", None) or "").strip()
+    if hint:
+        return f"{_DEFAULT_PROJECT_DESC}\n\nДополнительно:\n{hint}"
+    return _DEFAULT_PROJECT_DESC
+
+
+async def _call_openai_messages(
     client: Any,
     *,
     model: str,
-    system: str,
-    user: str,
+    messages: List[Dict[str, str]],
     max_tokens: int,
+    temperature: float = 0.7,
 ) -> str:
     try:
         resp = await client.chat.completions.create(
             model=model,
-            messages=[
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
-            temperature=0.7,
+            messages=messages,
+            temperature=temperature,
             max_tokens=max(2000, min(32000, max_tokens)),
         )
     except Exception as e:
@@ -181,11 +225,8 @@ async def _call_openai(
             logger.warning("telemost_reels_brief: %s недоступна, fallback gpt-4o", model)
             resp = await client.chat.completions.create(
                 model="gpt-4o",
-                messages=[
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user},
-                ],
-                temperature=0.7,
+                messages=messages,
+                temperature=temperature,
                 max_tokens=max(2000, min(16000, max_tokens)),
             )
         else:
@@ -196,6 +237,77 @@ async def _call_openai(
     )
     if not text:
         raise RuntimeError("OpenAI вернул пустой ответ")
+    return text
+
+
+async def _call_openai(
+    client: Any,
+    *,
+    model: str,
+    system: str,
+    user: str,
+    max_tokens: int,
+) -> str:
+    return await _call_openai_messages(
+        client,
+        model=model,
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+        max_tokens=max_tokens,
+    )
+
+
+async def _call_deepseek_review(
+    *,
+    draft: str,
+    idea_text: str,
+    title: str,
+    kind_label: str,
+) -> str:
+    from openai import AsyncOpenAI
+
+    key = (os.getenv("DEEPSEEK_API_KEY") or "").strip()
+    if not key:
+        raise RuntimeError("DEEPSEEK_API_KEY не задан")
+
+    model = _get_review_model()
+    user = (
+        f"Тип записи: {kind_label}\n"
+        f"Название эфира: {title}\n\n"
+        f"Описание проекта:\n{_project_description()}\n\n"
+        f"Мысль из эфира:\n{idea_text}\n\n"
+        f"Сценарий Reels (черновик):\n{draft.strip()}"
+    )
+    client = AsyncOpenAI(
+        api_key=key,
+        base_url="https://api.deepseek.com/v1",
+        timeout=150.0,
+        max_retries=2,
+    )
+    try:
+        resp = await asyncio.wait_for(
+            client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": _SYSTEM_DEEPSEEK_REVIEW},
+                    {"role": "user", "content": user},
+                ],
+                temperature=0.45,
+                max_tokens=2500,
+            ),
+            timeout=120.0,
+        )
+    except Exception as e:
+        logger.error("telemost_reels_brief deepseek review failed: %s", e)
+        raise
+    choice = resp.choices[0] if resp.choices else None
+    text = (
+        (getattr(choice.message, "content", None) or "").strip() if choice else ""
+    )
+    if not text:
+        raise RuntimeError("DeepSeek вернул пустой ответ на перекрёстную проверку")
     return text
 
 
@@ -227,7 +339,7 @@ async def _build_scenario(
     model: str,
     max_tokens: int,
 ) -> str:
-    """Шаг 2: строим сценарий Reels по одной мысли."""
+    """Шаг 2: сценарий Reels по одной мысли (+ опционально перекрёстная проверка)."""
     user = (
         f"Тип записи: {kind_label}\n"
         f"Название эфира: {title}\n\n"
@@ -235,10 +347,50 @@ async def _build_scenario(
         "Сделай готовый к публикации текст Reels строго по шаблону из инструкции. "
         "Только обложка, текст рилса и описания — без режиссёрских указаний."
     )
-    return await _call_openai(
-        client, model=model, system=_SYSTEM_SCENARIO, user=user,
-        max_tokens=min(max_tokens, 4000),
+    messages: List[Dict[str, str]] = [
+        {"role": "system", "content": _SYSTEM_SCENARIO},
+        {"role": "user", "content": user},
+    ]
+    token_budget = min(max_tokens, 4000)
+
+    draft = await _call_openai_messages(
+        client,
+        model=model,
+        messages=messages,
+        max_tokens=token_budget,
     )
+    if not _crosscheck_enabled():
+        return draft
+
+    messages.append({"role": "assistant", "content": draft})
+
+    try:
+        review = await _call_deepseek_review(
+            draft=draft,
+            idea_text=idea_text,
+            title=title,
+            kind_label=kind_label,
+        )
+    except Exception as e:
+        logger.warning(
+            "telemost_reels_brief: crosscheck skipped, sending draft: %s", e
+        )
+        return draft
+
+    logger.info(
+        "telemost_reels_brief: deepseek review ok chars=%s",
+        len(review),
+    )
+    messages.append(
+        {"role": "user", "content": f"{_REVISION_USER_SUFFIX}{review}"}
+    )
+    revised = await _call_openai_messages(
+        client,
+        model=model,
+        messages=messages,
+        max_tokens=token_budget,
+    )
+    return revised
 
 
 def _parse_ideas(raw: str) -> List[str]:

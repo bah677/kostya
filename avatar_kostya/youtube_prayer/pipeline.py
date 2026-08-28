@@ -24,6 +24,7 @@ from youtube_prayer.deliver import (
     deliver_pipeline_stopped,
     deliver_topic_pack,
 )
+from youtube_prayer.youtube_uploader import upload_premiere_if_enabled
 from youtube_prayer.metadata import generate_video_metadata
 from youtube_prayer.render import render_horizontal
 from youtube_prayer.stock_broll import build_broll_montage
@@ -253,6 +254,34 @@ async def _run_lang_pack(
             covers=covers,
             metadata=meta,
         )
+
+        yt_note = ""
+        try:
+            yt = await upload_premiere_if_enabled(
+                video_path=horizontal,
+                thumbnail_path=covers.horizontal if covers else None,
+                metadata=meta,
+                lang=lang,
+                day=day,
+                index=i,
+                work_dir=item_dir,
+            )
+            if yt is not None:
+                yt_note = (
+                    f"📺 <b>YouTube премьера</b>: {yt.premiere_label}\n"
+                    f"<a href=\"{yt.url}\">{yt.url}</a>"
+                )
+                await bot.send_message(
+                    chat_id,
+                    yt_note,
+                    parse_mode="HTML",
+                    message_thread_id=int(topic_id) if topic_id else None,
+                    disable_web_page_preview=True,
+                )
+        except Exception as e:
+            logger.exception("yt_prayer YouTube upload failed trend=%r: %s", topic.trend, e)
+            await notify(f"⚠️ YouTube upload failed [{label} {i}]: {e}")
+
         theme_names.append(topic.trend)
         logger.info("yt_prayer %s item %s done trend=%r", lang, i, topic.trend)
 

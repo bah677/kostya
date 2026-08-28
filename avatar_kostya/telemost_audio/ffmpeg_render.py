@@ -19,6 +19,12 @@ from telemost_audio.telegram_voice_opus import (
     probe_media_duration_sec,
     shrink_ogg_under_limit,
 )
+from telemost_audio.tg_voice_delivery import (
+    TgAudioKind,
+    convert_path_to_mp3,
+    duration_allows_tg_voice,
+    is_proper_tg_voice_path,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -192,10 +198,6 @@ def _render_segment_sync(
         return False
 
 
-# Лимит Bot API на upload voice (~50 МиБ); волна для полной записи не цель.
-_TG_VOICE_UPLOAD_MAX_BYTES = 48 * 1024 * 1024
-
-
 def _render_full_voice_parts_sync(
     audio_path: Path,
     out_dir: Path,
@@ -203,9 +205,7 @@ def _render_full_voice_parts_sync(
     stem: str,
 ) -> List[Path]:
     """
-    Вся запись → один OGG Opus.
-    Не режем под волну (1 МиБ): приоритет — цельный эфир; duration для scrub.
-    Битрейт снижаем только если упираемся в лимит upload TG (~50 МиБ).
+    Вся запись → OGG Opus (если укладывается в лимит волны) или MP3-документ.
     """
     total = probe_media_duration_sec(audio_path) or 0.0
     if total <= 0:
@@ -213,35 +213,48 @@ def _render_full_voice_parts_sync(
         return []
 
     out_dir.mkdir(parents=True, exist_ok=True)
-    out = out_dir / f"{stem}.ogg"
-    for br in ("32k", "24k", "16k"):
-        if not _render_segment_sync(
+
+    if duration_allows_tg_voice(total):
+        out = out_dir / f"{stem}.ogg"
+        br = opus_bitrate_for_tg_waveform(total, floor_kbps=10, ceil_kbps=32)
+        if _render_segment_sync(
             audio_path,
             out,
             start_sec=0.0,
             duration_sec=total,
             bitrate=br,
-            enforce_waveform_limit=False,
-        ):
-            continue
-        size = out.stat().st_size
-        if size <= _TG_VOICE_UPLOAD_MAX_BYTES:
-            if size > TG_VOICE_WAVEFORM_MAX_BYTES:
-                logger.info(
-                    "full voice %s %s bytes >1MiB — без волны TG, файл цельный",
-                    out.name,
-                    size,
-                )
+            enforce_waveform_limit=True,
+        ) and is_proper_tg_voice_path(out):
+            logger.info(
+                "full voice %s %.0fs %s bytes — TG voice with waveform",
+                out.name,
+                total,
+                out.stat().st_size,
+            )
             return [out]
         logger.warning(
-            "full voice %s too large (%s) @%s — retry lower bitrate",
-            out.name,
-            size,
-            br,
+            "full voice ogg failed waveform limit dur=%.0fs — mp3 fallback",
+            total,
         )
-    if out.is_file() and out.stat().st_size > 5000:
-        return [out]
+
+    mp3 = out_dir / f"{stem}.mp3"
+    if convert_path_to_mp3(audio_path, mp3):
+        logger.info(
+            "full voice %s dur=%.0fs → mp3 document (%s bytes)",
+            mp3.name,
+            total,
+            mp3.stat().st_size,
+        )
+        return [mp3]
+
+    logger.error("full voice: neither ogg nor mp3 for %s", audio_path)
     return []
+
+
+def full_voice_delivery_kind(path: Path) -> TgAudioKind:
+    if path.suffix.lower() == ".mp3":
+        return TgAudioKind.DOCUMENT
+    return TgAudioKind.VOICE
 
 
 async def render_full_voice_ogg(
@@ -274,6 +287,7 @@ async def render_full_voice_ogg_parts(
 
 # re-export for callers that need duration on sendVoice
 __all__ = [
+    "full_voice_delivery_kind",
     "render_audio_clips",
     "render_full_voice_ogg",
     "render_full_voice_ogg_parts",

@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional
 from aiogram import Bot, Dispatcher, F
 from aiogram.enums import ParseMode
 from aiogram.filters import Command
-from aiogram.types import BufferedInputFile, CallbackQuery, Message
+from aiogram.types import CallbackQuery, Message
 
 from bot.admin_guard import is_admin_or_super
 from bot.features.base import BaseFeature
@@ -18,9 +18,9 @@ from bot.services.elevenlabs_tts import ElevenLabsTTS
 from bot.services.prayer_bg_music import mix_voice_with_bg_music
 from bot.services.prayer_tts_style import (
     audio_bytes_to_ogg_opus,
-    ogg_opus_duration_sec,
     resolve_prayer_tts_atempo,
 )
+from bot.services.tg_voice_delivery import prepare_ogg_bytes, send_tg_audio_payload
 from bot.services.prayer_voice_poll import (
     POLL_SLUG,
     PRAYER_VOICE_POLL_SAMPLE,
@@ -242,17 +242,24 @@ class PrayerVoicePollFeature(BaseFeature):
                     reply_markup=kb,
                 )
                 continue
-            dur = ogg_opus_duration_sec(ogg)
+            payload = prepare_ogg_bytes(ogg, filename_base=f"voice_poll_{idx}")
+            if not payload:
+                await self.bot.send_message(
+                    user_id,
+                    f"<i>{idx + 1}/{total}. {title} — не удалось подготовить аудио</i>",
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=kb,
+                )
+                continue
             kw: dict[str, Any] = {
                 "caption": caption[:1024],
                 "parse_mode": ParseMode.HTML,
                 "reply_markup": kb,
             }
-            if dur is not None:
-                kw["duration"] = dur
-            await self.bot.send_voice(
+            await send_tg_audio_payload(
                 user_id,
-                BufferedInputFile(ogg, filename=f"voice_poll_{idx}.ogg"),
+                payload,
+                bot=self.bot,
                 **kw,
             )
 

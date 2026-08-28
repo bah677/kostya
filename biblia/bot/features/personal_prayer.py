@@ -34,6 +34,12 @@ from bot.services.prayer_stress import (
 )
 from bot.services.prayer_bg_music import mix_voice_with_bg_music
 from bot.services.prayer_tts_style import ogg_opus_duration_sec, resolve_prayer_tts_atempo
+from bot.services.tg_voice_delivery import (
+    is_voice_forbidden_error,
+    prepare_ogg_bytes,
+    send_tg_audio_payload,
+    TgAudioKind,
+)
 from bot.services.prayer_tts_queue import PrayerTtsQueue, get_prayer_tts_queue
 from bot.services.prayer_rag import build_compose_user_content, fetch_prayer_style_examples
 from bot.services.salute_tts import SaluteSpeechTTS
@@ -153,10 +159,7 @@ def _strip_prayer_text(raw: str) -> str:
 
 
 def _is_voice_forbidden_error(exc: Exception) -> bool:
-    if not isinstance(exc, TelegramBadRequest):
-        return False
-    text = str(exc)
-    return "VOICE_MESSAGES_FORBIDDEN" in text or "voice messages forbidden" in text.lower()
+    return is_voice_forbidden_error(exc)
 
 
 def _format_user_context(turns: List[str]) -> str:
@@ -1119,6 +1122,57 @@ class PersonalPrayerFeature(BaseFeature):
             pool_progress=False,
         )
 
+    async def _send_prayer_audio(
+        self,
+        *,
+        chat_id: int,
+        ogg: bytes,
+        caption: str,
+        bot: Optional[Bot] = None,
+        message: Optional[Message] = None,
+        message_thread_id: Optional[int] = None,
+        filename_base: str = "prayer",
+        uid: int = 0,
+    ) -> bool:
+        payload = prepare_ogg_bytes(ogg, filename_base=filename_base)
+        if not payload:
+            return False
+        logger.info(
+            "[%s] sending prayer %s uid=%s bytes=%s duration=%s",
+            self.name,
+            payload.kind.value,
+            uid,
+            len(payload.data),
+            payload.duration_sec,
+        )
+        try:
+            await send_tg_audio_payload(
+                chat_id,
+                payload,
+                bot=bot,
+                message=message,
+                caption=caption,
+                message_thread_id=message_thread_id,
+            )
+            return True
+        except TelegramBadRequest as e:
+            if payload.kind == TgAudioKind.VOICE and _is_voice_forbidden_error(e):
+                logger.info(
+                    "[%s] voice forbidden uid=%s — только текст",
+                    self.name,
+                    uid,
+                )
+                if message:
+                    try:
+                        await message.answer(
+                            "<i>В этом чате голосовые недоступны — ниже текст молитвы.</i>",
+                            parse_mode=ParseMode.HTML,
+                        )
+                    except Exception:
+                        pass
+                return False
+            raise
+
     async def _deliver_prayer(
         self,
         message: Message,
@@ -1136,52 +1190,19 @@ class PersonalPrayerFeature(BaseFeature):
             intro_caption = intro_caption[: _TG_CAPTION_MAX - 1].rstrip() + "…"
 
         if ogg:
-            duration = ogg_opus_duration_sec(ogg)
-            logger.info(
-                "[%s] sending prayer voice uid=%s bytes=%s duration=%s",
-                self.name,
-                uid,
-                len(ogg),
-                duration,
+            sent = await self._send_prayer_audio(
+                chat_id=message.chat.id,
+                ogg=ogg,
+                caption=intro_caption,
+                bot=bot,
+                message=message if not bot else None,
+                message_thread_id=message.message_thread_id,
+                uid=uid,
             )
-            try:
-                # Аудио = молитва; подпись = короткая инструкция.
-                # duration обязателен: без него Bot API часто ставит 0 → нет scrub;
-                # файл >1MiB → пустая волна (см. prayer_tts_style / tg-bot-api#354).
-                voice_file = BufferedInputFile(ogg, filename="prayer.ogg")
-                if bot:
-                    kwargs = {
-                        "chat_id": message.chat.id,
-                        "voice": voice_file,
-                        "caption": intro_caption,
-                    }
-                    if duration is not None:
-                        kwargs["duration"] = duration
-                    if message.message_thread_id:
-                        kwargs["message_thread_id"] = message.message_thread_id
-                    await bot.send_voice(**kwargs)
-                else:
-                    voice_kwargs = {"caption": intro_caption}
-                    if duration is not None:
-                        voice_kwargs["duration"] = duration
-                    await message.answer_voice(voice_file, **voice_kwargs)
-                logger.info("[%s] prayer voice sent uid=%s", self.name, uid)
-            except TelegramBadRequest as e:
-                if not _is_voice_forbidden_error(e):
-                    logger.error("[%s] prayer voice send failed uid=%s: %s", self.name, uid, e)
-                    raise
-                logger.info(
-                    "[%s] voice forbidden for uid=%s — только текст",
-                    self.name,
-                    uid,
-                )
-                try:
-                    await message.answer(
-                        "<i>В этом чате голосовые недоступны — ниже текст молитвы.</i>",
-                        parse_mode=ParseMode.HTML,
-                    )
-                except Exception:
-                    pass
+            if sent:
+                logger.info("[%s] prayer audio sent uid=%s", self.name, uid)
+            else:
+                ogg = None
         else:
             logger.info("[%s] prayer voice missing uid=%s — текст без аудио", self.name, uid)
 
@@ -1310,19 +1331,19 @@ class PersonalPrayerFeature(BaseFeature):
 
         if ogg:
             try:
-                duration = ogg_opus_duration_sec(ogg)
-                voice_file = BufferedInputFile(ogg, filename="prayer.ogg")
-                kwargs = {
-                    "chat_id": user_id,
-                    "voice": voice_file,
-                    "caption": intro_caption,
-                }
-                if duration is not None:
-                    kwargs["duration"] = duration
-                await self.bot.send_voice(**kwargs)
+                sent = await self._send_prayer_audio(
+                    chat_id=user_id,
+                    ogg=ogg,
+                    caption=intro_caption,
+                    bot=self.bot,
+                    filename_base="prayer",
+                    uid=user_id,
+                )
+                if not sent:
+                    ogg = None
             except Exception as e:
                 logger.error(
-                    "[%s] unlock voice send failed uid=%s: %s",
+                    "[%s] unlock audio send failed uid=%s: %s",
                     self.name,
                     user_id,
                     e,

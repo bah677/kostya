@@ -128,6 +128,49 @@ def libopus_voice_args(*, bitrate: str) -> list[str]:
     ]
 
 
+def shrink_ogg_bytes(ogg: bytes) -> Optional[bytes]:
+    """Повторное сжатие OGG под лимит волны (~1 МиБ)."""
+    if not ogg or len(ogg) < 200:
+        return None
+    ffmpeg = shutil.which("ffmpeg") or "ffmpeg"
+    with tempfile.TemporaryDirectory(prefix="ogg_shrink_") as tmp:
+        root = Path(tmp)
+        src = root / "in.ogg"
+        dst = root / "out.ogg"
+        src.write_bytes(ogg)
+        dur = probe_media_duration_sec(src) or 0.0
+        if dur <= 0:
+            return None
+        br = opus_bitrate_for_tg_waveform(
+            dur,
+            max_bytes=int(TG_VOICE_WAVEFORM_MAX_BYTES * 0.82),
+            floor_kbps=10,
+            ceil_kbps=24,
+        )
+        cmd = [
+            ffmpeg,
+            "-y",
+            "-i",
+            str(src),
+            "-vn",
+            *libopus_voice_args(bitrate=br),
+            str(dst),
+        ]
+        try:
+            proc = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=600, check=False
+            )
+            if proc.returncode != 0:
+                logger.error("shrink ogg bytes: %s", (proc.stderr or "")[-500:])
+                return None
+            if not dst.is_file() or dst.stat().st_size < 200:
+                return None
+            return dst.read_bytes()
+        except Exception as e:
+            logger.exception("shrink ogg bytes: %s", e)
+            return None
+
+
 def audio_bytes_to_ogg_opus(
     audio_bytes: bytes,
     *,
@@ -174,12 +217,16 @@ def audio_bytes_to_ogg_opus(
                 return None
             data = ogg_path.read_bytes()
             if len(data) > TG_VOICE_WAVEFORM_MAX_BYTES:
-                logger.warning(
-                    "prayer ogg %s bytes >1MiB (bitrate=%s dur≈%.1fs) — TG waveform пустая",
-                    len(data),
-                    bitrate,
-                    out_dur,
-                )
+                shrunk = shrink_ogg_bytes(data)
+                if shrunk and len(shrunk) < len(data):
+                    data = shrunk
+                if len(data) > TG_VOICE_WAVEFORM_MAX_BYTES:
+                    logger.warning(
+                        "prayer ogg %s bytes >1MiB (bitrate=%s dur≈%.1fs) — будет MP3-документ",
+                        len(data),
+                        bitrate,
+                        out_dur,
+                    )
             return data
         except Exception as e:
             logger.exception("ffmpeg prayer tts convert: %s", e)

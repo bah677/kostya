@@ -259,6 +259,9 @@ class AppConfig:
     TELEMOST_REELS_BRIEF_TOPIC_ID: int = 1492
     TELEMOST_REELS_BRIEF_MODEL: str = "gpt-4.1"
     TELEMOST_REELS_BRIEF_MAX_TOKENS: int = 16000
+    TELEMOST_REELS_BRIEF_CROSSCHECK_ENABLED: bool = True
+    TELEMOST_REELS_BRIEF_REVIEW_MODEL: str = "deepseek-chat"
+    TELEMOST_REELS_BRIEF_PROJECT_DESC: str = ""
     TELEMOST_EFIR_TOPIC_ID: int = 3
     TELEMOST_MOLITVA_TOPIC_ID: int = 2
     # Топик «Покаяние» — задать позже (0 = пока не публиковать в клубной ветке).
@@ -321,6 +324,14 @@ class AppConfig:
     YT_PRAYER_EN_ENABLED: bool = False
     YT_PRAYER_EN_COUNT: int = 1
     YT_PRAYER_EN_VOICE_ID: str = "a4CnuaYbALRvW39mDitg"
+    # Автозагрузка на YouTube с премьерой в слоты МСК (по умолчанию 9 / 15 / 21).
+    YT_PRAYER_YOUTUBE_UPLOAD_ENABLED: bool = False
+    YT_PRAYER_YOUTUBE_LANGS: str = "ru"
+    YT_PRAYER_YOUTUBE_PREMIERE_HOURS_MSK: str = "9,15,21"
+    YT_PRAYER_YOUTUBE_CLIENT_SECRETS: str = "data/youtube_prayer/youtube_client_secret.json"
+    YT_PRAYER_YOUTUBE_TOKEN: str = "data/youtube_prayer/youtube_oauth_token.json"
+    YT_PRAYER_YOUTUBE_CATEGORY_ID: str = "22"
+    YT_PRAYER_YOUTUBE_NOTIFY_SUBSCRIBERS: bool = True
     # Опционально: сток Pexels; без ключа — lavfi-фон.
     PEXELS_API_KEY: str = ""
 
@@ -816,6 +827,16 @@ def load_app_config() -> AppConfig:
         TELEMOST_REELS_BRIEF_MAX_TOKENS=_safe_int_env(
             "TELEMOST_REELS_BRIEF_MAX_TOKENS", 16000, min_v=4000, max_v=32000
         ),
+        TELEMOST_REELS_BRIEF_CROSSCHECK_ENABLED=_env_flag_true(
+            "TELEMOST_REELS_BRIEF_CROSSCHECK_ENABLED", default=True
+        ),
+        TELEMOST_REELS_BRIEF_REVIEW_MODEL=(
+            os.getenv("TELEMOST_REELS_BRIEF_REVIEW_MODEL") or "deepseek-chat"
+        ).strip()
+        or "deepseek-chat",
+        TELEMOST_REELS_BRIEF_PROJECT_DESC=(
+            os.getenv("TELEMOST_REELS_BRIEF_PROJECT_DESC") or ""
+        ).strip(),
         TELEMOST_EFIR_TOPIC_ID=int(os.getenv("TELEMOST_EFIR_TOPIC_ID", "3") or 3),
         TELEMOST_MOLITVA_TOPIC_ID=int(
             os.getenv("TELEMOST_MOLITVA_TOPIC_ID", "2") or 2
@@ -904,6 +925,32 @@ def load_app_config() -> AppConfig:
             os.getenv("YT_PRAYER_EN_VOICE_ID") or "a4CnuaYbALRvW39mDitg"
         ).strip()
         or "a4CnuaYbALRvW39mDitg",
+        YT_PRAYER_YOUTUBE_UPLOAD_ENABLED=_env_flag_true(
+            "YT_PRAYER_YOUTUBE_UPLOAD_ENABLED", default=False
+        ),
+        YT_PRAYER_YOUTUBE_LANGS=(
+            os.getenv("YT_PRAYER_YOUTUBE_LANGS") or "ru"
+        ).strip()
+        or "ru",
+        YT_PRAYER_YOUTUBE_PREMIERE_HOURS_MSK=(
+            os.getenv("YT_PRAYER_YOUTUBE_PREMIERE_HOURS_MSK") or "9,15,21"
+        ).strip()
+        or "9,15,21",
+        YT_PRAYER_YOUTUBE_CLIENT_SECRETS=(
+            os.getenv("YT_PRAYER_YOUTUBE_CLIENT_SECRETS")
+            or "data/youtube_prayer/youtube_client_secret.json"
+        ).strip(),
+        YT_PRAYER_YOUTUBE_TOKEN=(
+            os.getenv("YT_PRAYER_YOUTUBE_TOKEN")
+            or "data/youtube_prayer/youtube_oauth_token.json"
+        ).strip(),
+        YT_PRAYER_YOUTUBE_CATEGORY_ID=(
+            os.getenv("YT_PRAYER_YOUTUBE_CATEGORY_ID") or "22"
+        ).strip()
+        or "22",
+        YT_PRAYER_YOUTUBE_NOTIFY_SUBSCRIBERS=_env_flag_true(
+            "YT_PRAYER_YOUTUBE_NOTIFY_SUBSCRIBERS", default=True
+        ),
         PEXELS_API_KEY=(os.getenv("PEXELS_API_KEY") or "").strip(),
     )
 
