@@ -105,6 +105,7 @@ async def _elevenlabs_mp3(
     *,
     voice_id: Optional[str] = None,
     lang: str = "ru",
+    stress_amen: bool = True,
 ) -> bytes:
     api_key = _env("ELEVENLABS_API_KEY")
     vid = (voice_id or _env("ELEVENLABS_VOICE_ID")).strip()
@@ -122,7 +123,7 @@ async def _elevenlabs_mp3(
     if not api_key or not vid:
         raise RuntimeError("ELEVENLABS_API_KEY / voice_id не заданы")
 
-    body = format_prayer_for_tts(text, lang=lang)
+    body = format_prayer_for_tts(text, lang=lang, stress_amen=stress_amen)
     if not body:
         raise ValueError("empty prayer text after format")
     if len(body) > _MAX_CHARS:
@@ -267,13 +268,16 @@ async def synthesize_prayer_audio(
     work_dir: Path,
     voice_id: Optional[str] = None,
     lang: str = "ru",
+    stress_amen: bool = True,
 ) -> Tuple[Path, Optional[Path], float, str]:
     """
     Returns: (wav_path, ogg_path|None, duration_sec, tts_text)
     """
     work_dir.mkdir(parents=True, exist_ok=True)
-    tts_text = format_prayer_for_tts(prayer_text, lang=lang)
-    mp3 = await _elevenlabs_mp3(prayer_text, voice_id=voice_id, lang=lang)
+    tts_text = format_prayer_for_tts(prayer_text, lang=lang, stress_amen=stress_amen)
+    mp3 = await _elevenlabs_mp3(
+        prayer_text, voice_id=voice_id, lang=lang, stress_amen=stress_amen
+    )
     wav_path = work_dir / "prayer_mixed.wav"
     ogg_path = work_dir / "prayer_mixed.ogg"
     dur = await asyncio.to_thread(

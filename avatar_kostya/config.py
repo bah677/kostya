@@ -332,6 +332,13 @@ class AppConfig:
     YT_PRAYER_YOUTUBE_TOKEN: str = "data/youtube_prayer/youtube_oauth_token.json"
     YT_PRAYER_YOUTUBE_CATEGORY_ID: str = "22"
     YT_PRAYER_YOUTUBE_NOTIFY_SUBSCRIBERS: bool = True
+    # YouTube Shorts: 8 отдельных вертикальных молитв 1–2 мин, премьера каждые 3 ч МСК.
+    YT_SHORTS_ENABLED: bool = True
+    YT_SHORTS_COUNT: int = 8
+    YT_SHORTS_WORK_DIR: str = "data/youtube_shorts"
+    YT_SHORTS_TOPIC_ID: int = 0
+    YT_SHORTS_YOUTUBE_UPLOAD_ENABLED: Optional[bool] = None
+    YT_SHORTS_YOUTUBE_PREMIERE_HOURS_MSK: str = "0,3,6,9,12,15,18,21"
     # Опционально: сток Pexels; без ключа — lavfi-фон.
     PEXELS_API_KEY: str = ""
 
@@ -951,6 +958,21 @@ def load_app_config() -> AppConfig:
         YT_PRAYER_YOUTUBE_NOTIFY_SUBSCRIBERS=_env_flag_true(
             "YT_PRAYER_YOUTUBE_NOTIFY_SUBSCRIBERS", default=True
         ),
+        YT_SHORTS_ENABLED=_env_flag_true("YT_SHORTS_ENABLED", default=True),
+        YT_SHORTS_COUNT=max(
+            1, min(12, int(os.getenv("YT_SHORTS_COUNT", "8") or 8))
+        ),
+        YT_SHORTS_WORK_DIR=(os.getenv("YT_SHORTS_WORK_DIR") or "data/youtube_shorts"),
+        YT_SHORTS_TOPIC_ID=int(os.getenv("YT_SHORTS_TOPIC_ID", "0") or 0),
+        YT_SHORTS_YOUTUBE_UPLOAD_ENABLED=(
+            _env_flag_true("YT_SHORTS_YOUTUBE_UPLOAD_ENABLED")
+            if (os.getenv("YT_SHORTS_YOUTUBE_UPLOAD_ENABLED") or "").strip()
+            else None
+        ),
+        YT_SHORTS_YOUTUBE_PREMIERE_HOURS_MSK=(
+            os.getenv("YT_SHORTS_YOUTUBE_PREMIERE_HOURS_MSK")
+            or "0,3,6,9,12,15,18,21"
+        ).strip(),
         PEXELS_API_KEY=(os.getenv("PEXELS_API_KEY") or "").strip(),
     )
 

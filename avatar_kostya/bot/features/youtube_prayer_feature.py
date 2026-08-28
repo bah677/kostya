@@ -162,18 +162,56 @@ class YoutubePrayerFeature(BaseFeature):
                 en_count=en_count,
                 en_voice_id=str(en_voice),
             )
+            shorts_msg = ""
+            if getattr(config, "YT_SHORTS_ENABLED", True):
+                from youtube_shorts.pipeline import run_daily_youtube_shorts_pipeline
+
+                shorts_work = Path(
+                    getattr(config, "YT_SHORTS_WORK_DIR", None)
+                    or "data/youtube_shorts"
+                )
+                if not shorts_work.is_absolute():
+                    shorts_work = Path(__file__).resolve().parents[2] / shorts_work
+                shorts_topic = int(getattr(config, "YT_SHORTS_TOPIC_ID", 0) or 0)
+                if not shorts_topic:
+                    shorts_topic = topic_id
+                shorts_count = int(getattr(config, "YT_SHORTS_COUNT", 8) or 8)
+                shorts_result = await run_daily_youtube_shorts_pipeline(
+                    self._app.bot,
+                    chat_id=chat_id,
+                    topic_id=shorts_topic,
+                    work_root=shorts_work,
+                    count=shorts_count,
+                    force=force,
+                    progress_chat_id=progress_chat_id,
+                    history_days=history_days,
+                    horizontal_work_root=work,
+                )
+                if shorts_result.skipped:
+                    shorts_msg = f" Shorts: уже готовы за {shorts_result.day}."
+                elif shorts_result.ok:
+                    shorts_msg = f" Shorts: ×{len(shorts_result.themes)}."
+                else:
+                    shorts_msg = f" Shorts: ошибка — {shorts_result.error}"
             if progress_chat_id:
-                if result.skipped:
-                    msg = f"Уже есть готовый прогон за {result.day}. Добавьте force: /yt_prayer force"
+                if result.skipped and not force:
+                    msg = (
+                        f"Уже есть готовый прогон за {result.day}. "
+                        f"Добавьте force: /yt_prayer force{shorts_msg}"
+                    )
                 elif result.ok:
                     parts = []
                     if result.themes:
                         parts.append("RU: " + ", ".join(result.themes))
                     if result.themes_en:
                         parts.append("EN: " + ", ".join(result.themes_en))
-                    msg = f"Готово за {result.day}. " + (" | ".join(parts) if parts else "ok")
+                    msg = (
+                        f"Готово за {result.day}. "
+                        + (" | ".join(parts) if parts else "ok")
+                        + shorts_msg
+                    )
                 else:
-                    msg = f"⛔ Пайплайн остановлен по ошибке.\n{result.error}"
+                    msg = f"⛔ Пайплайн остановлен по ошибке.\n{result.error}{shorts_msg}"
                 try:
                     await self._app.bot.send_message(progress_chat_id, msg)
                 except Exception:

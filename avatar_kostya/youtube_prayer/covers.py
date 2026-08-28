@@ -17,6 +17,7 @@ import httpx
 logger = logging.getLogger(__name__)
 
 _FULL_W, _FULL_H = 1280, 720
+_SHORT_W, _SHORT_H = 1080, 1920
 _GEN_ATTEMPTS = 2
 
 
@@ -25,6 +26,7 @@ class CoverPack:
     title: str
     thumbnail_title: str
     horizontal: Path
+    vertical: Optional[Path] = None
 
 
 def _ffmpeg() -> str:
@@ -50,6 +52,7 @@ async def _gen_cover_bg(
     thumbnail_title: str,
     broll_query: str,
     dest: Path,
+    size: str = "1536x1024",
 ) -> bool:
     key = (os.getenv("OPENAI_API_KEY") or "").strip()
     if not key:
@@ -75,9 +78,9 @@ async def _gen_cover_bg(
         f"Scene mood keywords: {theme}"
     )
     try:
-        kwargs = {"model": model, "prompt": mood, "n": 1, "size": "1536x1024"}
+        kwargs = {"model": model, "prompt": mood, "n": 1, "size": size}
         if model.startswith("dall-e"):
-            kwargs["size"] = "1792x1024"
+            kwargs["size"] = "1792x1024" if size == "1536x1024" else "1024x1792"
             kwargs["response_format"] = "b64_json"
         resp = await client.images.generate(**kwargs)
         item = resp.data[0]
@@ -100,7 +103,7 @@ async def _gen_cover_bg(
                     model="dall-e-3",
                     prompt=mood,
                     n=1,
-                    size="1792x1024",
+                    size="1024x1792" if size != "1536x1024" else "1792x1024",
                     response_format="b64_json",
                 )
                 dest.write_bytes(base64.b64decode(resp.data[0].b64_json))
@@ -232,4 +235,65 @@ async def generate_cover_pack(
         title=video_title,
         thumbnail_title=thumb_title,
         horizontal=out_h,
+    )
+
+
+async def generate_vertical_cover_pack(
+    work_dir: Path,
+    *,
+    title: str,
+    thumbnail_title: str,
+    trend: str,
+    brief: str = "",
+    broll_query: str = "",
+) -> Optional[CoverPack]:
+    """AI-обложка 9:16 для YouTube Shorts."""
+    work_dir.mkdir(parents=True, exist_ok=True)
+    video_title = (title or "").strip()
+    thumb_title = (thumbnail_title or video_title).strip()
+    if len(thumb_title) < 3:
+        logger.error("vertical cover: empty thumbnail title")
+        return None
+    (work_dir / "cover_title_vertical.txt").write_text(thumb_title + "\n", encoding="utf-8")
+
+    bg_v = work_dir / "cover_bg_v.png"
+    ok_v = False
+    for attempt in range(1, _GEN_ATTEMPTS + 1):
+        ok_v = await _gen_cover_bg(
+            trend=trend,
+            brief=brief,
+            thumbnail_title=thumb_title,
+            broll_query=broll_query,
+            dest=bg_v,
+            size="1024x1536",
+        )
+        if ok_v:
+            break
+        logger.warning("vertical cover AI attempt %s/%s failed", attempt, _GEN_ATTEMPTS)
+        await asyncio.sleep(0.8 * attempt)
+    if not ok_v:
+        logger.error("vertical cover AI failed after %s attempts", _GEN_ATTEMPTS)
+        return None
+
+    out_v = work_dir / "cover_9x16.jpg"
+    ok = await asyncio.to_thread(
+        _burn_title,
+        bg_v,
+        out_v,
+        title=thumb_title,
+        width=_SHORT_W,
+        height=_SHORT_H,
+        fontsize=64,
+        max_chars=16,
+        max_lines=4,
+    )
+    if not (ok and out_v.is_file()):
+        logger.warning("vertical cover burn failed title=%r", thumb_title)
+        return None
+    logger.info("vertical cover ok thumb=%r", thumb_title)
+    return CoverPack(
+        title=video_title,
+        thumbnail_title=thumb_title,
+        horizontal=out_v,
+        vertical=out_v,
     )

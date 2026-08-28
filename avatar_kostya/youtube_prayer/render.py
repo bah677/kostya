@@ -50,7 +50,8 @@ def _sec_to_ass_time(sec: float) -> str:
     return f"{h}:{m:02d}:{s:02d}.{cs:02d}"
 
 
-def _wrap_line(text: str, max_chars: int = 28) -> str:
+def _wrap_line(text: str, max_chars: int = 28) -> List[str]:
+    """Разбить текст субтитра на 1–2 строки."""
     words = " ".join((text or "").split()).split()
     lines: List[str] = []
     cur: List[str] = []
@@ -68,7 +69,17 @@ def _wrap_line(text: str, max_chars: int = 28) -> str:
             n += add
     if cur and len(lines) < 2:
         lines.append(" ".join(cur))
-    return "\\N".join(lines[:2])
+    return lines[:2]
+
+
+def _ass_line_break(lines: Sequence[str]) -> str:
+    """ASS-перенос: \\N между строками, каждая строка экранируется отдельно."""
+    parts = [_ass_escape_text(ln) for ln in lines if (ln or "").strip()]
+    if not parts:
+        return ""
+    if len(parts) == 1:
+        return parts[0]
+    return "\\N".join(parts)
 
 
 def _ass_escape_text(text: str) -> str:
@@ -94,12 +105,12 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     for start, end, text in chunks:
         if end <= start or not (text or "").strip():
             continue
-        wrapped = _wrap_line(text)
+        wrapped = _ass_line_break(_wrap_line(text))
         if not wrapped:
             continue
         lines.append(
             f"Dialogue: 0,{_sec_to_ass_time(start)},{_sec_to_ass_time(end)},"
-            f"Shorts,,0,0,0,,{_ass_escape_text(wrapped)}"
+            f"Shorts,,0,0,0,,{wrapped}"
         )
     path.write_text("\n".join(lines), encoding="utf-8")
 
@@ -341,6 +352,114 @@ def render_short(
         proc2 = subprocess.run(cmd, capture_output=True, text=True, timeout=300, check=False)
         if proc2.returncode != 0 or not out_path.is_file():
             raise RuntimeError(f"short render failed: {(proc2.stderr or '')[-500:]}")
+    return out_path
+
+
+def subtitle_chunks_full(
+    prayer_text: str,
+    *,
+    duration_sec: float,
+    words_per_cue: int = 5,
+    offset_sec: float = 0.0,
+) -> List[Tuple[float, float, str]]:
+    """Субтитры на всю длительность вертикального ролика."""
+    return subtitle_chunks_for_window(
+        prayer_text,
+        full_duration=duration_sec,
+        window_start=0.0,
+        window_end=max(1.0, float(duration_sec)),
+        words_per_cue=words_per_cue,
+        offset_sec=offset_sec,
+    )
+
+
+def render_vertical_full(
+    *,
+    broll_path: Path,
+    audio_wav: Path,
+    out_path: Path,
+    duration_sec: float,
+    prayer_text: str,
+    work_dir: Path,
+    width: int = SHORT_W,
+    height: int = SHORT_H,
+) -> Path:
+    """9:16 полная молитва: b-roll + аудио + субтитры по всему тексту."""
+    ffmpeg = _ffmpeg()
+    dur = max(10.0, float(duration_sec))
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    ass_path = work_dir / f"{out_path.stem}.ass"
+    offset = _env_float("YT_PRAYER_SUBTITLE_OFFSET_SEC", -0.35)
+    chunks = subtitle_chunks_full(
+        prayer_text,
+        duration_sec=dur,
+        words_per_cue=5,
+        offset_sec=offset,
+    )
+    _write_short_ass(ass_path, chunks)
+    ass_esc = ass_path.resolve().as_posix().replace("\\", "/").replace(":", "\\:")
+    vf_fill = (
+        f"scale={width}:{height}:force_original_aspect_ratio=increase,"
+        f"crop={width}:{height},setsar=1,fps=25,format=yuv420p,"
+        f"ass='{ass_esc}'"
+    )
+    cmd = [
+        ffmpeg,
+        "-y",
+        "-i",
+        str(broll_path),
+        "-i",
+        str(audio_wav),
+        "-t",
+        f"{dur:.3f}",
+        "-map",
+        "0:v:0",
+        "-map",
+        "1:a:0",
+        "-vf",
+        vf_fill,
+        "-c:v",
+        "libx264",
+        "-preset",
+        "veryfast",
+        "-crf",
+        "23",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "128k",
+        "-ar",
+        "48000",
+        "-ac",
+        "2",
+        "-shortest",
+        "-movflags",
+        "+faststart",
+        str(out_path),
+    ]
+    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=600, check=False)
+    if proc.returncode != 0 or not out_path.is_file():
+        logger.warning(
+            "vertical with ass failed, retry without subs: %s",
+            (proc.stderr or "")[-400:],
+        )
+        vf_plain = (
+            f"scale={width}:{height}:force_original_aspect_ratio=increase,"
+            f"crop={width}:{height},setsar=1,fps=25,format=yuv420p"
+        )
+        cmd[cmd.index("-vf") + 1] = vf_plain
+        proc2 = subprocess.run(cmd, capture_output=True, text=True, timeout=600, check=False)
+        if proc2.returncode != 0 or not out_path.is_file():
+            raise RuntimeError(
+                f"vertical render failed: {(proc2.stderr or '')[-600:]}"
+            )
+    logger.info(
+        "vertical ok %s %sx%s bytes=%s",
+        out_path.name,
+        width,
+        height,
+        out_path.stat().st_size,
+    )
     return out_path
 
 

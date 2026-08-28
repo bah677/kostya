@@ -82,7 +82,13 @@ def _pack_prayer_paragraphs(sentences: list[str]) -> list[str]:
     return paras
 
 
-def format_prayer_for_tts(text: str, *, lang: str = "ru") -> str:
+def normalize_amen_display(text: str) -> str:
+    """«Аминь» для текста, субтитров и Telegram (без ударения для TTS)."""
+    t = _AMEN_FLEX_RE.sub("Аминь", text or "")
+    return re.sub(r"амИнь", "Аминь", t, flags=re.I)
+
+
+def format_prayer_for_tts(text: str, *, lang: str = "ru", stress_amen: bool = True) -> str:
     t = (text or "").strip()
     t = re.sub(r"^```(?:\w+)?\s*", "", t)
     t = re.sub(r"\s*```$", "", t)
@@ -111,17 +117,30 @@ def format_prayer_for_tts(text: str, *, lang: str = "ru") -> str:
             if _AMEN_EN_RE.search(last):
                 amen = last if "Amen" in last else _AMEN_EN_RE.sub("Amen", last)
                 sentences = sentences[:-1]
-        elif _AMEN_FLEX_RE.search(last):
-            amen = ensure_amen_stress(last)
+        elif _AMEN_FLEX_RE.search(last) or (
+            not stress_amen and "аминь" in last.casefold()
+        ):
+            amen = (
+                ensure_amen_stress(last)
+                if stress_amen
+                else normalize_amen_display(last)
+            )
             sentences = sentences[:-1]
 
     paras = _pack_prayer_paragraphs(sentences)
     out = "\n\n".join(paras)
     if amen:
-        out = f"{out}\n\n{amen}".strip() if out else amen
+        if lang == "en":
+            out = f"{out}\n\n{amen}".strip() if out else amen
+        elif stress_amen:
+            out = f"{out}\n\n{ensure_amen_stress(amen)}".strip() if out else ensure_amen_stress(amen)
+        else:
+            out = f"{out}\n\n{normalize_amen_display(amen)}".strip() if out else normalize_amen_display(amen)
     if lang == "en":
         return out
-    return ensure_amen_stress(out) if out else ""
+    if stress_amen:
+        return ensure_amen_stress(out) if out else ""
+    return normalize_amen_display(out) if out else ""
 
 
 def prayer_text_looks_complete(text: str, *, lang: str = "ru") -> bool:
