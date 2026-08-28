@@ -85,6 +85,8 @@ class Config:
     CLUB_GROUP_NIGHTLY_AUDIT_ENABLED: bool = True
     #: Цепочка напоминаний об окончании подписки (9:00 МСК). Для nastya по умолчанию выкл.
     SUBSCRIPTION_REMINDER_ENABLED: bool = True
+    #: Окно (дней назад по МСК) для post_bonus + kick, если утренний прогон пропустил вчера.
+    SUBSCRIPTION_POST_BONUS_LOOKBACK_DAYS: int = 7
     #: Блоки DeepSeek в ежедневном отчёте v2. Для nastya по умолчанию выкл.
     CLUB_REPORT_INCLUDE_DEEPSEEK: bool = True
     #: Ежедневный клубный отчёт в ADMIN_CHANNEL_ID: час (0–23), как legacy Adm REPORT_HOUR. Час пояс — Europe/Moscow.
@@ -525,6 +527,13 @@ def load_config() -> Config:
         ),
         SUBSCRIPTION_REMINDER_ENABLED=_env_bool_nastya_off(
             "SUBSCRIPTION_REMINDER_ENABLED"
+        ),
+        SUBSCRIPTION_POST_BONUS_LOOKBACK_DAYS=max(
+            1,
+            min(
+                30,
+                int(os.getenv("SUBSCRIPTION_POST_BONUS_LOOKBACK_DAYS", "7") or "7"),
+            ),
         ),
         CLUB_REPORT_INCLUDE_DEEPSEEK=_env_bool_nastya_off(
             "CLUB_REPORT_INCLUDE_DEEPSEEK"

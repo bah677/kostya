@@ -1,7 +1,7 @@
 # bot/features/subscription_reminder.py
 import asyncio
 import logging
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 from aiogram import Dispatcher, F
@@ -187,10 +187,89 @@ class SubscriptionReminderFeature(BaseFeature):
     async def _process_all(self):
         today_msk = today_moscow()
         logger.info("📅 subscription_reminder: дата МСК %s", today_msk)
-        await self._process_reminders(today_msk)
-        await self._process_bonus_extensions(today_msk)
-        await self._process_expired_and_remove(today_msk)
-        await self._process_churn_outreach(today_msk)
+        steps = (
+            ("reminders", self._process_reminders),
+            ("bonus_extensions", self._process_bonus_extensions),
+            ("post_bonus_remove", self._process_expired_and_remove),
+            ("churn_outreach", self._process_churn_outreach),
+        )
+        for step_name, step_fn in steps:
+            try:
+                await step_fn(today_msk)
+            except Exception as e:
+                logger.error(
+                    "subscription_reminder: шаг %s упал — остальные продолжаем: %s",
+                    step_name,
+                    e,
+                    exc_info=True,
+                )
+
+    async def _reminder_body(
+        self,
+        *,
+        uid: int,
+        first_name: Optional[str],
+        reminder: Dict[str, Any],
+        license_expires_at: Any,
+    ) -> str:
+        days_before = int(reminder["days_before"])
+        if config.MEMBER_RENEWAL_AI_ENABLED and self._llm_client:
+            try:
+                from bot.services.member_renewal_outreach import (
+                    generate_renewal_outreach_html,
+                )
+
+                body = await generate_renewal_outreach_html(
+                    user_storage=self.user_storage,
+                    llm_client=self._llm_client,
+                    rag_stack=self.rag_stack,
+                    user_id=uid,
+                    first_name=first_name,
+                    reminder=reminder,
+                    license_expires_at=license_expires_at,
+                )
+                await self.user_storage.set_member_renewal_state(
+                    uid, f"reminder_{days_before}d"
+                )
+                return body
+            except Exception as e:
+                logger.warning(
+                    "renewal AI fallback uid=%s days_before=%s: %s",
+                    uid,
+                    days_before,
+                    e,
+                )
+        return sub_txt.personalize_html(reminder["text"], first_name)
+
+    async def _churn_body(
+        self,
+        *,
+        uid: int,
+        first_name: Optional[str],
+        block: Dict[str, Any],
+    ) -> str:
+        if config.MEMBER_CHURN_AI_ENABLED and self._llm_client:
+            try:
+                from bot.services.member_churn_outreach import (
+                    generate_churn_outreach_html,
+                )
+
+                return await generate_churn_outreach_html(
+                    user_storage=self.user_storage,
+                    llm_client=self._llm_client,
+                    rag_stack=self.rag_stack,
+                    user_id=uid,
+                    first_name=first_name,
+                    churn_block=block,
+                )
+            except Exception as e:
+                logger.warning(
+                    "churn AI fallback uid=%s slug=%s: %s",
+                    uid,
+                    block.get("slug"),
+                    e,
+                )
+        return sub_txt.personalize_html(block["text"], first_name)
 
     async def _process_reminders(self, today_msk: date):
         ordered = sorted(
@@ -208,56 +287,52 @@ class SubscriptionReminderFeature(BaseFeature):
 
             for lic in licenses:
                 uid = lic["user_id"]
-                from bot.utils.admin_outreach_skip import (
-                    should_skip_subscription_outreach_slug,
-                )
-
-                if await should_skip_subscription_outreach_slug(
-                    self.user_storage, uid, slug
-                ):
-                    continue
-                if (
-                    reminder.get("keyboard") == "affiliate_and_extend"
-                    and await self.user_storage.is_telegram_admin_id(uid)
-                ):
-                    continue
-                first_name = lic.get("first_name")
-                claimed = await self.user_storage.try_claim_subscription_outreach(
-                    uid, slug, today_msk
-                )
-                if not claimed:
-                    continue
-
-                if config.MEMBER_RENEWAL_AI_ENABLED and self._llm_client:
-                    from bot.services.member_renewal_outreach import (
-                        generate_renewal_outreach_html,
+                try:
+                    from bot.utils.admin_outreach_skip import (
+                        should_skip_subscription_outreach_slug,
                     )
 
-                    body = await generate_renewal_outreach_html(
-                        user_storage=self.user_storage,
-                        llm_client=self._llm_client,
-                        rag_stack=self.rag_stack,
-                        user_id=uid,
+                    if await should_skip_subscription_outreach_slug(
+                        self.user_storage, uid, slug
+                    ):
+                        continue
+                    if (
+                        reminder.get("keyboard") == "affiliate_and_extend"
+                        and await self.user_storage.is_telegram_admin_id(uid)
+                    ):
+                        continue
+                    first_name = lic.get("first_name")
+                    claimed = await self.user_storage.try_claim_subscription_outreach(
+                        uid, slug, today_msk
+                    )
+                    if not claimed:
+                        continue
+
+                    body = await self._reminder_body(
+                        uid=uid,
                         first_name=first_name,
                         reminder=reminder,
                         license_expires_at=lic.get("expires_at"),
                     )
-                    await self.user_storage.set_member_renewal_state(
-                        uid, f"reminder_{days_before}d"
-                    )
-                else:
-                    body = sub_txt.personalize_html(reminder["text"], first_name)
 
-                kb = self._keyboard_reminder(reminder["keyboard"])
-                ok = await self._send_html(uid, body, kb)
-                if ok:
-                    logger.info(
-                        "📨 Reminder slug=%s days_before=%s user=%s",
-                        slug,
-                        days_before,
+                    kb = self._keyboard_reminder(reminder["keyboard"])
+                    ok = await self._send_html(uid, body, kb)
+                    if ok:
+                        logger.info(
+                            "📨 Reminder slug=%s days_before=%s user=%s",
+                            slug,
+                            days_before,
+                            uid,
+                        )
+                    await asyncio.sleep(0.5)
+                except Exception as e:
+                    logger.error(
+                        "subscription_reminder reminder uid=%s slug=%s: %s",
                         uid,
+                        slug,
+                        e,
+                        exc_info=True,
                     )
-                await asyncio.sleep(0.5)
 
     async def _process_bonus_extensions(self, today_msk: date):
         yesterday = today_msk - timedelta(days=1)
@@ -267,44 +342,54 @@ class SubscriptionReminderFeature(BaseFeature):
 
         for lic in licenses:
             uid = lic["user_id"]
-            from bot.utils.admin_outreach_skip import (
-                should_skip_subscription_outreach_slug,
-            )
-
-            if await should_skip_subscription_outreach_slug(
-                self.user_storage, uid, _OUTREACH_SLUG_BONUS
-            ):
-                continue
-            claimed = await self.user_storage.try_claim_subscription_outreach(
-                uid, _OUTREACH_SLUG_BONUS, today_msk
-            )
-            if not claimed:
-                continue
-
-            new_expiry = datetime.now(MSK_TZ) + timedelta(
-                days=self.BONUS_CONFIG["bonus_days"]
-            )
-
-            converted = await self.user_storage.convert_to_bonus_license(uid, new_expiry)
-            if not converted:
-                logger.error(
-                    "❌ convert_to_bonus_license uid=%s — нет активной лицензии или БД",
-                    uid,
+            try:
+                from bot.utils.admin_outreach_skip import (
+                    should_skip_subscription_outreach_slug,
                 )
-                continue
 
-            fn = await self._first_name(uid)
-            msg = sub_txt.personalize_html(self.BONUS_CONFIG["message"], fn)
-            kb = with_main_menu(
-                [[payment_cta_button(self.BONUS_CONFIG["button"])]]
-            )
-            await self._send_html(uid, msg, kb)
-            logger.info(
-                "🎁 Bonus extension uid=%s until %s",
-                uid,
-                new_expiry.date(),
-            )
-            await asyncio.sleep(0.5)
+                if await should_skip_subscription_outreach_slug(
+                    self.user_storage, uid, _OUTREACH_SLUG_BONUS
+                ):
+                    continue
+                claimed = await self.user_storage.try_claim_subscription_outreach(
+                    uid, _OUTREACH_SLUG_BONUS, today_msk
+                )
+                if not claimed:
+                    continue
+
+                new_expiry = datetime.now(MSK_TZ) + timedelta(
+                    days=self.BONUS_CONFIG["bonus_days"]
+                )
+
+                converted = await self.user_storage.convert_to_bonus_license(
+                    uid, new_expiry
+                )
+                if not converted:
+                    logger.error(
+                        "❌ convert_to_bonus_license uid=%s — нет активной лицензии или БД",
+                        uid,
+                    )
+                    continue
+
+                fn = await self._first_name(uid)
+                msg = sub_txt.personalize_html(self.BONUS_CONFIG["message"], fn)
+                kb = with_main_menu(
+                    [[payment_cta_button(self.BONUS_CONFIG["button"])]]
+                )
+                await self._send_html(uid, msg, kb)
+                logger.info(
+                    "🎁 Bonus extension uid=%s until %s",
+                    uid,
+                    new_expiry.date(),
+                )
+                await asyncio.sleep(0.5)
+            except Exception as e:
+                logger.error(
+                    "subscription_reminder bonus uid=%s: %s",
+                    uid,
+                    e,
+                    exc_info=True,
+                )
 
     async def _first_name(self, user_id: int) -> Optional[str]:
         info = await self.user_storage.get_user(user_id)
@@ -313,64 +398,123 @@ class SubscriptionReminderFeature(BaseFeature):
         return info.get("first_name")
 
     async def _process_expired_and_remove(self, today_msk: date):
-        yesterday = today_msk - timedelta(days=1)
-        licenses = await self.user_storage.get_expired_bonus_licenses(yesterday)
+        lookback = max(1, int(config.SUBSCRIPTION_POST_BONUS_LOOKBACK_DAYS))
+        licenses = await self.user_storage.list_pending_post_bonus_removals(
+            today_msk,
+            lookback_days=lookback,
+        )
+        if licenses:
+            logger.info(
+                "post_bonus: кандидатов %s (lookback=%s дн.)",
+                len(licenses),
+                lookback,
+            )
 
         club_group = (
             self.feature_manager.get("club_group") if self.feature_manager else None
         )
         club_gid = config.CLUB_GROUP_ID
+        seen_uids: set[int] = set()
 
         for lic in licenses:
-            user_id = lic["user_id"]
-            from bot.utils.admin_outreach_skip import (
-                should_skip_subscription_outreach_slug,
+            user_id = int(lic["user_id"])
+            if user_id in seen_uids:
+                continue
+            seen_uids.add(user_id)
+
+            try:
+                await self._post_bonus_remove_one(
+                    lic,
+                    today_msk=today_msk,
+                    club_group=club_group,
+                    club_gid=club_gid,
+                )
+            except Exception as e:
+                logger.error(
+                    "post_bonus_remove uid=%s: %s",
+                    user_id,
+                    e,
+                    exc_info=True,
+                )
+            await asyncio.sleep(0.5)
+
+    async def _post_bonus_remove_one(
+        self,
+        lic: Dict[str, Any],
+        *,
+        today_msk: date,
+        club_group: Any,
+        club_gid: int,
+    ) -> None:
+        user_id = int(lic["user_id"])
+        from bot.utils.admin_outreach_skip import (
+            should_skip_subscription_outreach_slug,
+        )
+
+        if await should_skip_subscription_outreach_slug(
+            self.user_storage, user_id, _OUTREACH_SLUG_POST_BONUS_FINAL
+        ):
+            return
+
+        claimed = await self.user_storage.try_claim_subscription_outreach(
+            user_id, _OUTREACH_SLUG_POST_BONUS_FINAL, today_msk
+        )
+        if not claimed:
+            return
+
+        expires_at = lic.get("expires_at")
+        since: Optional[datetime] = None
+        if isinstance(expires_at, datetime):
+            since = expires_at
+            if since.tzinfo is None:
+                since = since.replace(tzinfo=timezone.utc)
+            since = since - timedelta(days=1)
+        already_messaged = False
+        if since is not None:
+            already_messaged = await self.user_storage.has_subscription_outreach_since(
+                user_id,
+                _OUTREACH_SLUG_POST_BONUS_FINAL,
+                since,
             )
 
-            if await should_skip_subscription_outreach_slug(
-                self.user_storage, user_id, _OUTREACH_SLUG_POST_BONUS_FINAL
-            ):
-                continue
-
-            claimed = await self.user_storage.try_claim_subscription_outreach(
-                user_id, _OUTREACH_SLUG_POST_BONUS_FINAL, today_msk
-            )
-            if not claimed:
-                continue
-
-            fn = await self._first_name(user_id)
+        fn = await self._first_name(user_id)
+        if not already_messaged:
             msg = sub_txt.personalize_html(self.REMOVE_CONFIG["message"], fn)
             kb = with_main_menu(
                 [[payment_cta_button(self.REMOVE_CONFIG["button"])]]
             )
             await self._send_html(user_id, msg, kb)
-
-            if club_gid and club_group:
-                try:
-                    await self.bot.ban_chat_member(chat_id=club_gid, user_id=user_id)
-                    await self.bot.unban_chat_member(chat_id=club_gid, user_id=user_id)
-                    logger.info("🚪 User %s removed from group %s", user_id, club_gid)
-                    await self.user_storage.record_club_member_exclusion(
-                        user_id,
-                        reason="bonus_expired",
-                        source="subscription_reminder",
-                    )
-                except Exception as e:
-                    logger.error("❌ kick uid=%s: %s", user_id, e)
-            else:
-                logger.info(
-                    "ℹ️ CLUB_GROUP_ID=0 или нет club_group — kick пропущен uid=%s",
-                    user_id,
-                )
-
-            await self.user_storage.mark_license_expired(user_id)
-            card = await build_club_removal_card_html(
-                self.user_storage,
+        else:
+            logger.info(
+                "post_bonus: DM уже был uid=%s — только kick/mark",
                 user_id,
-                reason=REASON_BONUS_EXPIRED,
             )
-            await self._notify_admin(card)
-            await asyncio.sleep(0.5)
+
+        if club_gid and club_group:
+            try:
+                await self.bot.ban_chat_member(chat_id=club_gid, user_id=user_id)
+                await self.bot.unban_chat_member(chat_id=club_gid, user_id=user_id)
+                logger.info("🚪 User %s removed from group %s", user_id, club_gid)
+                await self.user_storage.record_club_member_exclusion(
+                    user_id,
+                    reason="bonus_expired",
+                    source="subscription_reminder",
+                )
+            except Exception as e:
+                logger.error("❌ kick uid=%s: %s", user_id, e)
+        else:
+            logger.info(
+                "ℹ️ CLUB_GROUP_ID=0 или нет club_group — kick пропущен uid=%s",
+                user_id,
+            )
+
+        await self.user_storage.mark_license_expired(user_id)
+        card = await build_club_removal_card_html(
+            self.user_storage,
+            user_id,
+            reason=REASON_BONUS_EXPIRED,
+        )
+        await self._notify_admin(card)
 
     async def _process_churn_outreach(self, today_msk: date):
         for block in self.CHURN_MESSAGES:
@@ -381,42 +525,41 @@ class SubscriptionReminderFeature(BaseFeature):
 
             for row in users:
                 uid = row["user_id"]
-                if await self.user_storage.get_user_active_license(uid):
-                    continue
-                first_name = row.get("first_name")
-                claimed = await self.user_storage.try_claim_subscription_outreach(
-                    uid, slug, today_msk
-                )
-                if not claimed:
-                    continue
-
-                if config.MEMBER_CHURN_AI_ENABLED and self._llm_client:
-                    from bot.services.member_churn_outreach import (
-                        generate_churn_outreach_html,
+                try:
+                    if await self.user_storage.get_user_active_license(uid):
+                        continue
+                    first_name = row.get("first_name")
+                    claimed = await self.user_storage.try_claim_subscription_outreach(
+                        uid, slug, today_msk
                     )
+                    if not claimed:
+                        continue
 
-                    body = await generate_churn_outreach_html(
-                        user_storage=self.user_storage,
-                        llm_client=self._llm_client,
-                        rag_stack=self.rag_stack,
-                        user_id=uid,
+                    body = await self._churn_body(
+                        uid=uid,
                         first_name=first_name,
-                        churn_block=block,
+                        block=block,
                     )
-                else:
-                    body = sub_txt.personalize_html(block["text"], first_name)
 
-                kb = self._keyboard_reminder(block["keyboard"])
-                ok = await self._send_html(uid, body, kb)
-                if ok:
-                    logger.info(
-                        "📬 Churn slug=%s days_after_exit=%s user=%s anchor=%s",
-                        slug,
-                        days_after,
+                    kb = self._keyboard_reminder(block["keyboard"])
+                    ok = await self._send_html(uid, body, kb)
+                    if ok:
+                        logger.info(
+                            "📬 Churn slug=%s days_after_exit=%s user=%s anchor=%s",
+                            slug,
+                            days_after,
+                            uid,
+                            anchor,
+                        )
+                    await asyncio.sleep(0.5)
+                except Exception as e:
+                    logger.error(
+                        "subscription_reminder churn uid=%s slug=%s: %s",
                         uid,
-                        anchor,
+                        slug,
+                        e,
+                        exc_info=True,
                     )
-                await asyncio.sleep(0.5)
 
     async def _send_html(
         self,

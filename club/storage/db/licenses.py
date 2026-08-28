@@ -771,6 +771,48 @@ class LicensesMixin:
             logger.error(f"❌ Failed to get expired bonus licenses: {e}")
             return []
 
+    async def list_pending_post_bonus_removals(
+        self,
+        today_msk: "date",
+        *,
+        lookback_days: int = 7,
+    ) -> List[Dict[str, Any]]:
+        """
+        Бонусные лицензии, срок которых уже истёк, но post_bonus+kick ещё не прошли.
+
+        Окно: календарные даты окончания (МСК) от (today − lookback) до today включительно.
+        Исключаем тех, кого уже обработал subscription_reminder (bonus_expired).
+        """
+        lookback_days = max(1, int(lookback_days))
+        oldest = today_msk - timedelta(days=lookback_days)
+        try:
+            async with self.get_connection() as conn:
+                rows = await conn.fetch(
+                    """
+                    SELECT l.*
+                      FROM license l
+                     WHERE l.license_type = 'bonus_extension'
+                       AND l.expires_at <= NOW()
+                       AND (timezone('Europe/Moscow', l.expires_at))::date
+                           BETWEEN $1::date AND $2::date
+                       AND NOT EXISTS (
+                           SELECT 1
+                             FROM club_member_exclusions e
+                            WHERE e.user_id = l.user_id
+                              AND e.reason = 'bonus_expired'
+                              AND e.source = 'subscription_reminder'
+                              AND e.excluded_at >= l.expires_at
+                       )
+                     ORDER BY l.expires_at, l.user_id
+                    """,
+                    oldest,
+                    today_msk,
+                )
+                return [dict(row) for row in rows]
+        except Exception as e:
+            logger.error("❌ list_pending_post_bonus_removals: %s", e, exc_info=True)
+            return []
+
     async def list_users_churn_exit_anchor_msk(
         self, last_exit_calendar_msk: "date"
     ) -> List[Dict[str, Any]]:

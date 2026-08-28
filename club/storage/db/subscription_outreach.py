@@ -3,7 +3,7 @@
 """
 
 import logging
-from datetime import date
+from datetime import date, datetime
 
 logger = logging.getLogger(__name__)
 
@@ -46,5 +46,38 @@ class SubscriptionOutreachMixin:
                 slug,
                 e,
                 exc_info=True,
+            )
+            return False
+
+    async def has_subscription_outreach_since(
+        self,
+        user_id: int,
+        outreach_slug: str,
+        since: datetime,
+    ) -> bool:
+        slug = (outreach_slug or "").strip()
+        if not slug:
+            return False
+        try:
+            async with self.get_connection() as conn:
+                val = await conn.fetchval(
+                    """
+                    SELECT 1 FROM subscription_outreach_sent
+                     WHERE user_id = $1
+                       AND outreach_slug = $2
+                       AND created_at >= $3
+                     LIMIT 1
+                    """,
+                    int(user_id),
+                    slug,
+                    since,
+                )
+                return val is not None
+        except Exception as e:
+            logger.error(
+                "has_subscription_outreach_since uid=%s slug=%s: %s",
+                user_id,
+                slug,
+                e,
             )
             return False
