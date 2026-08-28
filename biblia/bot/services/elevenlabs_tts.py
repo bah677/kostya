@@ -1,4 +1,4 @@
-"""ElevenLabs TTS → OGG Opus (для админ-сравнения)."""
+"""ElevenLabs TTS → OGG Opus."""
 
 from __future__ import annotations
 
@@ -21,14 +21,6 @@ _MAX_CONCURRENT = 3
 _REQUEST_SEMAPHORE = asyncio.Semaphore(_MAX_CONCURRENT)
 _RETRY_ON_429 = 4
 _RETRY_SLEEP_SEC = 1.5
-
-_DEFAULT_COMPARE_VOICES = (
-    "CritVAMVzFsSIWmMDe7v",
-    "TU2w9J6yEyVkPB7HKH2g",
-    "ogi2DyUAKJb7CEdqqvlU",
-    "gMIlPNegT3C1SdNBp6rW",
-)
-
 
 def _split_voice_ids(raw: str) -> List[str]:
     out: List[str] = []
@@ -55,13 +47,11 @@ class ElevenLabsTTS:
         self.stability = float(getattr(config, "ELEVENLABS_STABILITY", 0.45) or 0.45)
         self.similarity = float(getattr(config, "ELEVENLABS_SIMILARITY", 0.75) or 0.75)
         compare_raw = getattr(config, "ELEVENLABS_COMPARE_VOICE_IDS", None)
-        if compare_raw is None or not str(compare_raw).strip():
-            compare_raw = ",".join(_DEFAULT_COMPARE_VOICES)
-        self.compare_voice_ids = _split_voice_ids(str(compare_raw))
+        self.compare_voice_ids = _split_voice_ids(str(compare_raw or ""))
 
     @property
     def configured(self) -> bool:
-        return bool(self.api_key and self.compare_voice_ids_all)
+        return bool(self.api_key and self.voice_id)
 
     @property
     def compare_voice_ids_all(self) -> List[str]:

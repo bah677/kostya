@@ -251,16 +251,7 @@ class AppConfig:
     SALUTE_SPEECH_FORMAT: str = "opus"
     # ElevenLabs
     ELEVENLABS_API_KEY: str = ""
-    ELEVENLABS_VOICE_ID: str = ""
-    # Кандидат на замену основного голоса молитвы (сравнение только для админов).
-    ELEVENLABS_CANDIDATE_VOICE_ID: str = "a4CnuaYbALRvW39mDitg"
-    # Доп. голоса только для админ-сравнения (через запятую).
-    ELEVENLABS_COMPARE_VOICE_IDS: str = (
-        "CritVAMVzFsSIWmMDe7v,"
-        "TU2w9J6yEyVkPB7HKH2g,"
-        "ogi2DyUAKJb7CEdqqvlU,"
-        "gMIlPNegT3C1SdNBp6rW"
-    )
+    ELEVENLABS_VOICE_ID: str = "a4CnuaYbALRvW39mDitg"
     ELEVENLABS_MODEL_ID: str = "eleven_multilingual_v2"
     ELEVENLABS_OUTPUT_FORMAT: str = "mp3_44100_128"
     ELEVENLABS_STABILITY: float = 0.45
@@ -456,18 +447,8 @@ def load_app_config() -> AppConfig:
         SALUTE_SPEECH_FORMAT=(os.getenv("SALUTE_SPEECH_FORMAT") or "opus").strip()
         or "opus",
         ELEVENLABS_API_KEY=(os.getenv("ELEVENLABS_API_KEY") or "").strip(),
-        ELEVENLABS_VOICE_ID=(os.getenv("ELEVENLABS_VOICE_ID") or "").strip(),
-        ELEVENLABS_CANDIDATE_VOICE_ID=(
-            os.getenv("ELEVENLABS_CANDIDATE_VOICE_ID") or "a4CnuaYbALRvW39mDitg"
-        ).strip(),
-        ELEVENLABS_COMPARE_VOICE_IDS=(
-            os.getenv("ELEVENLABS_COMPARE_VOICE_IDS")
-            or (
-                "CritVAMVzFsSIWmMDe7v,"
-                "TU2w9J6yEyVkPB7HKH2g,"
-                "ogi2DyUAKJb7CEdqqvlU,"
-                "gMIlPNegT3C1SdNBp6rW"
-            )
+        ELEVENLABS_VOICE_ID=(
+            os.getenv("ELEVENLABS_VOICE_ID") or "a4CnuaYbALRvW39mDitg"
         ).strip(),
         ELEVENLABS_MODEL_ID=(
             os.getenv("ELEVENLABS_MODEL_ID") or "eleven_multilingual_v2"

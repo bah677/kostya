@@ -447,24 +447,18 @@ class PersonalPrayerFeature(BaseFeature):
                 async with record_voice_chat_action(
                     bot, message.chat.id, message_thread_id=message.message_thread_id
                 ):
-                    admin_compare = (
-                        voice_unlocked_by_admin and self._admin_voice_compare_enabled()
-                    )
                     prayer_text, ogg = await self._compose_and_synthesize(
                         uid,
                         turns,
                         wait_msg=wait_msg,
-                        skip_voice=not voice_allowed or admin_compare,
+                        skip_voice=not voice_allowed,
                     )
             else:
-                admin_compare = (
-                    voice_unlocked_by_admin and self._admin_voice_compare_enabled()
-                )
                 prayer_text, ogg = await self._compose_and_synthesize(
                     uid,
                     turns,
                     wait_msg=wait_msg,
-                    skip_voice=not voice_allowed or admin_compare,
+                    skip_voice=not voice_allowed,
                 )
 
             if not prayer_text:
@@ -494,44 +488,7 @@ class PersonalPrayerFeature(BaseFeature):
             except Exception:
                 pass
 
-            if voice_allowed and admin_compare and prayer_text:
-                if wait_msg is not None:
-                    try:
-                        await wait_msg.edit_text(
-                            "⏳ Озвучиваю два голоса для сравнения…"
-                        )
-                    except Exception:
-                        pass
-                std_id = (self.elevenlabs_tts.voice_id or "").strip()
-                cand_id = self._candidate_voice_id()
-                ogg_std, ogg_cand = await asyncio.gather(
-                    self._synthesize_prayer_voice(
-                        uid,
-                        prayer_text,
-                        voice_id=std_id,
-                        elevenlabs_only=True,
-                        wait_msg=wait_msg,
-                        queue_label=f"prayer:{uid}:std",
-                    ),
-                    self._synthesize_prayer_voice(
-                        uid,
-                        prayer_text,
-                        voice_id=cand_id,
-                        elevenlabs_only=True,
-                        wait_msg=wait_msg,
-                        queue_label=f"prayer:{uid}:cand",
-                    ),
-                )
-                await self._deliver_prayer_admin_voice_compare(
-                    message,
-                    bot,
-                    prayer_text,
-                    std_id,
-                    cand_id,
-                    ogg_std,
-                    ogg_cand,
-                )
-            elif voice_allowed:
+            if voice_allowed:
                 await self._deliver_prayer(
                     message,
                     bot,
@@ -621,20 +578,6 @@ class PersonalPrayerFeature(BaseFeature):
             )
         except Exception as e:
             logger.debug("[%s] queue wait notify failed: %s", self.name, e)
-
-    @staticmethod
-    def _candidate_voice_id() -> str:
-        return (getattr(config, "ELEVENLABS_CANDIDATE_VOICE_ID", None) or "").strip()
-
-    def _admin_voice_compare_enabled(self) -> bool:
-        std = (self.elevenlabs_tts.voice_id or "").strip()
-        cand = self._candidate_voice_id()
-        return bool(
-            self.elevenlabs_tts.configured
-            and std
-            and cand
-            and cand != std
-        )
 
     async def _synthesize_elevenlabs_prayer(
         self,
@@ -1047,80 +990,6 @@ class PersonalPrayerFeature(BaseFeature):
                 "<i>Ни один TTS не вернул аудио.</i>",
                 parse_mode=ParseMode.HTML,
             )
-
-    async def _deliver_prayer_admin_voice_compare(
-        self,
-        message: Message,
-        bot: Optional[Bot],
-        prayer_text: str,
-        std_voice_id: str,
-        cand_voice_id: str,
-        ogg_std: Optional[bytes],
-        ogg_cand: Optional[bytes],
-    ) -> None:
-        """Два голосовых для админов: текущий голос и кандидат."""
-        await message.answer(
-            "<b>🎧 Сравнение голосов молитвы</b> (только для админов)\n"
-            "Ниже два варианта озвучки одной молитвы.",
-            parse_mode=ParseMode.HTML,
-        )
-        samples = (
-            (
-                f"1/2 Стандарт ({std_voice_id[:8]}…)",
-                ogg_std,
-                "prayer_std.ogg",
-            ),
-            (
-                f"2/2 Кандидат ({cand_voice_id[:8]}…)",
-                ogg_cand,
-                "prayer_cand.ogg",
-            ),
-        )
-        chat_id = message.chat.id
-        thread_id = message.message_thread_id
-        for caption, ogg, filename in samples:
-            if not ogg:
-                await message.answer(
-                    f"<i>{html.escape(caption)} — не удалось сгенерировать</i>",
-                    parse_mode=ParseMode.HTML,
-                )
-                continue
-            duration = ogg_opus_duration_sec(ogg)
-            voice_file = BufferedInputFile(ogg, filename=filename)
-            kwargs: dict[str, Any] = {
-                "caption": caption[:1024],
-            }
-            if duration is not None:
-                kwargs["duration"] = duration
-            try:
-                if bot:
-                    send_kw = {
-                        "chat_id": chat_id,
-                        "voice": voice_file,
-                        **kwargs,
-                    }
-                    if thread_id:
-                        send_kw["message_thread_id"] = thread_id
-                    await bot.send_voice(**send_kw)
-                else:
-                    await message.answer_voice(voice_file, **kwargs)
-            except TelegramBadRequest as e:
-                logger.error(
-                    "[%s] admin voice compare send failed: %s",
-                    self.name,
-                    e,
-                )
-                await message.answer(
-                    f"<i>{html.escape(caption)} — ошибка отправки</i>",
-                    parse_mode=ParseMode.HTML,
-                )
-
-        await self._deliver_prayer_text_with_donation(
-            message,
-            (prayer_text or "").strip(),
-            include_donation_footer=False,
-            pool_progress=False,
-        )
 
     async def _send_prayer_audio(
         self,
