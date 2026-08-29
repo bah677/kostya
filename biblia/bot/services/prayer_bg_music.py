@@ -60,14 +60,31 @@ def list_bg_tracks(music_dir: Optional[Path] = None) -> list[Path]:
 
 def _pick_track_and_start(
     tracks: Sequence[Path],
+    *,
+    voice_out_dur: float = 0.0,
 ) -> tuple[Path, float]:
     track = random.choice(list(tracks))
     duration = probe_media_duration_sec(track) or 0.0
     if duration < _MIN_TRACK_FOR_RANDOM_SEC:
         return track, 0.0
-    max_start = max(0.0, duration - _TAIL_RESERVE_SEC)
+    reserve = max(_TAIL_RESERVE_SEC, float(voice_out_dur) + 15.0)
+    max_start = max(0.0, duration - reserve)
     start = random.uniform(0.0, max_start) if max_start > 1.0 else 0.0
     return track, start
+
+
+def _mix_filter_complex(*, tempo: float, vol: float) -> str:
+    voice_chain = f"atempo={tempo:.4f}," if abs(tempo - 1.0) >= 0.001 else ""
+    bg_chain = (
+        f"aloop=loop=-1:size=2e+09,volume={vol:.4f},"
+        f"aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=mono"
+    )
+    voice_fmt = f"{voice_chain}aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=mono"
+    return (
+        f"[0:a]{voice_fmt}[v];"
+        f"[1:a]{bg_chain}[bg];"
+        f"[v][bg]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[aout]"
+    )
 
 
 def mix_voice_with_bg_music(
@@ -95,7 +112,6 @@ def mix_voice_with_bg_music(
         )
         return None
 
-    track, start_sec = _pick_track_and_start(tracks)
     vol = (
         resolve_prayer_bg_music_volume()
         if volume is None
@@ -113,6 +129,7 @@ def mix_voice_with_bg_music(
 
         in_dur = probe_media_duration_sec(voice_path) or 0.0
         out_dur = in_dur / tempo if tempo > 0 and in_dur > 0 else in_dur
+        track, start_sec = _pick_track_and_start(tracks, voice_out_dur=out_dur)
         safe_br = opus_bitrate_for_tg_waveform(out_dur)
         if bitrate:
             try:
@@ -124,13 +141,7 @@ def mix_voice_with_bg_music(
         else:
             mix_bitrate = safe_br
 
-        # Голос (опц. atempo) + тихий фон; amix по длине голоса; normalize=0.
-        voice_chain = f"atempo={tempo:.4f}," if abs(tempo - 1.0) >= 0.001 else ""
-        filter_complex = (
-            f"[0:a]{voice_chain}aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=mono[v];"
-            f"[1:a]volume={vol:.4f},aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=mono[bg];"
-            f"[v][bg]amix=inputs=2:duration=first:dropout_transition=2:normalize=0[aout]"
-        )
+        filter_complex = _mix_filter_complex(tempo=tempo, vol=vol)
         cmd = [
             ffmpeg,
             "-y",
@@ -197,11 +208,12 @@ def mix_voice_with_bg_music(
                     out_dur,
                 )
             logger.info(
-                "prayer bg mix ok track=%s start=%.1fs vol=%.3f atempo=%.2f bitrate=%s in=%s out=%s",
+                "prayer bg mix ok track=%s start=%.1fs vol=%.3f atempo=%.2f out_dur=%.1fs bitrate=%s in=%s out=%s",
                 track.name,
                 start_sec,
                 vol,
                 tempo,
+                out_dur,
                 mix_bitrate,
                 len(voice_audio),
                 len(mixed),

@@ -167,6 +167,33 @@ async def _elevenlabs_mp3(
             return raw
 
 
+def _voice_output_duration_sec(voice_in_dur: float, tempo: float) -> float:
+    """Длительность голоса после atempo (сек)."""
+    if voice_in_dur <= 0:
+        return 0.0
+    if abs(tempo - 1.0) < 0.001 or tempo <= 0:
+        return voice_in_dur
+    return voice_in_dur / tempo
+
+
+def _mix_filter_complex(*, tempo: float, vol: float) -> str:
+    """
+    Голос + тихий фон: фон зациклен на всю длину голоса.
+    duration=first + dropout_transition=0 — голос не затухает, когда фон кончился.
+    """
+    voice_chain = f"atempo={tempo:.4f}," if abs(tempo - 1.0) >= 0.001 else ""
+    bg_chain = (
+        f"aloop=loop=-1:size=2e+09,volume={vol:.4f},"
+        f"aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=mono"
+    )
+    voice_fmt = f"{voice_chain}aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=mono"
+    return (
+        f"[0:a]{voice_fmt}[v];"
+        f"[1:a]{bg_chain}[bg];"
+        f"[v][bg]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[aout]"
+    )
+
+
 def _mix_voice_bg_to_files(
     voice_mp3: bytes,
     *,
@@ -186,20 +213,20 @@ def _mix_voice_bg_to_files(
         voice_path = root / "voice.mp3"
         voice_path.write_bytes(voice_mp3)
 
+        voice_in_dur = probe_duration_sec(voice_path) or 0.0
+        out_dur = _voice_output_duration_sec(voice_in_dur, tempo)
+
         if tracks:
             track = random.choice(tracks)
             duration = probe_duration_sec(track) or 0.0
             if duration < _MIN_TRACK_FOR_RANDOM_SEC:
                 start_sec = 0.0
             else:
-                max_start = max(0.0, duration - _TAIL_RESERVE_SEC)
+                # Запас под длину голоса (не только 60 с), но aloop всё равно подстрахует.
+                reserve = max(_TAIL_RESERVE_SEC, out_dur + 15.0)
+                max_start = max(0.0, duration - reserve)
                 start_sec = random.uniform(0.0, max_start) if max_start > 1.0 else 0.0
-            voice_chain = f"atempo={tempo:.4f}," if abs(tempo - 1.0) >= 0.001 else ""
-            filter_complex = (
-                f"[0:a]{voice_chain}aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=mono[v];"
-                f"[1:a]volume={vol:.4f},aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=mono[bg];"
-                f"[v][bg]amix=inputs=2:duration=first:dropout_transition=2:normalize=0[aout]"
-            )
+            filter_complex = _mix_filter_complex(tempo=tempo, vol=vol)
             cmd = [
                 ffmpeg,
                 "-y",
@@ -217,7 +244,13 @@ def _mix_voice_bg_to_files(
                 "pcm_s16le",
                 str(out_wav),
             ]
-            logger.info("bg mix track=%s start=%.1f atempo=%.2f", track.name, start_sec, tempo)
+            logger.info(
+                "bg mix track=%s start=%.1f atempo=%.2f out_dur=%.1f",
+                track.name,
+                start_sec,
+                tempo,
+                out_dur,
+            )
         else:
             logger.warning("нет bg-треков в %s — только голос", resolve_bg_music_dir())
             af = "aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=mono"

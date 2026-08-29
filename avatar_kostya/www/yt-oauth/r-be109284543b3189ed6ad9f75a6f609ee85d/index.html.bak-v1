@@ -1,0 +1,451 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow,noarchive">
+<title>Активность и деньги</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+
+<style>
+:root{
+  --ground:#F1F2F4;--surface:#FFFFFF;--surface-2:#E6E8EC;
+  --ink:#12151A;--ink-soft:#525968;--ink-faint:#7D8494;
+  --accent:#4C3A8F;--accent-soft:#E4E0F2;
+  --hot:#C2410C;--hot-soft:#FBE4D8;
+  --pos:#1F6F4A;--pos-soft:#DCEDE3;
+  --neg:#A02334;--neg-soft:#F7DFE3;
+  --rule:#C9CDD6;--rule-soft:#DFE2E8;
+  --q1:#E8E4F5;--q2:#EAEDF2;--q3:#EFF0F3;--q4:#F3F3F5;
+  --shadow:0 1px 2px rgba(18,21,26,.07),0 12px 32px -16px rgba(18,21,26,.3);
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --ground:#0F1114;--surface:#171A20;--surface-2:#1F242C;
+  --ink:#E8EAEE;--ink-soft:#9AA2B1;--ink-faint:#6F7787;
+  --accent:#A99BE8;--accent-soft:#241E3D;
+  --hot:#F0834F;--hot-soft:#3A1F12;
+  --pos:#63BC90;--pos-soft:#14291F;
+  --neg:#E8798A;--neg-soft:#33161C;
+  --rule:#2B313B;--rule-soft:#222731;
+  --q1:#221C3A;--q2:#1A1F27;--q3:#171A20;--q4:#15171C;
+  --shadow:0 1px 2px rgba(0,0,0,.5),0 12px 32px -16px rgba(0,0,0,.9);
+}}
+:root[data-theme="dark"]{
+  --ground:#0F1114;--surface:#171A20;--surface-2:#1F242C;
+  --ink:#E8EAEE;--ink-soft:#9AA2B1;--ink-faint:#6F7787;
+  --accent:#A99BE8;--accent-soft:#241E3D;
+  --hot:#F0834F;--hot-soft:#3A1F12;
+  --pos:#63BC90;--pos-soft:#14291F;
+  --neg:#E8798A;--neg-soft:#33161C;
+  --rule:#2B313B;--rule-soft:#222731;
+  --q1:#221C3A;--q2:#1A1F27;--q3:#171A20;--q4:#15171C;
+  --shadow:0 1px 2px rgba(0,0,0,.5),0 12px 32px -16px rgba(0,0,0,.9);
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--ground);color:var(--ink);font-family:"IBM Plex Sans",-apple-system,BlinkMacSystemFont,sans-serif;font-size:16px;line-height:1.6;-webkit-font-smoothing:antialiased}
+.wrap{max-width:1180px;margin:0 auto;padding:0 24px 90px}
+p{margin:0 0 14px;max-width:70ch}
+ul{margin:0 0 14px;padding-left:20px;max-width:70ch}
+li{margin-bottom:7px}
+strong{font-weight:600}
+code{font-family:"IBM Plex Mono",monospace;font-size:.85em;background:var(--surface-2);padding:1px 5px;border-radius:3px;overflow-wrap:anywhere}
+
+.mast{padding:56px 0 26px;border-bottom:3px solid var(--ink);margin-bottom:32px}
+.eyebrow{font-family:"IBM Plex Mono",monospace;font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-faint);margin:0 0 16px}
+h1{font-family:"Bricolage Grotesque",system-ui,sans-serif;font-weight:800;font-size:clamp(34px,5.4vw,58px);line-height:1;letter-spacing:-.025em;margin:0 0 16px;text-wrap:balance}
+.sub{font-size:19px;color:var(--ink-soft);max-width:64ch;margin:0;text-wrap:balance}
+
+h2{font-family:"Bricolage Grotesque",system-ui,sans-serif;font-weight:700;font-size:clamp(23px,3vw,31px);line-height:1.15;letter-spacing:-.018em;margin:0 0 10px;text-wrap:balance}
+.sec{margin-top:58px;padding-top:20px;border-top:2px solid var(--ink)}
+.kick{font-family:"IBM Plex Mono",monospace;font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--accent);margin:0 0 10px}
+h3{font-size:17px;font-weight:600;margin:28px 0 8px}
+
+.facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:1px;background:var(--rule);border:1px solid var(--rule);margin:0 0 14px;box-shadow:var(--shadow)}
+.fact{background:var(--surface);padding:18px 20px}
+.fact .n{font-family:"Bricolage Grotesque",sans-serif;font-size:31px;font-weight:800;line-height:1;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+.fact .n.hot{color:var(--hot)}
+.fact .n.acc{color:var(--accent)}
+.fact .t{font-size:13.5px;color:var(--ink-soft);margin-top:9px;line-height:1.4}
+
+.tscroll{overflow-x:auto;margin:20px 0;border:1px solid var(--rule);background:var(--surface);box-shadow:var(--shadow)}
+table{border-collapse:collapse;width:100%;font-size:14.5px;min-width:640px}
+th{text-align:left;font-family:"IBM Plex Mono",monospace;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-faint);font-weight:500;padding:12px 14px;background:var(--surface-2);border-bottom:1px solid var(--rule);white-space:nowrap}
+td{padding:11px 14px;border-bottom:1px solid var(--rule-soft);vertical-align:top}
+tbody tr:last-child td{border-bottom:none}
+tr.istop{background:var(--hot-soft)}
+.num{text-align:right;font-family:"IBM Plex Mono",monospace;font-variant-numeric:tabular-nums;white-space:nowrap}
+th.num{text-align:right}
+.id{font-family:"IBM Plex Mono",monospace;font-weight:600;color:var(--accent);white-space:nowrap}
+tr.istop .id{color:var(--hot)}
+caption{caption-side:bottom;text-align:left;font-size:12.5px;color:var(--ink-faint);padding:10px 14px;border-top:1px solid var(--rule-soft)}
+.tag{font-family:"IBM Plex Mono",monospace;font-size:10.5px;padding:2px 7px;border-radius:3px;background:var(--surface-2);color:var(--ink-soft);white-space:nowrap}
+.tag.f{background:var(--pos-soft);color:var(--pos)}
+.tag.s{background:var(--neg-soft);color:var(--neg)}
+.hi{color:var(--hot);font-weight:600}
+
+.matrix-outer{margin:24px 0 10px}
+.axis-y{font-family:"IBM Plex Mono",monospace;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-faint);margin-bottom:8px}
+.matrix{position:relative;width:100%;aspect-ratio:16/11;min-height:400px;border:1px solid var(--rule);background:var(--surface);box-shadow:var(--shadow);overflow:hidden}
+.quad{position:absolute;width:50%;height:50%}
+.q-tl{top:0;left:0;background:var(--q1)}.q-tr{top:0;left:50%;background:var(--q2)}
+.q-bl{top:50%;left:0;background:var(--q3)}.q-br{top:50%;left:50%;background:var(--q4)}
+.qlabel{position:absolute;font-family:"IBM Plex Mono",monospace;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-faint);pointer-events:none}
+.midline{position:absolute;background:var(--rule)}
+.midline.h{left:0;right:0;top:50%;height:1px}.midline.v{top:0;bottom:0;left:50%;width:1px}
+.dot{position:absolute;width:26px;height:26px;margin:-13px 0 0 -13px;border-radius:50%;background:var(--surface);border:1.5px solid var(--accent);color:var(--accent);font-family:"IBM Plex Mono",monospace;font-size:11.5px;font-weight:600;display:flex;align-items:center;justify-content:center;box-shadow:0 1px 3px rgba(0,0,0,.18)}
+.dot.top{background:var(--hot);border-color:var(--hot);color:#fff;width:32px;height:32px;margin:-16px 0 0 -16px;font-size:13px;font-weight:700;z-index:3}
+.axis-x{display:flex;justify-content:space-between;font-family:"IBM Plex Mono",monospace;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-faint);margin-top:10px}
+.mnote{font-family:"IBM Plex Mono",monospace;font-size:12px;color:var(--ink-faint);margin:14px 0 0}
+
+.top3{display:flex;flex-direction:column;gap:16px;margin:22px 0}
+.t3{background:var(--surface);border:1px solid var(--rule);border-left:4px solid var(--hot);box-shadow:var(--shadow)}
+.t3 .hd{padding:18px 22px 0;display:flex;gap:14px;align-items:baseline}
+.t3 .rk{font-family:"Bricolage Grotesque",sans-serif;font-size:26px;font-weight:800;color:var(--hot);line-height:1}
+.t3 h3{margin:0;font-family:"Bricolage Grotesque",sans-serif;font-size:20px;font-weight:700;letter-spacing:-.012em;line-height:1.2}
+.t3 .bd{padding:12px 22px 22px}
+.t3 .bd p{font-size:15.5px;margin-bottom:10px}
+.t3 .bd p:last-child{margin-bottom:0}
+
+.note{border-left:3px solid var(--accent);background:var(--accent-soft);padding:15px 19px;margin:20px 0;max-width:70ch}
+.note p{margin:0;font-size:15px;max-width:none}
+.note p+p{margin-top:9px}
+.note .lbl{font-family:"IBM Plex Mono",monospace;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-soft);display:block;margin-bottom:7px;font-weight:600}
+.note.warn{border-left-color:var(--neg);background:var(--neg-soft)}
+.note.warn .lbl{color:var(--neg)}
+
+details{margin:16px 0;border:1px solid var(--rule);background:var(--surface);max-width:70ch}
+summary{cursor:pointer;padding:12px 17px;font-family:"IBM Plex Mono",monospace;font-size:13px;font-weight:500}
+details[open] summary{border-bottom:1px solid var(--rule-soft)}
+details .in{padding:15px 17px}
+details .in p:last-child{margin-bottom:0}
+summary:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+.foot{margin-top:54px;padding-top:20px;border-top:2px solid var(--ink);font-size:13px;color:var(--ink-faint)}
+.foot p{max-width:none;font-size:13px}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+@media (max-width:680px){
+  .wrap{padding:0 16px 70px}
+  .matrix{aspect-ratio:1/1.15;min-height:440px}
+  .dot{width:22px;height:22px;margin:-11px 0 0 -11px;font-size:10px}
+  .dot.top{width:27px;height:27px;margin:-13.5px 0 0 -13.5px;font-size:11.5px}
+}
+</style>
+
+
+</head>
+<body>
+<div class="wrap">
+
+<header class="mast">
+  <p class="eyebrow">Итоговый разбор · 29 августа 2026</p>
+  <h1>Активность и деньги</h1>
+  <p class="sub">Три арены активности, пять механизмов онбординга и 30 гипотез роста. Всё измерено по двум продовым базам, с честным разделением того, что доказано, и того, что только правдоподобно.</p>
+</header>
+
+<div class="facts">
+  <div class="fact"><div class="n hot">1 347</div><div class="t">лидов заморожены в статусе «ожидание навсегда» — им по замыслу больше не пишут</div></div>
+  <div class="fact"><div class="n hot">833</div><div class="t">из них прямо сейчас активны в Библии, 56 уже платят ей деньги</div></div>
+  <div class="fact"><div class="n acc">6×</div><div class="t">рост конверсии от активности — на чистых данных, до первой оплаты</div></div>
+  <div class="fact"><div class="n acc">1 641 → 397</div><div class="t">нажали «оплатить» → заплатили; половина отваливается на прайсе</div></div>
+  <div class="fact"><div class="n hot">2</div><div class="t">сообщения — вся цепочка дожима лида, дальше тишина</div></div>
+</div>
+
+<div class="sec">
+  <p class="kick">Сначала — поправка к себе</p>
+  <h2>«Активность → деньги» подтверждается, но слабее, чем казалось</h2>
+</div>
+
+<p>В прошлой версии я показывал разброс конверсии в 109 раз между «написал 1 сообщение» и «написал 20+». Эта цифра была завышена из-за круговой логики: <strong>часть активности случается уже после оплаты</strong> — человек заплатил, попал в группу, продолжил общаться. Получалось, что оплата «предсказывает» саму себя.</p>
+
+<p>Пересчитал, оставив только активность <strong>до первой оплаты</strong>. Связь никуда не делась, но её честный размер — примерно шестикратный:</p>
+
+<div class="tscroll">
+<table>
+  <thead><tr><th>Сообщений в личку клуба ДО первой оплаты</th><th class="num">Людей</th><th class="num">Заплатили</th><th class="num">Конверсия</th></tr></thead>
+  <tbody>
+    <tr><td>1–2</td><td class="num">3 413</td><td class="num">145</td><td class="num">4,2%</td></tr>
+    <tr><td>3–5</td><td class="num">1 301</td><td class="num">148</td><td class="num">11,4%</td></tr>
+    <tr><td>6–15</td><td class="num">414</td><td class="num">95</td><td class="num">22,9%</td></tr>
+    <tr><td>16+</td><td class="num">36</td><td class="num">9</td><td class="num">25,0%</td></tr>
+  </tbody>
+  <caption>Чистая версия: считаются только сообщения, отправленные до первого успешного платежа. Рост 4,2% → 25% вместо прежних 0,7% → 76%.</caption>
+</table>
+</div>
+
+<p>Ваша формулировка «больше активности — больше платят» точнее моей: дело не только в переписке. Нажатия кнопок (не связанные с оплатой) дают ту же кривую — от 6,6% при нуле нажатий до 30,4% при шести и более. Любое действие работает.</p>
+
+<div class="sec">
+  <p class="kick">Три арены</p>
+  <h2>Одна кривая, но арены работают по-разному</h2>
+</div>
+
+<h3>Арена 1. Библия — самый чистый сигнал</h3>
+<p>Активность в Библии предсказывает оплату <em>клубу</em> — то есть в другой системе, где никакой механической связи нет. Поэтому этому срезу можно верить больше всего.</p>
+
+<div class="tscroll">
+<table>
+  <thead><tr><th>Сообщений в Библию</th><th class="num">Людей</th><th class="num">Платят клубу</th><th class="num">Конверсия</th></tr></thead>
+  <tbody>
+    <tr><td>0</td><td class="num">959</td><td class="num">38</td><td class="num">4,0%</td></tr>
+    <tr><td>1–2</td><td class="num">692</td><td class="num">34</td><td class="num">4,9%</td></tr>
+    <tr><td>3–5</td><td class="num">550</td><td class="num">39</td><td class="num">7,1%</td></tr>
+    <tr><td>6–15</td><td class="num">660</td><td class="num">50</td><td class="num">7,6%</td></tr>
+    <tr><td>16–40</td><td class="num">496</td><td class="num">55</td><td class="num">11,1%</td></tr>
+    <tr><td>40+</td><td class="num">447</td><td class="num">96</td><td class="num hi">21,5%</td></tr>
+  </tbody>
+  <caption>Только те, кто присутствует в обеих базах (3 804 человека). Рост в 5,4 раза.</caption>
+</table>
+</div>
+
+<h3>Арена 2. Личка клуба — здесь живёт решение о покупке</h3>
+<p>Кроме глубины разговора, здесь видна платёжная воронка по нажатиям. И она вскрывает конкретное место потери:</p>
+
+<div class="tscroll">
+<table>
+  <thead><tr><th>Шаг</th><th class="num">Людей</th><th class="num">Дошло от предыдущего</th></tr></thead>
+  <tbody>
+    <tr><td>Нажал «оплатить»</td><td class="num">1 641</td><td class="num">—</td></tr>
+    <tr><td>Выбрал тариф</td><td class="num">876</td><td class="num hi">53%</td></tr>
+    <tr><td>Выбрал валюту</td><td class="num">497</td><td class="num">57%</td></tr>
+    <tr><td>Создан заказ</td><td class="num">493</td><td class="num">99%</td></tr>
+    <tr><td>Оплатил</td><td class="num">397</td><td class="num">81%</td></tr>
+  </tbody>
+  <caption>Из 1 641 человека с намерением заплатить доходят 397 — это 24%. Крупнейшая потеря — 765 человек на экране выбора тарифа.</caption>
+</table>
+</div>
+
+<p>Половина людей, уже нажавших «оплатить», уходит, увидев прайс. Это независимое подтверждение ценовой гипотезы: медианный донат в Библии — 300 ₽, а вход в клуб — 1 200 ₽.</p>
+
+<h3>Арена 3. Группа — это про удержание, а не про продажу</h3>
+<div class="note warn">
+  <span class="lbl">Осторожно с интерпретацией</span>
+  <p>Формально почти все, кто написал в группу хоть раз, — платящие (99%). Но это <strong>не предсказание, а механика</strong>: в группу попадают только после оплаты. Использовать это как «вовлекайте в группу, чтобы продать» нельзя.</p>
+  <p>А вот на удержание группа влияет по-настоящему: среди уже плативших молчуны продлеваются в 21,6% случаев, а те, кто написал 30+ сообщений, — в 82,5%. Плюс группа держится на 23 людях, дающих 84% сообщений.</p>
+</div>
+
+<div class="sec">
+  <p class="kick">Механизмы онбординга</p>
+  <h2>Пять механизмов, и главный из них заканчивается тишиной</h2>
+</div>
+
+<p>Механизмов действительно несколько, и они не складываются в цепочку — каждый работает сам по себе и обрывается.</p>
+
+<div class="tscroll">
+<table>
+  <thead><tr><th>Механизм</th><th>Что делает</th><th class="num">Охват</th><th>Чем заканчивается</th></tr></thead>
+  <tbody>
+    <tr><td><code>onboarding.py</code></td><td>Кружки + один открытый вопрос</td><td class="num">все</td><td>Приветствия отключены флагами, тематические кнопки убраны из интерфейса в мае — обработчик остался сиротой</td></tr>
+    <tr class="istop"><td><code>followup.py</code></td><td>Дожим лида до оплаты</td><td class="num">3 890</td><td class="hi">Два сообщения в первый день, затем статус 103 «ожидание навсегда» — сообщения для него не существует</td></tr>
+    <tr><td><code>benefit.py</code></td><td>Бесплатная молитва → промо через 10 сек</td><td class="num">681</td><td>9 оплат (1,3%); канал иссяк в июле</td></tr>
+    <tr><td><code>member_proactive.py</code></td><td>Проактив после оплаты</td><td class="num">75</td><td>Ответ на проактив — 12,6%; лимит выборки 45 при 76 кандидатах</td></tr>
+    <tr><td><code>club_group.py</code></td><td>Инвайт в группу</td><td class="num">405</td><td>Ни один из 550 инвайтов не помечен использованным — вступление не отслеживается</td></tr>
+  </tbody>
+  <caption>Охват — уникальных пользователей за всю историю. Проактив и инвайты доступны только после оплаты, поэтому их охват мал по определению.</caption>
+</table>
+</div>
+
+<h3>Статус 103: 1 347 человек в вечной тишине</h3>
+
+<p>В коде это написано прямо: <code>STATUS_WAITING_ORDER_FOREVER = 103</code> — «ожидание заказа (бесконечно, после вечернего сообщения)». В таблице <code>followup_messages</code> строки для статуса 103 нет: это конечная парковка по замыслу.</p>
+
+<p>Вся цепочка дожима выглядит так: через 45 минут сообщение «мы так и не поговорили», вечером второе — и всё. Дальше человек лежит в базе молча, иногда годами.</p>
+
+<div class="note">
+  <span class="lbl">Почему это самая интересная находка</span>
+  <p>В статусе 103 сейчас <strong>1 347 человек</strong>, из них заплатили за всё время трое. Казалось бы, мёртвый груз. Но:</p>
+  <p><strong>833 из них были активны в Библии за последние 30 дней, и 56 уже отправляли туда деньги.</strong> Это не холодные лиды — это живые, вовлечённые люди с доказанной платёжеспособностью, с которыми клуб решил больше не разговаривать.</p>
+</div>
+
+<div class="sec">
+  <p class="kick">Приоритизация</p>
+  <h2>Матрица: скорость против денег</h2>
+</div>
+
+<div class="matrix-outer">
+  <p class="axis-y">↑ Много денег</p>
+  <div class="matrix">
+    <div class="quad q-tl"></div><div class="quad q-tr"></div>
+    <div class="quad q-bl"></div><div class="quad q-br"></div>
+    <div class="midline h"></div><div class="midline v"></div>
+    <div class="qlabel" style="top:10px;left:14px">Делать сейчас</div>
+    <div class="qlabel" style="top:10px;right:14px">Планировать</div>
+    <div class="qlabel" style="bottom:10px;left:14px">Между делом</div>
+    <div class="qlabel" style="bottom:10px;right:14px">Не сейчас</div>
+
+    <div class="dot top" style="left:8%;top:11%">31</div>
+    <div class="dot top" style="left:16%;top:22%">1</div>
+    <div class="dot top" style="left:24%;top:14%">12</div>
+    <div class="dot" style="left:11%;top:31%">27</div>
+    <div class="dot" style="left:19%;top:38%">6</div>
+    <div class="dot" style="left:7%;top:42%">16</div>
+    <div class="dot" style="left:29%;top:28%">28</div>
+    <div class="dot" style="left:33%;top:41%">26</div>
+    <div class="dot" style="left:24%;top:49%">4</div>
+    <div class="dot" style="left:13%;top:52%">13</div>
+    <div class="dot" style="left:38%;top:50%">11</div>
+    <div class="dot" style="left:18%;top:60%">2</div>
+    <div class="dot" style="left:30%;top:61%">3</div>
+    <div class="dot" style="left:9%;top:63%">20</div>
+    <div class="dot" style="left:40%;top:65%">18</div>
+    <div class="dot" style="left:15%;top:71%">19</div>
+    <div class="dot" style="left:25%;top:75%">10</div>
+    <div class="dot" style="left:5%;top:78%">24</div>
+    <div class="dot" style="left:34%;top:81%">9</div>
+    <div class="dot" style="left:12%;top:86%">21</div>
+    <div class="dot" style="left:21%;top:91%">22</div>
+    <div class="dot" style="left:30%;top:89%">5</div>
+    <div class="dot" style="left:40%;top:93%">7</div>
+    <div class="dot" style="left:45%;top:86%">29</div>
+    <div class="dot" style="left:62%;top:24%">25</div>
+    <div class="dot" style="left:70%;top:34%">8</div>
+    <div class="dot" style="left:59%;top:45%">14</div>
+    <div class="dot" style="left:73%;top:53%">15</div>
+    <div class="dot" style="left:64%;top:65%">17</div>
+    <div class="dot" style="left:78%;top:71%">23</div>
+    <div class="dot" style="left:86%;top:41%">30</div>
+  </div>
+  <div class="axis-x"><span>← Быстро (дни)</span><span>Долго (месяцы) →</span></div>
+  <p class="mnote">Оранжевым — ТОП-3. Положение оценочное: «деньги» — потенциал влияния на выручку, «скорость» — время до первого измеримого эффекта.</p>
+</div>
+
+<div class="sec">
+  <p class="kick">Решение</p>
+  <h2>ТОП-3 в работу</h2>
+</div>
+
+<div class="top3">
+
+<div class="t3">
+  <div class="hd"><span class="rk">1</span><h3>Разбудить 1 347 замороженных — через Библию</h3></div>
+  <div class="bd">
+    <p>Самые быстрые большие деньги на доске. Люди уже собраны, уже интересовались клубом, и 62% из них прямо сейчас активны в соседнем боте.</p>
+    <ul>
+      <li>1 347 человек в статусе 103, заплатили за всё время <strong>3</strong>.</li>
+      <li><strong>833</strong> активны в Библии за 30 дней, <strong>56</strong> уже платили Библии деньги.</li>
+      <li>Сообщения для статуса 103 в системе не существует — достаточно добавить шаг, а не строить механизм.</li>
+    </ul>
+    <p><em>Почему кратно:</em> сегмент по размеру втрое больше всей платящей базы клуба (397 человек), и он собран без единого рубля затрат на привлечение. Обращаться лучше из Библии, где эти люди живут, а не из клуба, который они игнорируют.</p>
+  </div>
+</div>
+
+<div class="t3">
+  <div class="hd"><span class="rk">2</span><h3>Переписать онбординг под доведение до 5 сообщений</h3></div>
+  <div class="bd">
+    <p>Сейчас весь онбординг — кружки и один открытый вопрос «напиши, что тебя волнует». Открытый вопрос требует усилия: сформулировать боль незнакомому боту. 3 413 человек не справляются и остаются на 1–2 сообщениях с конверсией 4,2%.</p>
+    <ul>
+      <li>Цепочка из 2–3 коротких вопросов вместо одного открытого, первый — с готовыми вариантами в одно нажатие.</li>
+      <li>Тематические кнопки уже написаны и работали в мае (109 нажатий), потом их убрали из интерфейса — обработчик жив.</li>
+      <li>Приветствия включаются флагами <code>ONBOARDING_SEND_LICENSE_WELCOME</code> и <code>ONBOARDING_SEND_NO_LICENSE_WELCOME</code>, сейчас оба <code>False</code>.</li>
+    </ul>
+    <p><em>Почему кратно:</em> диапазон 6–15 сообщений конвертит в 22,9% против 4,2%. Перевод даже каждого десятого из 3 413 человек — это заметный рост платящей базы.</p>
+  </div>
+</div>
+
+<div class="t3">
+  <div class="hd"><span class="rk">3</span><h3>Ступень 390 ₽ — там, где отваливается половина</h3></div>
+  <div class="bd">
+    <p>Теперь у этой гипотезы есть прямое подтверждение в поведении, а не только в сравнении сумм: <strong>765 человек из 1 641 уходят ровно на экране выбора тарифа</strong>, уже нажав «оплатить».</p>
+    <ul>
+      <li>97,7% успешных донатов Библии — меньше 1 200 ₽, медиана 300 ₽.</li>
+      <li>«Финансово неудобно» — причина ухода №1 (29% ответов).</li>
+      <li>Недельный промо за 299 ₽ брали 99 раз, и <strong>33,7% из них апгрейдились</strong> — дешёвый вход работает воронкой, а не каннибализацией.</li>
+    </ul>
+    <p><em>Почему кратно:</em> открывает сегмент, который физически не может купить сейчас. 3% от 11 908 активных читателей Библии, не бывавших в клубе, — около 139 тыс. ₽ в месяц.</p>
+  </div>
+</div>
+</div>
+
+<div class="note warn">
+  <span class="lbl">Следующие в очереди</span>
+  <p><strong>№27 — починить анкету челленджа</strong> в Библии (доходит до старта 1 из 4, а прошедшие платят клубу в 14,1% против 3,6%) и <strong>№16 — догон брошенных заказов</strong> (215 человек, 314 тыс. ₽, плюс 90 ушедших навсегда после сбоя оплаты). Обе быстрые; не попали в тройку только потому, что первая упирается в неизвестную причину отмен, а вторая — разовый сбор, а не механизм.</p>
+</div>
+
+<div class="sec">
+  <p class="kick">Полный список</p>
+  <h2>31 гипотеза</h2>
+</div>
+
+<div class="tscroll">
+<table>
+  <thead><tr><th>№</th><th>Гипотеза</th><th>На чём основана</th><th>Скор.</th><th>Деньги</th></tr></thead>
+  <tbody>
+    <tr class="istop"><td class="id">31</td><td>Разбудить когорту 103 через Библию</td><td>1 347 заморожены, 833 активны в Библии, 56 платили ей</td><td><span class="tag f">дни</span></td><td class="num">высокие</td></tr>
+    <tr class="istop"><td class="id">1</td><td>Цепочка коротких вопросов вместо одного открытого</td><td>3 413 чел. на 1–2 сообщениях (4,2%); 6–15 сообщений → 22,9%</td><td><span class="tag f">дни</span></td><td class="num">высокие</td></tr>
+    <tr class="istop"><td class="id">12</td><td>Ступень 390 ₽</td><td>765 из 1 641 уходят на экране тарифов; 97,7% донатов &lt; 1 200 ₽</td><td><span class="tag f">дни</span></td><td class="num">высокие</td></tr>
+    <tr><td class="id">27</td><td>Починить анкету челленджа</td><td>226 отменены + 175 застряли из 516; доходит 1 из 4</td><td><span class="tag f">дни</span></td><td class="num">высокие</td></tr>
+    <tr><td class="id">16</td><td>Догон брошенных заказов и сбойных платежей</td><td>215 чел. / 314 тыс. ₽; 90 ушли навсегда после сбоя</td><td><span class="tag f">дни</span></td><td class="num">высокие</td></tr>
+    <tr><td class="id">6</td><td>Догонять замолчавших после первого сообщения</td><td>3 413 чел. на 1–2 сообщениях; механизма нет</td><td><span class="tag f">дни</span></td><td class="num">высокие</td></tr>
+    <tr><td class="id">28</td><td>Показать челлендж всей базе через ежедневную рассылку</td><td>377 из 7 096 знают; конверсия в клуб 14,1% против 3,6%</td><td><span class="tag f">дни</span></td><td class="num">высокие</td></tr>
+    <tr><td class="id">26</td><td>Точечно 242 донора Библии, активных и не платящих клубу</td><td>Готовность платить доказана деньгами</td><td><span class="tag f">дни</span></td><td class="num">высокие</td></tr>
+    <tr><td class="id">4</td><td>Агент обязан заканчивать первый ответ вопросом</td><td>Только 1,4% первых реплик содержат вопрос</td><td><span class="tag f">дни</span></td><td class="num">средние</td></tr>
+    <tr><td class="id">13</td><td>Апсейл в квартал для повторных месячников</td><td>109 чел. купили месяц 2+ раза</td><td><span class="tag f">дни</span></td><td class="num">средние</td></tr>
+    <tr><td class="id">11</td><td>Личное приглашение в группу тем, кто не заходил</td><td>Молчуны продлеваются 21,6% против 82,5%</td><td><span class="tag f">дни</span></td><td class="num">средние</td></tr>
+    <tr><td class="id">2</td><td>Включить обратно приветственные сообщения</td><td>Оба флага <code>ONBOARDING_SEND_*_WELCOME</code> = <code>False</code></td><td><span class="tag f">часы</span></td><td class="num">средние</td></tr>
+    <tr><td class="id">3</td><td>Вернуть тематические кнопки</td><td>Работали в мае (109 нажатий), убраны; обработчик жив</td><td><span class="tag f">дни</span></td><td class="num">средние</td></tr>
+    <tr><td class="id">20</td><td>Заполнить расписание + алерт на пустой горизонт</td><td>0 будущих событий с 31.07; дайджест рапортует <code>ok=True</code></td><td><span class="tag f">часы</span></td><td class="num">средние</td></tr>
+    <tr><td class="id">18</td><td>Вернуть 90 «потерянных после сбоя оплаты»</td><td>Из 200 со сбоем 110 вернулись сами, 90 — нет</td><td><span class="tag f">дни</span></td><td class="num">средние</td></tr>
+    <tr><td class="id">19</td><td>Напоминание об истечении платёжной ссылки</td><td>112 истёкших BZB-ссылок, 206 отменённых YooKassa</td><td><span class="tag f">дни</span></td><td class="num">средние</td></tr>
+    <tr><td class="id">10</td><td>Еженедельный вопрос-затравка от Константина в группе</td><td>Активность упала 10 961 → 5 123</td><td><span class="tag f">дни</span></td><td class="num">средние</td></tr>
+    <tr><td class="id">24</td><td>Ответить на 15 висящих тикетов ушедших</td><td>15 тикетов <code>open</code>, ни одного ответа</td><td><span class="tag f">часы</span></td><td class="num">низкие</td></tr>
+    <tr><td class="id">9</td><td>Чинить трекинг <code>used_at</code> в инвайтах</td><td>0 из 550 инвайтов помечены использованными</td><td><span class="tag f">часы</span></td><td class="num">низкие</td></tr>
+    <tr><td class="id">21</td><td>Поднять лимит кандидатов проактива</td><td>Берётся 45 при 76 никогда не писавших</td><td><span class="tag f">часы</span></td><td class="num">низкие</td></tr>
+    <tr><td class="id">22</td><td>Починить <code>proactive_ignored_streak</code></td><td>Поле никогда не пишется — мёртвое</td><td><span class="tag f">часы</span></td><td class="num">низкие</td></tr>
+    <tr><td class="id">5</td><td>Текстовый фолбэк, если кружки запрещены</td><td>192 отказа <code>VOICE_MESSAGES_FORBIDDEN</code></td><td><span class="tag f">дни</span></td><td class="num">низкие</td></tr>
+    <tr><td class="id">7</td><td>Санитайзер HTML перед отправкой</td><td>~160 сообщений потеряно на тегах <code>&lt;br&gt;</code>, <code>&lt;ul&gt;</code></td><td><span class="tag f">часы</span></td><td class="num">низкие</td></tr>
+    <tr><td class="id">29</td><td>Метки атрибуции для YouTube</td><td>Ни одного пользователя с yt-меткой</td><td><span class="tag f">часы</span></td><td class="num">низкие</td></tr>
+    <tr><td class="id">25</td><td>Кросс-промо Библия → клуб в момент глубины</td><td>В коде Библии нет ни одного упоминания клуба</td><td><span class="tag s">недели</span></td><td class="num">высокие</td></tr>
+    <tr><td class="id">8</td><td>Ритуал приёма новичка в группе</td><td>23 чел. дают 84% сообщений; группа влияет на удержание</td><td><span class="tag s">недели</span></td><td class="num">высокие</td></tr>
+    <tr><td class="id">14</td><td>Заморозка подписки вместо отмены</td><td>«Финансово неудобно» — 29% оттока</td><td><span class="tag s">недели</span></td><td class="num">средние</td></tr>
+    <tr><td class="id">15</td><td>Урезанный тариф «только молитвы и чат»</td><td>22% уходят с «не почувствовал пользы»</td><td><span class="tag s">недели</span></td><td class="num">средние</td></tr>
+    <tr><td class="id">17</td><td>Разобраться, почему BZB теряет половину ссылок</td><td>47% истекают против 25% отмен у YooKassa</td><td><span class="tag s">недели</span></td><td class="num">средние</td></tr>
+    <tr><td class="id">23</td><td>Запустить проактив под эфир</td><td><code>pre_air</code> сработал 4 раза за всё время</td><td><span class="tag s">недели</span></td><td class="num">низкие</td></tr>
+    <tr><td class="id">30</td><td>Рекуррентные донаты в Библии</td><td>Таблица <code>donation_subscriptions</code> написана, 0 строк</td><td><span class="tag s">заблок.</span></td><td class="num">высокие</td></tr>
+  </tbody>
+  <caption>«Деньги» — оценка потенциала, не прогноз. №30 заблокирована согласованием с платёжными интеграторами.</caption>
+</table>
+</div>
+
+<div class="sec">
+  <p class="kick">Оговорки</p>
+  <h2>Насколько этому можно верить</h2>
+</div>
+
+<details>
+<summary>Главное: связь есть, причинность не доказана</summary>
+<div class="in">
+<p>Кривая «больше активности → больше платят» описывает связь. Возможно, люди активны, <em>потому что</em> уже решили купить, — тогда искусственное подталкивание к активности денег не принесёт. Я снял самый грубый слой этого смещения, пересчитав всё на активности до первой оплаты: связь ослабла с 109× до 6×, но осталась.</p>
+<p>За причинность говорит то, что активность в Библии предсказывает оплату в клубе — в другой системе, где механической связи нет. Против — то, что это всё равно наблюдение, а не эксперимент. Окончательный ответ даёт только A/B на онбординге, за пару недель и почти бесплатно.</p>
+</div>
+</details>
+
+<details>
+<summary>Где данные врут</summary>
+<div class="in">
+<p><strong>Группа — не воронка продаж.</strong> Доступ в неё даётся после оплаты, поэтому «активные в группе платят в 99% случаев» — тавтология. Валидно только влияние на продление.</p>
+<p><strong>Нажатия кнопок включают сам платёжный флоу</strong>, поэтому в чистом срезе я считал только неплатёжные нажатия до первой оплаты.</p>
+<p><strong>Логирование ответов бота включилось в мае 2026</strong> — в марте–апреле в базе 1–2 исходящих сообщения на всю базу. Вся аналитика диалогов посчитана с 1 июня.</p>
+<p><strong>Инвайты не помечаются использованными</strong> (0 из 550) — «кто вступил в группу» по базе не определяется, приходится судить по сообщениям, а это занижает число тихих участников.</p>
+<p><strong>Опрос ушедших — 41 ответ</strong> из 245 истёкших лицензий, и 27% выбрали «другая причина» без возможности уточнить.</p>
+<p><strong>Август неполный</strong> — данные по 29-е число.</p>
+</div>
+</details>
+
+<details>
+<summary>Что осталось непроверенным</summary>
+<div class="in">
+<p><strong>Почему 43% отменяют челлендж</strong> — виден факт, не причина. Нужен просмотр переписок на шаге анкеты.</p>
+<p><strong>Смысловое качество ответов агента.</strong> Я мерил длину и наличие вопроса, но не содержание. Часть людей может уходить именно из-за него — это оценивается чтением диалогов, не SQL.</p>
+<p><strong>Юнит-экономика.</strong> Расходов на привлечение в базах нет, сравнивать каналы по ROI нельзя.</p>
+<p><strong>Идут ли эфиры на самом деле</strong> — расписание заполнялось вручную раз в неделю и оборвалось 23 июля; парсер при этом отработал все 5 раз без ошибок.</p>
+</div>
+</details>
+
+<div class="foot">
+  <p>Источники: <code>club_db</code>, <code>biblia_bot</code> — чтение 29.08.2026, только SELECT, без единой изменяющей операции. Аватар исключён как внутренний инструмент, рекуррентные платежи — по указанию заказчика. Персональные данные не приводятся; цитаты участников обезличены.</p>
+</div>
+
+</div>
+
+</body>
+</html>
