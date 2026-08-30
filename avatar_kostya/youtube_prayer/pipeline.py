@@ -87,10 +87,24 @@ def _apply_broll_env() -> None:
             "YT_PRAYER_SCENE_POOL", str(getattr(_cfg, "YT_PRAYER_SCENE_POOL", 12))
         )
         os.environ.setdefault(
-            "YT_PRAYER_IMAGE_COUNT", str(getattr(_cfg, "YT_PRAYER_IMAGE_COUNT", 3))
+            "YT_PRAYER_IMAGE_COUNT", str(getattr(_cfg, "YT_PRAYER_IMAGE_COUNT", 0))
         )
         if getattr(_cfg, "YT_PRAYER_IMAGE_GEN", True):
             os.environ.setdefault("YT_PRAYER_IMAGE_GEN", "1")
+        if getattr(_cfg, "YT_PRAYER_AI_ANCHORS", True):
+            os.environ.setdefault("YT_PRAYER_AI_ANCHORS", "1")
+        os.environ.setdefault(
+            "YT_PRAYER_AI_ANCHOR_COUNT",
+            str(getattr(_cfg, "YT_PRAYER_AI_ANCHOR_COUNT", 8)),
+        )
+        os.environ.setdefault(
+            "YT_PRAYER_COVER_VARIANTS",
+            str(getattr(_cfg, "YT_PRAYER_COVER_VARIANTS", 4)),
+        )
+        os.environ.setdefault(
+            "YT_PRAYER_HOOK_SEC",
+            str(getattr(_cfg, "YT_PRAYER_HOOK_SEC", 2.0)),
+        )
         os.environ.setdefault(
             "YT_PRAYER_SUBTITLE_OFFSET_SEC",
             str(getattr(_cfg, "YT_PRAYER_SUBTITLE_OFFSET_SEC", -0.35)),
@@ -198,7 +212,7 @@ async def _run_lang_pack(
         )
 
         await notify(f"🎙 [{label} {i}/{len(topics)}] TTS+фон…")
-        wav, _ogg, dur, _tts = await synthesize_prayer_audio(
+        wav, _ogg, dur, _tts, word_timings = await synthesize_prayer_audio(
             prayer,
             work_dir=item_dir,
             voice_id=voice_id,
@@ -207,7 +221,10 @@ async def _run_lang_pack(
         await notify(f"🖼 [{label} {i}/{len(topics)}] b-roll + обложка + рендер ({dur:.0f}с)…")
 
         broll = await build_broll_montage(
-            item_dir, query=topic.broll_query, duration_sec=dur
+            item_dir,
+            query=topic.broll_query,
+            duration_sec=dur,
+            prayer_text=prayer,
         )
         covers = await generate_cover_pack(
             item_dir,
@@ -217,6 +234,7 @@ async def _run_lang_pack(
             brief=topic.brief,
             broll_query=topic.broll_query,
             broll_path=broll,
+            hook_question=meta.hook_question,
         )
         if not covers:
             err = (
@@ -246,6 +264,9 @@ async def _run_lang_pack(
             duration_sec=dur,
             theme_label=theme_label,
             work_dir=item_dir,
+            prayer_text=prayer,
+            word_timings=word_timings,
+            hook_question=meta.hook_question,
         )
 
         await deliver_topic_pack(

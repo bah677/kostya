@@ -45,6 +45,7 @@ class VideoMetadata:
     thumbnail_title: str
     description: str
     hashtags: List[str]
+    hook_question: str = ""
 
     @property
     def description_with_hashtags(self) -> str:
@@ -85,6 +86,27 @@ def _clamp_thumbnail_title(title: str, *, max_len: int = 42) -> str:
         return t
     cut = t[: max_len - 1].rsplit(" ", 1)[0]
     return (cut or t[: max_len - 1]).rstrip(".,;:!?") + "…"
+
+
+def _clamp_hook_question(q: str, *, max_len: int = 56) -> str:
+    t = re.sub(r"\s+", " ", (q or "").strip()).strip(" «»\"'")
+    if not t:
+        return ""
+    if not t.endswith(("?", "؟")):
+        t = t.rstrip(".!") + "?"
+    if len(t) <= max_len:
+        return t
+    cut = t[: max_len - 1].rsplit(" ", 1)[0]
+    return (cut or t[: max_len - 1]).rstrip(".,;:!") + "?"
+
+
+def _hook_from_thumb(thumb: str, *, lang: str) -> str:
+    base = (thumb or "").strip().rstrip("?!.")
+    if not base:
+        return "Тебе это знакомо?" if lang != "en" else "Does this feel familiar?"
+    if lang == "en":
+        return _clamp_hook_question(f"Is this your story — {base}?")
+    return _clamp_hook_question(f"Это про тебя — {base}?")
 
 
 def _thumbnail_from_title(title: str, *, lang: str) -> str:
@@ -157,6 +179,7 @@ def _fallback_metadata(*, trend: str, brief: str, lang: str) -> VideoMetadata:
         thumbnail_title=_clamp_thumbnail_title(thumb),
         description=desc,
         hashtags=tags,
+        hook_question=_hook_from_thumb(thumb, lang=lang),
     )
 
 
@@ -179,11 +202,13 @@ async def generate_video_metadata(
         system = (
             "You write YouTube metadata for Christian prayer videos (USA audience). "
             "Return STRICT JSON only:\n"
-            '{"title":"...","thumbnail_title":"...","description":"...","hashtags":["#Prayer",...]}\n\n'
+            '{"title":"...","thumbnail_title":"...","hook_question":"...","description":"...","hashtags":["#Prayer",...]}\n\n'
             "title: 50–90 chars, SEO-friendly, emotional, reverent, timely, matches trend pain.\n"
             "thumbnail_title: 3–8 words ONLY, max ~40 chars — punchy clickbait for the thumbnail "
             "(e.g. «When Anxiety Won't Let Go», «God Hears You Tonight»). "
             "Must hit the pain harder than title; no emoji, no ALL CAPS, no blasphemy.\n"
+            "hook_question: ONE short question for the first 2 seconds of the video "
+            "(max ~50 chars, ends with ?), personal and urgent — e.g. «Can't sleep again?».\n"
             "description: follow the semantic blocks below; plain text, line breaks OK.\n"
             "hashtags: 8–12 tags, mix broad (#Prayer) and niche (#AnxietyPrayer).\n\n"
             + _DESC_BLOCK_HINTS_EN
@@ -198,11 +223,13 @@ async def generate_video_metadata(
         system = (
             "Ты пишешь метаданные YouTube для канала христианских молитв (RU). "
             "Ответ СТРОГО JSON:\n"
-            '{"title":"...","thumbnail_title":"...","description":"...","hashtags":["#молитва",...]}\n\n'
+            '{"title":"...","thumbnail_title":"...","hook_question":"...","description":"...","hashtags":["#молитва",...]}\n\n'
             "title: 50–90 символов, SEO + эмоция, актуально, без кощунства и эмодзи.\n"
             "thumbnail_title: только 3–8 слов, до ~40 символов — жёсткий кликбейт для обложки "
             "(пример: «Когда тревога не отпускает», «Бог слышит тебя сейчас»). "
             "Бьёт в боль сильнее, чем title; без КАПСА и кощунства.\n"
+            "hook_question: ОДИН короткий вопрос на первые 2 секунды ролика "
+            "(до ~50 символов, заканчивается ?), личный и острый — напр. «Снова не можешь уснуть?».\n"
             "description: по семантическим блокам ниже; обычный текст, переносы строк.\n"
             "hashtags: 8–12 тегов, микс широких (#молитва) и узких (#молитваоттревоги).\n\n"
             + _DESC_BLOCK_HINTS_RU
@@ -224,6 +251,10 @@ async def generate_video_metadata(
             thumbnail_title = _thumbnail_from_title(title, lang=lang)
         description = str(data.get("description") or "").strip()
         hashtags = _normalize_hashtags(data.get("hashtags") or [], lang=lang)
+        hook_raw = str(data.get("hook_question") or "").strip()
+        hook_question = _clamp_hook_question(hook_raw) if hook_raw else ""
+        if len(hook_question) < 6:
+            hook_question = _hook_from_thumb(thumbnail_title, lang=lang)
         if len(title) < 8 or len(description) < 80:
             raise ValueError("metadata too short")
         meta = VideoMetadata(
@@ -231,6 +262,7 @@ async def generate_video_metadata(
             thumbnail_title=thumbnail_title,
             description=description,
             hashtags=hashtags,
+            hook_question=hook_question,
         )
     except Exception as e:
         logger.warning("metadata LLM parse failed trend=%r: %s", trend, e)
@@ -241,6 +273,7 @@ async def generate_video_metadata(
         payload = {
             "title": meta.title,
             "thumbnail_title": meta.thumbnail_title,
+            "hook_question": meta.hook_question,
             "description": meta.description,
             "hashtags": meta.hashtags,
             "description_full": meta.description_with_hashtags,
@@ -257,6 +290,10 @@ async def generate_video_metadata(
         (work_dir / "thumbnail_title.txt").write_text(
             meta.thumbnail_title + "\n", encoding="utf-8"
         )
+        if meta.hook_question:
+            (work_dir / "hook_question.txt").write_text(
+                meta.hook_question + "\n", encoding="utf-8"
+            )
 
     logger.info(
         "metadata ok trend=%r title=%r thumb=%r tags=%s",

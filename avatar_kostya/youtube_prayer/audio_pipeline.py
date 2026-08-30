@@ -10,7 +10,7 @@ import shutil
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import Optional, Sequence, Tuple
+from typing import List, Optional, Sequence, Tuple
 
 import aiohttp
 
@@ -24,6 +24,8 @@ _AUDIO_EXTS = {".mp3", ".m4a", ".ogg", ".opus", ".wav", ".flac", ".webm"}
 _DEFAULT_BG_VOLUME = 0.14
 _TAIL_RESERVE_SEC = 60.0
 _MIN_TRACK_FOR_RANDOM_SEC = 90.0
+
+WordTiming = Tuple[float, float, str]  # start, end, word
 
 
 def _env(name: str, default: str = "") -> str:
@@ -119,16 +121,13 @@ async def _elevenlabs_mp3(
         similarity = float(_env("ELEVENLABS_SIMILARITY") or "0.75")
     except ValueError:
         similarity = 0.75
-
     if not api_key or not vid:
         raise RuntimeError("ELEVENLABS_API_KEY / voice_id не заданы")
-
     body = format_prayer_for_tts(text, lang=lang, stress_amen=stress_amen)
     if not body:
         raise ValueError("empty prayer text after format")
     if len(body) > _MAX_CHARS:
         body = body[:_MAX_CHARS]
-
     url = f"https://api.elevenlabs.io/v1/text-to-speech/{vid}"
     payload = {
         "text": body,
@@ -144,8 +143,75 @@ async def _elevenlabs_mp3(
         "Accept": "audio/mpeg",
     }
     timeout = aiohttp.ClientTimeout(total=_TIMEOUT_SEC)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        async with session.post(
+            url,
+            params={"output_format": output_format},
+            headers=headers,
+            json=payload,
+        ) as resp:
+            raw = await resp.read()
+            if resp.status >= 400:
+                err = raw.decode("utf-8", errors="replace")[:400]
+                raise RuntimeError(f"ElevenLabs HTTP {resp.status}: {err}")
+            if not raw:
+                raise RuntimeError("ElevenLabs empty body")
+            return raw
+
+
+async def _elevenlabs_mp3_with_timings(
+    text: str,
+    *,
+    voice_id: Optional[str] = None,
+    lang: str = "ru",
+    stress_amen: bool = True,
+) -> Tuple[bytes, List[WordTiming]]:
+    """
+    TTS + character alignment (тот же тариф, что обычный TTS).
+    Возвращает (mp3_bytes, word_timings до atempo).
+    """
+    import base64
+    import json
+
+    api_key = _env("ELEVENLABS_API_KEY")
+    vid = (voice_id or _env("ELEVENLABS_VOICE_ID")).strip()
+    model_id = _env("ELEVENLABS_MODEL_ID") or "eleven_flash_v2_5"
+    output_format = _env("ELEVENLABS_OUTPUT_FORMAT") or "mp3_44100_128"
+    try:
+        stability = float(_env("ELEVENLABS_STABILITY") or "0.45")
+    except ValueError:
+        stability = 0.45
+    try:
+        similarity = float(_env("ELEVENLABS_SIMILARITY") or "0.75")
+    except ValueError:
+        similarity = 0.75
+
+    if not api_key or not vid:
+        raise RuntimeError("ELEVENLABS_API_KEY / voice_id не заданы")
+
+    body = format_prayer_for_tts(text, lang=lang, stress_amen=stress_amen)
+    if not body:
+        raise ValueError("empty prayer text after format")
+    if len(body) > _MAX_CHARS:
+        body = body[:_MAX_CHARS]
+
+    url = f"https://api.elevenlabs.io/v1/text-to-speech/{vid}/with-timestamps"
+    payload = {
+        "text": body,
+        "model_id": model_id,
+        "voice_settings": {
+            "stability": stability,
+            "similarity_boost": similarity,
+        },
+    }
+    headers = {
+        "xi-api-key": api_key,
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+    timeout = aiohttp.ClientTimeout(total=_TIMEOUT_SEC)
     logger.info(
-        "ElevenLabs TTS chars=%s model=%s voice=%s lang=%s",
+        "ElevenLabs TTS+timestamps chars=%s model=%s voice=%s lang=%s",
         len(body),
         model_id,
         vid[:8],
@@ -161,10 +227,92 @@ async def _elevenlabs_mp3(
             raw = await resp.read()
             if resp.status >= 400:
                 err = raw.decode("utf-8", errors="replace")[:400]
-                raise RuntimeError(f"ElevenLabs HTTP {resp.status}: {err}")
-            if not raw:
-                raise RuntimeError("ElevenLabs empty body")
-            return raw
+                # fallback на обычный TTS без таймкодов
+                logger.warning(
+                    "ElevenLabs with-timestamps HTTP %s — fallback plain TTS: %s",
+                    resp.status,
+                    err,
+                )
+                mp3 = await _elevenlabs_mp3(
+                    text, voice_id=voice_id, lang=lang, stress_amen=stress_amen
+                )
+                return mp3, []
+            try:
+                data = json.loads(raw.decode("utf-8"))
+            except Exception as e:
+                raise RuntimeError(f"ElevenLabs timestamps JSON parse: {e}") from e
+
+    b64 = data.get("audio_base64") or ""
+    if not b64:
+        raise RuntimeError("ElevenLabs with-timestamps: empty audio_base64")
+    mp3 = base64.b64decode(b64)
+    alignment = data.get("normalized_alignment") or data.get("alignment") or {}
+    timings = _words_from_char_alignment(alignment)
+    return mp3, timings
+
+
+def _words_from_char_alignment(alignment: dict) -> List[WordTiming]:
+    chars = alignment.get("characters") or []
+    starts = alignment.get("character_start_times_seconds") or []
+    ends = alignment.get("character_end_times_seconds") or []
+    if not (chars and starts and ends) or not (
+        len(chars) == len(starts) == len(ends)
+    ):
+        return []
+    words: List[WordTiming] = []
+    buf: List[str] = []
+    w_start: Optional[float] = None
+    w_end: float = 0.0
+    for ch, st, en in zip(chars, starts, ends):
+        if ch.isspace():
+            if buf and w_start is not None:
+                words.append((float(w_start), float(w_end), "".join(buf)))
+                buf = []
+                w_start = None
+            continue
+        if w_start is None:
+            w_start = float(st)
+        buf.append(ch)
+        w_end = float(en)
+    if buf and w_start is not None:
+        words.append((float(w_start), float(w_end), "".join(buf)))
+    return words
+
+
+def scale_word_timings(
+    timings: Sequence[WordTiming], *, atempo: float
+) -> List[WordTiming]:
+    """После atempo голос длиннее при tempo<1 → умножаем времена на 1/tempo."""
+    tempo = max(0.5, min(1.2, float(atempo)))
+    if abs(tempo - 1.0) < 0.001:
+        return [(float(s), float(e), w) for s, e, w in timings]
+    f = 1.0 / tempo
+    return [(float(s) * f, float(e) * f, w) for s, e, w in timings]
+
+
+def cue_chunks_from_words(
+    timings: Sequence[WordTiming],
+    *,
+    words_per_cue: int = 5,
+) -> List[WordTiming]:
+    """Группирует слова в субтитровые реплики (start, end, text)."""
+    words = [(float(s), float(e), w) for s, e, w in timings if (w or "").strip()]
+    if not words:
+        return []
+    n = max(1, int(words_per_cue))
+    out: List[WordTiming] = []
+    i = 0
+    while i < len(words):
+        group = words[i : i + n]
+        out.append(
+            (
+                group[0][0],
+                max(group[0][0] + 0.35, group[-1][1]),
+                " ".join(g[2] for g in group),
+            )
+        )
+        i += n
+    return out
 
 
 def _voice_output_duration_sec(voice_in_dur: float, tempo: float) -> float:
@@ -302,13 +450,17 @@ async def synthesize_prayer_audio(
     voice_id: Optional[str] = None,
     lang: str = "ru",
     stress_amen: bool = True,
-) -> Tuple[Path, Optional[Path], float, str]:
+) -> Tuple[Path, Optional[Path], float, str, List[WordTiming]]:
     """
-    Returns: (wav_path, ogg_path|None, duration_sec, tts_text)
+    Returns: (wav_path, ogg_path|None, duration_sec, tts_text, word_timings)
+    word_timings уже с учётом atempo.
     """
+    import json
+
     work_dir.mkdir(parents=True, exist_ok=True)
     tts_text = format_prayer_for_tts(prayer_text, lang=lang, stress_amen=stress_amen)
-    mp3 = await _elevenlabs_mp3(
+    tempo = resolve_atempo()
+    mp3, raw_timings = await _elevenlabs_mp3_with_timings(
         prayer_text, voice_id=voice_id, lang=lang, stress_amen=stress_amen
     )
     wav_path = work_dir / "prayer_mixed.wav"
@@ -318,8 +470,26 @@ async def synthesize_prayer_audio(
         mp3,
         out_wav=wav_path,
         out_ogg=ogg_path,
-        atempo=resolve_atempo(),
+        atempo=tempo,
     )
     if not ogg_path.is_file() or ogg_path.stat().st_size < 200:
         ogg_path = None  # type: ignore[assignment]
-    return wav_path, ogg_path, dur, tts_text
+    timings = scale_word_timings(raw_timings, atempo=tempo)
+    try:
+        (work_dir / "word_timings.json").write_text(
+            json.dumps(
+                [{"start": s, "end": e, "word": w} for s, e, w in timings],
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+    except Exception:
+        pass
+    logger.info(
+        "TTS ready dur=%.1f words=%s atempo=%.2f",
+        dur,
+        len(timings),
+        tempo,
+    )
+    return wav_path, ogg_path, dur, tts_text, timings

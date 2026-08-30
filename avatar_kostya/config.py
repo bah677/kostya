@@ -323,7 +323,11 @@ class AppConfig:
     YT_PRAYER_SCENE_SEC: int = 10
     YT_PRAYER_SCENE_POOL: int = 12
     YT_PRAYER_IMAGE_GEN: bool = True
-    YT_PRAYER_IMAGE_COUNT: int = 3
+    YT_PRAYER_IMAGE_COUNT: int = 0  # generic stills; якоря — отдельно
+    YT_PRAYER_AI_ANCHORS: bool = True
+    YT_PRAYER_AI_ANCHOR_COUNT: int = 8  # 6–10 смысловых пиков
+    YT_PRAYER_COVER_VARIANTS: int = 4
+    YT_PRAYER_HOOK_SEC: float = 2.0
     YT_PRAYER_SUBTITLE_OFFSET_SEC: float = -0.35
     # EN-пакет: 1×16:9 + 3 шортса, тренды USA, отдельный голос ElevenLabs.
     YT_PRAYER_EN_ENABLED: bool = False
@@ -939,8 +943,16 @@ def load_app_config() -> AppConfig:
         ),
         YT_PRAYER_IMAGE_GEN=_env_flag_true("YT_PRAYER_IMAGE_GEN", default=True),
         YT_PRAYER_IMAGE_COUNT=max(
-            0, min(6, int(os.getenv("YT_PRAYER_IMAGE_COUNT", "3") or 3))
+            0, min(6, int(os.getenv("YT_PRAYER_IMAGE_COUNT", "0") or 0))
         ),
+        YT_PRAYER_AI_ANCHORS=_env_flag_true("YT_PRAYER_AI_ANCHORS", default=True),
+        YT_PRAYER_AI_ANCHOR_COUNT=max(
+            6, min(10, int(os.getenv("YT_PRAYER_AI_ANCHOR_COUNT", "8") or 8))
+        ),
+        YT_PRAYER_COVER_VARIANTS=max(
+            1, min(4, int(os.getenv("YT_PRAYER_COVER_VARIANTS", "4") or 4))
+        ),
+        YT_PRAYER_HOOK_SEC=float(os.getenv("YT_PRAYER_HOOK_SEC", "2.0") or 2.0),
         YT_PRAYER_SUBTITLE_OFFSET_SEC=float(
             os.getenv("YT_PRAYER_SUBTITLE_OFFSET_SEC", "-0.35") or -0.35
         ),

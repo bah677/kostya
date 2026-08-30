@@ -53,7 +53,7 @@ async def _generate_one_short(work_dir: Path):
     )
 
     logger.info("TTS…")
-    wav, _ogg, dur, _ = await synthesize_prayer_audio(
+    wav, _ogg, dur, _, word_timings = await synthesize_prayer_audio(
         prayer,
         work_dir=work_dir,
         voice_id=None,
@@ -69,6 +69,7 @@ async def _generate_one_short(work_dir: Path):
         duration_sec=dur,
         width=SHORT_W,
         height=SHORT_H,
+        prayer_text=prayer,
     )
 
     logger.info("cover 9:16…")
@@ -93,6 +94,7 @@ async def _generate_one_short(work_dir: Path):
         prayer_text=prayer,
         work_dir=work_dir,
         theme_label=theme_label,
+        word_timings=word_timings,
     )
     return topic, meta, vertical, covers, prayer, dur
 

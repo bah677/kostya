@@ -166,7 +166,7 @@ async def run_daily_youtube_shorts_pipeline(
             )
 
             await _notify(f"🎙 [Short {i}/{len(topics)}] TTS…")
-            wav, _ogg, dur, _tts = await synthesize_prayer_audio(
+            wav, _ogg, dur, _tts, word_timings = await synthesize_prayer_audio(
                 prayer,
                 work_dir=item_dir,
                 voice_id=None,
@@ -183,6 +183,7 @@ async def run_daily_youtube_shorts_pipeline(
                 duration_sec=dur,
                 width=SHORT_W,
                 height=SHORT_H,
+                prayer_text=prayer,
             )
             covers = await generate_vertical_cover_pack(
                 item_dir,
@@ -204,6 +205,7 @@ async def run_daily_youtube_shorts_pipeline(
                 prayer_text=prayer,
                 work_dir=item_dir,
                 theme_label=theme_label,
+                word_timings=word_timings,
             )
 
             premiere_label = ""

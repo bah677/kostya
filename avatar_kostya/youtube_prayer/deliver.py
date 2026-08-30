@@ -66,12 +66,29 @@ async def deliver_topic_pack(
 
     if covers is not None:
         try:
-            if covers.horizontal.is_file():
+            paths = list(covers.variants) if covers.variants else []
+            if not paths and covers.horizontal.is_file():
+                paths = [covers.horizontal]
+            for i, p in enumerate(paths, 1):
+                if not p.is_file():
+                    continue
                 cap = covers.thumbnail_title or covers.title
+                label = (
+                    f"🖼 Обложка {i}/{len(paths)} · {_esc(cap)[:180]}"
+                    if len(paths) > 1
+                    else f"🖼 Обложка 16:9 · {_esc(cap)[:200]}"
+                )
                 await bot.send_photo(
                     chat_id,
-                    FSInputFile(str(covers.horizontal), filename="cover_16x9.jpg"),
-                    caption=f"🖼 Обложка 16:9 · {_esc(cap)[:200]}",
+                    FSInputFile(str(p), filename=p.name),
+                    caption=label,
+                    **kwargs,
+                )
+            if covers.hook_question:
+                await bot.send_message(
+                    chat_id,
+                    f"⚡ <b>Hook 0–2с:</b> {_esc(covers.hook_question)}",
+                    parse_mode="HTML",
                     **kwargs,
                 )
         except Exception as e:

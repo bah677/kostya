@@ -10,7 +10,7 @@ import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional, Tuple
 
 import httpx
 
@@ -19,6 +19,12 @@ logger = logging.getLogger(__name__)
 _FULL_W, _FULL_H = 1280, 720
 _SHORT_W, _SHORT_H = 1080, 1920
 _GEN_ATTEMPTS = 2
+_COVER_VARIANT_MOODS = (
+    "golden divine light, high contrast, emotional spiritual atmosphere",
+    "blue hour mist, soft candle glow, intimate quiet prayer mood",
+    "dramatic rim light, deep shadows, cinematic hope after hardship",
+    "warm sunrise haze, open sky, peaceful breakthrough feeling",
+)
 
 
 @dataclass(frozen=True)
@@ -27,6 +33,8 @@ class CoverPack:
     thumbnail_title: str
     horizontal: Path
     vertical: Optional[Path] = None
+    variants: tuple = ()  # Path — доп. варианты 16:9 на выбор
+    hook_question: str = ""
 
 
 def _ffmpeg() -> str:
@@ -72,6 +80,7 @@ async def _gen_cover_bg(
     broll_query: str,
     dest: Path,
     size: str = "1536x1024",
+    mood_extra: str = "",
 ) -> bool:
     key = (os.getenv("OPENAI_API_KEY") or "").strip()
     if not key:
@@ -86,10 +95,11 @@ async def _gen_cover_bg(
     client = AsyncOpenAI(api_key=key)
     model = (os.getenv("YT_PRAYER_IMAGE_MODEL") or "gpt-image-1").strip()
     theme = broll_query or trend
+    mood_line = mood_extra or _COVER_VARIANT_MOODS[0]
     mood = (
         "Ultra eye-catching YouTube thumbnail background for a Christian prayer video. "
-        "Cinematic dramatic lighting, high contrast, emotional spiritual atmosphere, "
-        "golden divine light, strong focal point, professional clickbait thumbnail style. "
+        f"{mood_line}. "
+        "Strong focal point, professional clickbait thumbnail style. "
         "NO text, NO letters, NO logos, NO watermark, NO readable words, NO faces close-up. "
         f"Visual mood for topic: {trend}. "
         f"Prayer context: {brief}. "
@@ -230,8 +240,10 @@ async def generate_cover_pack(
     brief: str = "",
     broll_query: str = "",
     broll_path: Optional[Path] = None,
+    hook_question: str = "",
+    n_variants: Optional[int] = None,
 ) -> Optional[CoverPack]:
-    """AI-обложка 16:9 + кликбейтный заголовок на изображении."""
+    """AI-обложка 16:9: 3–4 варианта на выбор + primary для YouTube."""
     work_dir.mkdir(parents=True, exist_ok=True)
     video_title = (title or "").strip()
     thumb_title = (thumbnail_title or video_title).strip()
@@ -240,50 +252,97 @@ async def generate_cover_pack(
         return None
     (work_dir / "cover_title.txt").write_text(thumb_title + "\n", encoding="utf-8")
 
-    bg_h = work_dir / "cover_bg_h.png"
-    ok_h = False
-    for attempt in range(1, _GEN_ATTEMPTS + 1):
-        ok_h = await _gen_cover_bg(
-            trend=trend,
-            brief=brief,
-            thumbnail_title=thumb_title,
-            broll_query=broll_query,
-            dest=bg_h,
+    try:
+        n = int(
+            n_variants
+            if n_variants is not None
+            else (os.getenv("YT_PRAYER_COVER_VARIANTS") or "4")
         )
-        if ok_h:
-            break
-        logger.warning("cover AI attempt %s/%s failed", attempt, _GEN_ATTEMPTS)
-        await asyncio.sleep(0.8 * attempt)
-    if not ok_h:
-        if broll_path and _extract_broll_frame(
-            broll_path, bg_h, width=_FULL_W, height=_FULL_H
-        ):
-            logger.info("cover fallback: frame from b-roll")
-            ok_h = True
-    if not ok_h:
-        logger.error("cover AI generation failed after %s attempts", _GEN_ATTEMPTS)
+    except ValueError:
+        n = 4
+    n = max(1, min(4, n))
+
+    variants: List[Path] = []
+    for vi in range(n):
+        mood = _COVER_VARIANT_MOODS[vi % len(_COVER_VARIANT_MOODS)]
+        bg_h = work_dir / f"cover_bg_h_{vi + 1}.png"
+        ok_h = False
+        for attempt in range(1, _GEN_ATTEMPTS + 1):
+            ok_h = await _gen_cover_bg(
+                trend=trend,
+                brief=brief,
+                thumbnail_title=thumb_title,
+                broll_query=broll_query,
+                dest=bg_h,
+                mood_extra=mood,
+            )
+            if ok_h:
+                break
+            logger.warning(
+                "cover AI variant %s attempt %s/%s failed",
+                vi + 1,
+                attempt,
+                _GEN_ATTEMPTS,
+            )
+            await asyncio.sleep(0.6 * attempt)
+        if not ok_h and vi == 0 and broll_path:
+            if _extract_broll_frame(
+                broll_path, bg_h, width=_FULL_W, height=_FULL_H
+            ):
+                logger.info("cover fallback: frame from b-roll")
+                ok_h = True
+        if not ok_h:
+            if vi == 0:
+                logger.error(
+                    "cover AI generation failed after %s attempts", _GEN_ATTEMPTS
+                )
+                return None
+            continue
+
+        out_h = work_dir / f"cover_16x9_v{vi + 1}.jpg"
+        ok = await asyncio.to_thread(
+            _burn_title,
+            bg_h,
+            out_h,
+            title=thumb_title,
+            width=_FULL_W,
+            height=_FULL_H,
+            fontsize=72,
+            max_chars=18,
+            max_lines=3,
+        )
+        if ok and out_h.is_file():
+            variants.append(out_h)
+
+    if not variants:
         return None
 
-    out_h = work_dir / "cover_16x9.jpg"
-    ok = await asyncio.to_thread(
-        _burn_title,
-        bg_h,
-        out_h,
-        title=thumb_title,
-        width=_FULL_W,
-        height=_FULL_H,
-        fontsize=72,
-        max_chars=18,
-        max_lines=3,
+    # primary = первый удачный (для YouTube upload)
+    primary = work_dir / "cover_16x9.jpg"
+    try:
+        import shutil
+
+        shutil.copy2(variants[0], primary)
+    except Exception:
+        primary = variants[0]
+
+    hook = (hook_question or "").strip()
+    if hook:
+        (work_dir / "hook_question.txt").write_text(hook + "\n", encoding="utf-8")
+
+    logger.info(
+        "cover ok variants=%s thumb=%r yt_title=%r hook=%r",
+        len(variants),
+        thumb_title,
+        video_title,
+        (hook[:60] if hook else ""),
     )
-    if not (ok and out_h.is_file()):
-        logger.warning("cover pack incomplete title=%r", thumb_title)
-        return None
-    logger.info("cover ok thumb=%r yt_title=%r", thumb_title, video_title)
     return CoverPack(
         title=video_title,
         thumbnail_title=thumb_title,
-        horizontal=out_h,
+        horizontal=primary,
+        variants=tuple(variants),
+        hook_question=hook,
     )
 
 
@@ -352,4 +411,5 @@ async def generate_vertical_cover_pack(
         thumbnail_title=thumb_title,
         horizontal=out_v,
         vertical=out_v,
+        variants=(out_v,),
     )

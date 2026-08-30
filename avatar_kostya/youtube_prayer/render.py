@@ -1,4 +1,4 @@
-"""Рендер 16:9 (1024×576) полной молитвы и 3× 9:16 (1080×1920) шортсов."""
+"""Рендер 16:9 (1920×1080) полной молитвы и 9:16 (1080×1920) шортсов."""
 
 from __future__ import annotations
 
@@ -13,10 +13,12 @@ from typing import List, Optional, Sequence, Tuple
 
 logger = logging.getLogger(__name__)
 
-FULL_W = 1024
-FULL_H = 576
+FULL_W = 1920
+FULL_H = 1080
 SHORT_W = 1080
 SHORT_H = 1920
+_ENCODE_PRESET = "medium"
+_ENCODE_CRF = "20"
 
 # Шрифты: display-семейства (есть на сервере), не Arial/DejaVu.
 _FONT_THEME = "Noto Serif Display"
@@ -26,6 +28,69 @@ _COL_THEME = "&H00D8E8FF"  # тёплый ivory
 _COL_CAPTION = "&H00F2F6FF"  # мягкий белый
 _COL_OUTLINE = "&H40101820"  # полупрозрачный тёмный
 _COL_SHADOW = "&H6E000000"
+
+_STOPWORDS = {
+    "и",
+    "в",
+    "во",
+    "на",
+    "с",
+    "со",
+    "о",
+    "об",
+    "а",
+    "но",
+    "не",
+    "ни",
+    "что",
+    "это",
+    "как",
+    "же",
+    "ли",
+    "бы",
+    "то",
+    "к",
+    "ко",
+    "у",
+    "за",
+    "от",
+    "по",
+    "из",
+    "для",
+    "я",
+    "ты",
+    "мы",
+    "вы",
+    "он",
+    "она",
+    "они",
+    "мне",
+    "меня",
+    "тебя",
+    "нас",
+    "вас",
+    "его",
+    "её",
+    "их",
+    "the",
+    "a",
+    "an",
+    "and",
+    "or",
+    "to",
+    "of",
+    "in",
+    "on",
+    "for",
+    "is",
+    "are",
+    "be",
+    "i",
+    "you",
+    "we",
+    "my",
+    "your",
+}
 
 
 @dataclass(frozen=True)
@@ -138,6 +203,30 @@ def _ass_escape_text(text: str) -> str:
     return (text or "").replace("\\", "\\\\").replace("{", "(").replace("}", ")")
 
 
+def _is_keyword(word: str) -> bool:
+    w = re.sub(r"[^\w]+", "", (word or ""), flags=re.U).casefold().replace("ё", "е")
+    if len(w) < 4:
+        return False
+    return w not in _STOPWORDS
+
+
+def _kinetic_caption_text(text: str) -> str:
+    """Крупные слова + лёгкий scale-pop на ключевых."""
+    words = (text or "").split()
+    if not words:
+        return ""
+    parts: List[str] = []
+    for w in words:
+        esc = _ass_escape_text(w)
+        if _is_keyword(w):
+            parts.append(
+                r"{\fscx118\fscy118\t(0,220,\fscx100\fscy100)}" + esc
+            )
+        else:
+            parts.append(esc)
+    return " ".join(parts)
+
+
 def _write_video_ass(
     path: Path,
     *,
@@ -147,20 +236,26 @@ def _write_video_ass(
     theme_label: str = "",
     chunks: Sequence[Tuple[float, float, str]] = (),
     vertical: bool = True,
+    kinetic: bool = True,
+    hook_question: str = "",
+    hook_sec: float = 2.0,
 ) -> None:
     """
-    ASS с двумя слоями:
+    ASS с тремя слоями:
+    - Hook — крупный вопрос в первые ~2 с (центр)
     - Theme — постоянная подпись «Молитва о…» сверху
-    - Caption — бегущие субтитры снизу (если есть)
+    - Caption — кинетическая строка молитвы крупно снизу
     """
     if vertical:
-        theme_size, theme_margin_v = 46, 110
-        cap_size, cap_margin_v, wrap_chars = 50, 220, 26
-        margin_lr = 64
+        theme_size, theme_margin_v = 44, 100
+        cap_size, cap_margin_v, wrap_chars = 68, 260, 22
+        hook_size, wrap_hook = 72, 18
+        margin_lr = 56
     else:
-        theme_size, theme_margin_v = 34, 36
-        cap_size, cap_margin_v, wrap_chars = 36, 48, 42
-        margin_lr = 40
+        theme_size, theme_margin_v = 42, 48
+        cap_size, cap_margin_v, wrap_chars = 58, 72, 36
+        hook_size, wrap_hook = 78, 28
+        margin_lr = 64
 
     header = f"""[Script Info]
 ScriptType: v4.00+
@@ -172,31 +267,52 @@ ScaledBorderAndShadow: yes
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
 Style: Theme,{_FONT_THEME},{theme_size},{_COL_THEME},&H000000FF,{_COL_OUTLINE},{_COL_SHADOW},0,0,0,0,100,100,1.2,0,1,2.4,1.2,8,{margin_lr},{margin_lr},{theme_margin_v},1
-Style: Caption,{_FONT_CAPTION},{cap_size},{_COL_CAPTION},&H000000FF,{_COL_OUTLINE},{_COL_SHADOW},0,0,0,0,100,100,0.6,0,1,2.6,1.0,2,{margin_lr},{margin_lr},{cap_margin_v},1
+Style: Caption,{_FONT_CAPTION},{cap_size},{_COL_CAPTION},&H000000FF,{_COL_OUTLINE},{_COL_SHADOW},0,0,0,0,100,100,0.8,0,1,3.2,1.4,2,{margin_lr},{margin_lr},{cap_margin_v},1
+Style: Hook,{_FONT_THEME},{hook_size},{_COL_THEME},&H000000FF,{_COL_OUTLINE},{_COL_SHADOW},0,0,0,0,100,100,1.0,0,1,4.0,2.0,5,{margin_lr},{margin_lr},0,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
     lines = [header]
     dur = max(1.0, float(duration_sec))
+    hook = (hook_question or "").strip()
+    h_sec = max(1.2, min(3.0, float(hook_sec)))
+    if hook:
+        wrapped_hook = _ass_line_break(_wrap_line(hook, max_chars=wrap_hook))
+        if wrapped_hook:
+            lines.append(
+                f"Dialogue: 2,0:00:00.00,{_sec_to_ass_time(h_sec)},"
+                f"Hook,,0,0,0,,{{\\fad(120,350)\\blur0.6\\fscx108\\fscy108"
+                f"\\t(0,280,\\fscx100\\fscy100)}}{wrapped_hook}"
+            )
     theme = (theme_label or "").strip()
     if theme:
         wrapped_theme = _ass_line_break(_wrap_line(theme, max_chars=wrap_chars))
         if wrapped_theme:
-            # Лёгкое появление: fade 0.4с + мягкий blur на старте
+            # тема появляется после hook, чтобы не конкурировать
+            theme_start = h_sec if hook else 0.0
             lines.append(
-                f"Dialogue: 1,0:00:00.00,{_sec_to_ass_time(dur)},"
+                f"Dialogue: 1,{_sec_to_ass_time(theme_start)},{_sec_to_ass_time(dur)},"
                 f"Theme,,0,0,0,,{{\\fad(400,0)\\blur0.4}}{wrapped_theme}"
             )
     for start, end, text in chunks:
         if end <= start or not (text or "").strip():
             continue
-        wrapped = _ass_line_break(_wrap_line(text, max_chars=wrap_chars))
-        if not wrapped:
+        # не перекрывать hook крупными субтитрами
+        if hook and start < h_sec:
+            start = h_sec
+            if end <= start:
+                continue
+        if kinetic:
+            wrapped_lines = _wrap_line(text, max_chars=wrap_chars)
+            body = "\\N".join(_kinetic_caption_text(ln) for ln in wrapped_lines if ln.strip())
+        else:
+            body = _ass_line_break(_wrap_line(text, max_chars=wrap_chars))
+        if not body:
             continue
         lines.append(
             f"Dialogue: 0,{_sec_to_ass_time(start)},{_sec_to_ass_time(end)},"
-            f"Caption,,0,0,0,,{{\\fad(80,80)}}{wrapped}"
+            f"Caption,,0,0,0,,{{\\fad(60,90)}}{body}"
         )
     path.write_text("\n".join(lines), encoding="utf-8")
 
@@ -332,8 +448,11 @@ def render_horizontal(
     height: int = FULL_H,
     theme_label: str = "",
     work_dir: Optional[Path] = None,
+    prayer_text: str = "",
+    word_timings: Optional[Sequence[Tuple[float, float, str]]] = None,
+    hook_question: str = "",
 ) -> Path:
-    """16:9 фиксированный кадр + постоянная подпись темы."""
+    """16:9 Full HD + hook 2с + тема + кинетические субтитры по таймкодам TTS."""
     ffmpeg = _ffmpeg()
     dur = max(10.0, float(duration_sec))
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -344,18 +463,35 @@ def render_horizontal(
         f"scale={width}:{height}:force_original_aspect_ratio=increase,"
         f"crop={width}:{height},setsar=1,fps=25,format=yuv420p"
     )
+
+    chunks: List[Tuple[float, float, str]] = []
+    if word_timings:
+        from youtube_prayer.audio_pipeline import cue_chunks_from_words
+
+        chunks = list(cue_chunks_from_words(word_timings, words_per_cue=5))
+    elif prayer_text.strip():
+        offset = _env_float("YT_PRAYER_SUBTITLE_OFFSET_SEC", -0.35)
+        chunks = subtitle_chunks_full(
+            prayer_text, duration_sec=dur, words_per_cue=5, offset_sec=offset
+        )
+
     theme = (theme_label or "").strip()
+    hook = (hook_question or "").strip()
+    hook_sec = _env_float("YT_PRAYER_HOOK_SEC", 2.0)
     ass_path: Optional[Path] = None
-    if theme:
-        ass_path = wd / f"{out_path.stem}_theme.ass"
+    if theme or chunks or hook:
+        ass_path = wd / f"{out_path.stem}_subs.ass"
         _write_video_ass(
             ass_path,
             play_w=width,
             play_h=height,
             duration_sec=dur,
             theme_label=theme,
-            chunks=(),
+            chunks=chunks,
             vertical=False,
+            kinetic=True,
+            hook_question=hook,
+            hook_sec=hook_sec,
         )
         ass_esc = ass_path.resolve().as_posix().replace("\\", "/").replace(":", "\\:")
         vf = f"{vf_base},ass='{ass_esc}'"
@@ -380,13 +516,13 @@ def render_horizontal(
         "-c:v",
         "libx264",
         "-preset",
-        "veryfast",
+        _ENCODE_PRESET,
         "-crf",
-        "23",
+        _ENCODE_CRF,
         "-c:a",
         "aac",
         "-b:a",
-        "128k",
+        "192k",
         "-ar",
         "48000",
         "-ac",
@@ -396,26 +532,27 @@ def render_horizontal(
         "+faststart",
         str(out_path),
     ]
-    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=600, check=False)
+    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=1200, check=False)
     if proc.returncode != 0 or not out_path.is_file():
         if ass_path is not None:
             logger.warning(
-                "horizontal with theme failed, retry plain: %s",
+                "horizontal with ass failed, retry plain: %s",
                 (proc.stderr or "")[-400:],
             )
             cmd[cmd.index("-vf") + 1] = vf_base
             proc = subprocess.run(
-                cmd, capture_output=True, text=True, timeout=600, check=False
+                cmd, capture_output=True, text=True, timeout=1200, check=False
             )
         if proc.returncode != 0 or not out_path.is_file():
             raise RuntimeError(f"horizontal render failed: {(proc.stderr or '')[-600:]}")
     logger.info(
-        "horizontal ok %s %sx%s bytes=%s theme=%r",
+        "horizontal ok %s %sx%s bytes=%s theme=%r cues=%s",
         out_path.name,
         width,
         height,
         out_path.stat().st_size,
         theme[:40] if theme else "",
+        len(chunks),
     )
     return out_path
 
@@ -471,9 +608,9 @@ def render_short(
         "-c:v",
         "libx264",
         "-preset",
-        "veryfast",
+        _ENCODE_PRESET,
         "-crf",
-        "23",
+        _ENCODE_CRF,
         "-c:a",
         "aac",
         "-b:a",
@@ -529,24 +666,38 @@ def render_vertical_full(
     width: int = SHORT_W,
     height: int = SHORT_H,
     theme_label: str = "",
+    word_timings: Optional[Sequence[Tuple[float, float, str]]] = None,
+    hook_question: str = "",
 ) -> Path:
-    """9:16 полная молитва: b-roll + аудио + субтитры + постоянная тема."""
+    """9:16: b-roll + аудио + hook + кинетические субтитры по таймкодам TTS."""
     ffmpeg = _ffmpeg()
     dur = max(10.0, float(duration_sec))
     out_path.parent.mkdir(parents=True, exist_ok=True)
     ass_path = work_dir / f"{out_path.stem}.ass"
-    offset = _env_float("YT_PRAYER_SUBTITLE_OFFSET_SEC", -0.35)
-    chunks = subtitle_chunks_full(
-        prayer_text,
-        duration_sec=dur,
-        words_per_cue=5,
-        offset_sec=offset,
-    )
-    _write_short_ass(
+    if word_timings:
+        from youtube_prayer.audio_pipeline import cue_chunks_from_words
+
+        chunks = list(cue_chunks_from_words(word_timings, words_per_cue=4))
+    else:
+        offset = _env_float("YT_PRAYER_SUBTITLE_OFFSET_SEC", -0.35)
+        chunks = subtitle_chunks_full(
+            prayer_text,
+            duration_sec=dur,
+            words_per_cue=4,
+            offset_sec=offset,
+        )
+    hook_sec = _env_float("YT_PRAYER_HOOK_SEC", 2.0)
+    _write_video_ass(
         ass_path,
-        chunks,
-        theme_label=theme_label,
+        play_w=width,
+        play_h=height,
         duration_sec=dur,
+        theme_label=theme_label,
+        chunks=chunks,
+        vertical=True,
+        kinetic=True,
+        hook_question=(hook_question or "").strip(),
+        hook_sec=hook_sec,
     )
     ass_esc = ass_path.resolve().as_posix().replace("\\", "/").replace(":", "\\:")
     vf_fill = (
@@ -572,9 +723,9 @@ def render_vertical_full(
         "-c:v",
         "libx264",
         "-preset",
-        "veryfast",
+        _ENCODE_PRESET,
         "-crf",
-        "23",
+        _ENCODE_CRF,
         "-c:a",
         "aac",
         "-b:a",
@@ -588,7 +739,7 @@ def render_vertical_full(
         "+faststart",
         str(out_path),
     ]
-    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=600, check=False)
+    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=1200, check=False)
     if proc.returncode != 0 or not out_path.is_file():
         logger.warning(
             "vertical with ass failed, retry without subs: %s",
@@ -599,18 +750,19 @@ def render_vertical_full(
             f"crop={width}:{height},setsar=1,fps=25,format=yuv420p"
         )
         cmd[cmd.index("-vf") + 1] = vf_plain
-        proc2 = subprocess.run(cmd, capture_output=True, text=True, timeout=600, check=False)
+        proc2 = subprocess.run(cmd, capture_output=True, text=True, timeout=1200, check=False)
         if proc2.returncode != 0 or not out_path.is_file():
             raise RuntimeError(
                 f"vertical render failed: {(proc2.stderr or '')[-600:]}"
             )
     logger.info(
-        "vertical ok %s %sx%s bytes=%s theme=%r",
+        "vertical ok %s %sx%s bytes=%s theme=%r cues=%s",
         out_path.name,
         width,
         height,
         out_path.stat().st_size,
         (theme_label or "")[:40],
+        len(chunks),
     )
     return out_path
 
