@@ -195,6 +195,7 @@ class AppConfig:
     PAYMENT_THREAD_ID: int = 0
     SUPER_ADMIN_ID: int = 0
     SUPPORT_THREAD_ID: int = 0
+    SUPPORT_AI_DRAFT_ENABLED: bool = True
     BIBLIA_REPORT_THREAD_ID: int = 0
     MEDIA_ID_TOPIC_ID: int = 0
     TECH_ALERT_TOPIC_ID: int = 7746
@@ -363,6 +364,9 @@ def load_app_config() -> AppConfig:
         PAYMENT_THREAD_ID=int(os.getenv("PAYMENT_THREAD_ID", "0")),
         SUPER_ADMIN_ID=int(os.getenv("SUPER_ADMIN_ID", "0") or "0"),
         SUPPORT_THREAD_ID=int(os.getenv("SUPPORT_THREAD_ID", "0")),
+        SUPPORT_AI_DRAFT_ENABLED=_parse_bool_env(
+            os.getenv("SUPPORT_AI_DRAFT_ENABLED"), True
+        ),
         BIBLIA_REPORT_THREAD_ID=int(os.getenv("BIBLIA_REPORT_THREAD_ID", "0") or "0"),
         MEDIA_ID_TOPIC_ID=int(os.getenv("MEDIA_ID_TOPIC_ID", "0")),
         TECH_ALERT_TOPIC_ID=int(os.getenv("TECH_ALERT_TOPIC_ID", "7746") or "7746"),
