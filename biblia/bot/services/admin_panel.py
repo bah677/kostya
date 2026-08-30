@@ -25,6 +25,7 @@ CB_QUICK_PREFIX = f"{CB_PREFIX}:q:"
 CB_QUICK_MAIL3 = f"{CB_QUICK_PREFIX}mail3"
 CB_QUICK_PRAYER = f"{CB_QUICK_PREFIX}prayer"
 CB_QUICK_LIVE = f"{CB_QUICK_PREFIX}live"
+CB_PRAYER_OUTAGE_MAIL = f"{CB_PREFIX}:prayer_outage_mail"
 CB_VOICE_LIMIT = f"{CB_PREFIX}:voice_limit"
 CB_VOICE_LIMIT_SET = f"{CB_PREFIX}:voice_limit_set"
 CB_VOICE_PER_USER_SET = f"{CB_PREFIX}:voice_per_user_set"
@@ -196,6 +197,14 @@ def build_admin_panel_group(
                 InlineKeyboardButton(
                     text="📨 Последние 3 рассылки",
                     callback_data=CB_QUICK_MAIL3,
+                )
+            ]
+        )
+        kb_rows.append(
+            [
+                InlineKeyboardButton(
+                    text="🔧 Рассылка после сбоев",
+                    callback_data=CB_PRAYER_OUTAGE_MAIL,
                 )
             ]
         )

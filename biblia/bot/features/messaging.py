@@ -66,8 +66,12 @@ class MessagingFeature(BaseFeature):
         async def _dialog() -> None:
             agent_response = await self._get_agent_response(user_id, text)
             if agent_response:
-                await self._send_to_user(message, agent_response)
+                sent = await self._send_to_user(message, agent_response)
+                if not sent:
+                    await self._log_tech_incident(user_id, "agent_send_failed")
+                    await message.reply("Что-то пошло не так. Попробуйте еще раз")
             else:
+                await self._log_tech_incident(user_id, "agent_response_failed")
                 await message.reply("Что-то пошло не так. Попробуйте еще раз")
 
         tg = self.bot.bot if self.bot else None
@@ -94,8 +98,14 @@ class MessagingFeature(BaseFeature):
             logger.error("❌ Agent response failed for user %s: %s", user_id, e)
             return None
 
-    async def _send_to_user(self, message: Message, response: str) -> None:
-        """Ответ пользователю (HTML), без inline-клавиатуры. Маркер CTA из текста убирается."""
+    async def _log_tech_incident(self, user_id: int, kind: str) -> None:
+        try:
+            await self.user_storage.log_bot_tech_incident(user_id, kind)
+        except Exception as e:
+            logger.debug("log tech incident uid=%s: %s", user_id, e)
+
+    async def _send_to_user(self, message: Message, response: str) -> bool:
+        """Ответ пользователю (HTML). True — доставлено."""
         try:
             body, _ = strip_subscribe_cta(response)
             uid = message.from_user.id if message.from_user else 0
@@ -106,5 +116,7 @@ class MessagingFeature(BaseFeature):
             )
             await message.reply(response_html, parse_mode=ParseMode.HTML)
             logger.info("✅ Agent response sent to user %s", message.from_user.id)
+            return True
         except Exception as e:
             logger.error("❌ Failed to send response to user: %s", e)
+            return False

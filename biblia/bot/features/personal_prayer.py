@@ -240,6 +240,18 @@ class PersonalPrayerFeature(BaseFeature):
             self._funding = PrayerVoiceFundingService(self.user_storage, conv)
         return self._funding
 
+    async def _log_tech_incident(
+        self, uid: int, kind: str, *, detail: str = ""
+    ) -> None:
+        if uid <= 0:
+            return
+        try:
+            await self.user_storage.log_prayer_tech_incident(
+                uid, kind, detail=detail
+            )
+        except Exception as e:
+            logger.debug("[%s] log tech incident uid=%s: %s", self.name, uid, e)
+
     async def initialize(self) -> None:
         self.agents_client = AgentsClient(self.user_storage)
         await self.user_storage.ensure_prayer_stress_schema()
@@ -247,6 +259,10 @@ class PersonalPrayerFeature(BaseFeature):
             await self.user_storage.ensure_prayer_voice_quota_schema()
         except Exception as e:
             logger.warning("[%s] prayer voice quota schema: %s", self.name, e)
+        try:
+            await self.user_storage.ensure_prayer_tech_incidents_schema()
+        except Exception as e:
+            logger.warning("[%s] prayer tech incidents schema: %s", self.name, e)
         self._stress_dict_cache = await self.user_storage.get_prayer_stress_dictionary()
         if self.voicebox.configured:
             logger.info(
@@ -467,6 +483,7 @@ class PersonalPrayerFeature(BaseFeature):
                         voice_access, uid
                     )
                     voice_access = None
+                await self._log_tech_incident(uid, "compose_failed")
                 await wait_msg.edit_text(
                     "Не удалось составить молитву. Попробуйте позже или /prayer снова."
                 )
@@ -479,9 +496,12 @@ class PersonalPrayerFeature(BaseFeature):
                     logger.warning("[%s] save last prayer text uid=%s: %s", self.name, uid, e)
 
             if voice_allowed and not ogg and voice_access:
+                await self._log_tech_incident(uid, "voice_tts_failed")
                 # TTS не удался — возвращаем слот/бонус
                 await self.user_storage.release_prayer_voice_access(voice_access, uid)
                 voice_access = None
+            elif voice_allowed and not ogg:
+                await self._log_tech_incident(uid, "voice_tts_failed")
 
             try:
                 await wait_msg.delete()
@@ -512,6 +532,10 @@ class PersonalPrayerFeature(BaseFeature):
         except Exception as e:
             if voice_access:
                 await self.user_storage.release_prayer_voice_access(voice_access, uid)
+            if message.from_user:
+                await self._log_tech_incident(
+                    message.from_user.id, "generate_failed", detail=str(e)[:500]
+                )
             logger.error("[%s] generate failed uid=%s: %s", self.name, uid, e, exc_info=True)
             try:
                 await wait_msg.edit_text(
@@ -1072,6 +1096,8 @@ class PersonalPrayerFeature(BaseFeature):
                 logger.info("[%s] prayer audio sent uid=%s", self.name, uid)
             else:
                 ogg = None
+                if uid:
+                    await self._log_tech_incident(uid, "voice_send_failed")
         else:
             logger.info("[%s] prayer voice missing uid=%s — текст без аудио", self.name, uid)
 

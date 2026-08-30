@@ -16,6 +16,7 @@ from bot.features.base import BaseFeature
 from bot.services.admin_panel import (
     CB_HOME,
     CB_PREFIX,
+    CB_PRAYER_OUTAGE_MAIL,
     CB_VOICE_LIMIT,
     CB_VOICE_LIMIT_SET,
     CB_VOICE_PER_USER_SET,
@@ -150,6 +151,43 @@ class AdminPanelFeature(BaseFeature):
         if key == "prayer":
             return await build_prayer_stats_html(pool, screen="ov", period="30")
         return "❌ Неизвестный отчёт."
+
+    async def _create_prayer_outage_mailing(self, query: CallbackQuery) -> None:
+        from config import config
+
+        if query.from_user is None or query.message is None:
+            return
+        from bot.services.prayer_outage_mailing import (
+            create_prayer_outage_retry_mailing_draft,
+            outage_mailing_preview_keyboard,
+        )
+        from storage.mailing_storage import MailingStorage
+
+        mstore = MailingStorage(self.user_storage)
+        super_id = int(getattr(config, "SUPER_ADMIN_ID", 0) or 0)
+        cid, added, base_n, preview = await create_prayer_outage_retry_mailing_draft(
+            self.user_storage,
+            mstore,
+            created_by=query.from_user.id,
+            super_admin_id=super_id,
+            hours=24,
+        )
+        kb = outage_mailing_preview_keyboard(cid) if cid else None
+        await query.message.answer(
+            preview,
+            parse_mode=ParseMode.HTML,
+            reply_markup=kb,
+            disable_web_page_preview=True,
+        )
+        if cid:
+            logger.info(
+                "[%s] tech outage mailing draft cid=%s audience=%s base=%s by=%s",
+                self.name,
+                cid,
+                added,
+                base_n,
+                query.from_user.id,
+            )
 
     async def _show_prayer_stats(
         self,
@@ -349,6 +387,12 @@ class AdminPanelFeature(BaseFeature):
                 await state.clear()
                 await query.answer()
                 await self._show_voice_limit(edit_message=query.message)
+                return
+
+            if data == CB_PRAYER_OUTAGE_MAIL:
+                await state.clear()
+                await query.answer("⏳")
+                await self._create_prayer_outage_mailing(query)
                 return
 
             ask_screen = parse_prayer_stats_ask_cb(data)

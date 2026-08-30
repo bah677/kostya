@@ -156,6 +156,12 @@ ADMIN_CATALOG: Tuple[AdminEntry, ...] = (
         "admin",
         "mailings",
     ),
+    AdminEntry(
+        "adm → Рассылки → 🔧 после сбоев",
+        "Черновик рассылки затронутым за 24 ч + админам: сбой ответа/молитвы, написать снова",
+        "admin",
+        "mailings",
+    ),
     # —— марафон ——
     AdminEntry(
         "/marathon",
