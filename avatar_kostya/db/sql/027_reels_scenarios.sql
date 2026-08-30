@@ -1,4 +1,4 @@
--- Сценарии Reels + обратная связь (в работу / 👎 / опубликовано + охваты).
+-- Сценарии Reels + обратная связь (👍 хороший / 👎 не подходит).
 
 CREATE TABLE IF NOT EXISTS reels_scenarios (
     id                  UUID PRIMARY KEY,

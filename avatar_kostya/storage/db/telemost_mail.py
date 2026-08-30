@@ -467,18 +467,46 @@ class TelemostMailMixin:
             return None
 
     async def list_telemost_for_reels(self, limit: int = 50) -> list[Dict[str, Any]]:
-        """Список эфиров (не молитвы) с расшифровкой для /reels-команды."""
+        """Список эфиров с расшифровкой для /reels (без молитв и конспектов).
+
+        Источник — ``telemost_mail_pending`` с длинной расшифровкой.
+        Конспекты часто дублируют живую встречу того же дня — скрываем их.
+        За календарный день (МСК) оставляем одну запись (предпочтительно «встреча»).
+        """
         try:
             async with self.get_connection() as conn:
                 rows = await conn.fetch(
                     """
+                    WITH base AS (
+                      SELECT id, subject, created_at, classification,
+                             coalesce(classification->>'title', subject, '') AS title
+                      FROM telemost_mail_pending
+                      WHERE
+                          length(coalesce(transcript_text, '')) > 200
+                          AND coalesce(classification->>'content_type', '')
+                              NOT ILIKE '%молитв%'
+                          AND coalesce(classification->>'content_type', '')
+                              NOT ILIKE '%покаян%'
+                          AND coalesce(classification->>'title', subject, '')
+                              NOT ILIKE '%молитв%'
+                          AND coalesce(classification->>'title', subject, '')
+                              NOT ILIKE '%конспект%'
+                          AND coalesce(subject, '') NOT ILIKE '%конспект%'
+                    ),
+                    ranked AS (
+                      SELECT *,
+                             row_number() OVER (
+                               PARTITION BY
+                                 (created_at AT TIME ZONE 'Europe/Moscow')::date
+                               ORDER BY
+                                 CASE WHEN title ILIKE '%встреч%' THEN 0 ELSE 1 END,
+                                 created_at DESC
+                             ) AS rn
+                      FROM base
+                    )
                     SELECT id, subject, created_at, classification
-                    FROM telemost_mail_pending
-                    WHERE
-                        length(coalesce(transcript_text, '')) > 200
-                        AND coalesce(classification->>'content_type', '') NOT ILIKE '%молитв%'
-                        AND coalesce(classification->>'content_type', '') NOT ILIKE '%покаян%'
-                        AND coalesce(classification->>'title', subject, '') NOT ILIKE '%молитв%'
+                    FROM ranked
+                    WHERE rn = 1
                     ORDER BY created_at DESC
                     LIMIT $1
                     """,

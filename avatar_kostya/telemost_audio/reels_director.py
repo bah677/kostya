@@ -6,7 +6,7 @@
   3. Скрытый JSON-план (режиссура) → конкуренция хуков → 2–3 тела → судья.
   4. Рендер в шаблон + пост-проверка дословных фраз.
   5. Рубрика DeepSeek (с окном расшифровки), до 2 раундов, принимать только рост.
-  6. Сохранение в БД + кнопки фидбека; few-shot из лучших публикаций.
+  6. Сохранение в БД + кнопки (оценка / сгенерить Short в топик YouTube).
 """
 
 from __future__ import annotations
@@ -52,7 +52,7 @@ _RUBRIC_AXIS_MIN = 7.0
 _VERBATIM_MIN_HITS = 2
 _REF_ALPHABET = string.ascii_lowercase + string.digits
 
-CB_REELS_FB = "rlsfb:"  # rlsfb:{action}:{uuid}  action=ok|no|pub|r1|r5|r20|r50
+CB_REELS_FB = "rlsfb:"  # rlsfb:{action}:{uuid}  action=ok|no|gen
 
 # ── Промпты ──────────────────────────────────────────────────────────────────
 
@@ -249,34 +249,24 @@ async def run_reels_brief_for_row(
 
 
 def feedback_keyboard(scenario_id: uuid.UUID) -> InlineKeyboardMarkup:
+    """Оценка + сборка Short из текста сценария."""
     sid = str(scenario_id)
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="🔥 в работу", callback_data=f"{CB_REELS_FB}ok:{sid}"
+                    text="👍 Хороший", callback_data=f"{CB_REELS_FB}ok:{sid}"
                 ),
                 InlineKeyboardButton(
-                    text="👎", callback_data=f"{CB_REELS_FB}no:{sid}"
+                    text="👎 Не подходит", callback_data=f"{CB_REELS_FB}no:{sid}"
                 ),
-                InlineKeyboardButton(
-                    text="📣 опубликовано", callback_data=f"{CB_REELS_FB}pub:{sid}"
-                ),
-            ]
-        ]
-    )
-
-
-def reach_keyboard(scenario_id: uuid.UUID) -> InlineKeyboardMarkup:
-    sid = str(scenario_id)
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
+            ],
             [
-                InlineKeyboardButton(text="<1k", callback_data=f"{CB_REELS_FB}r1:{sid}"),
-                InlineKeyboardButton(text="1–5k", callback_data=f"{CB_REELS_FB}r5:{sid}"),
-                InlineKeyboardButton(text="5–20k", callback_data=f"{CB_REELS_FB}r20:{sid}"),
-                InlineKeyboardButton(text="20k+", callback_data=f"{CB_REELS_FB}r50:{sid}"),
-            ]
+                InlineKeyboardButton(
+                    text="🎬 Сгенерить видео",
+                    callback_data=f"{CB_REELS_FB}gen:{sid}",
+                ),
+            ],
         ]
     )
 
@@ -290,7 +280,7 @@ def parse_feedback_cb(data: str) -> Optional[Tuple[str, uuid.UUID]]:
         return None
     action, sid = rest.split(":", 1)
     action = action.strip().lower()
-    if action not in ("ok", "no", "pub", "r1", "r5", "r20", "r50"):
+    if action not in ("ok", "no", "gen"):
         return None
     try:
         return action, uuid.UUID(sid.strip())

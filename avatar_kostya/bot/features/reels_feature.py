@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from typing import Any
@@ -22,20 +23,12 @@ from telemost_audio.recording_kind import KIND_LABELS, recording_kind_from_pendi
 from telemost_audio.reels_director import (
     CB_REELS_FB,
     parse_feedback_cb,
-    reach_keyboard,
 )
 
 logger = logging.getLogger(__name__)
 
 CB_PREFIX = "reels:gen:"
 _PAGE_SIZE = 10
-
-_REACH_MAP = {
-    "r1": 500,
-    "r5": 3000,
-    "r20": 12000,
-    "r50": 25000,
-}
 
 
 def _short_date(row: dict) -> str:
@@ -159,56 +152,62 @@ class ReelsFeature(BaseFeature):
 
         uid = int(query.from_user.id)
 
-        if action in _REACH_MAP:
-            ok = await self.user_storage.set_reels_scenario_feedback(
-                scenario_id,
-                status="published",
-                user_id=uid,
-                reach=_REACH_MAP[action],
+        if action == "gen":
+            await query.answer("Запускаю сборку Short…")
+            bot_app = getattr(self, "_bot_app", None)
+            if bot_app is None:
+                if query.message:
+                    await query.message.answer("Бот не готов — попробуйте позже.")
+                return
+            from youtube_shorts.from_reels_scenario import run_reels_scenario_to_youtube_short
+
+            progress_chat = query.from_user.id
+            asyncio.create_task(
+                run_reels_scenario_to_youtube_short(
+                    bot_app,
+                    scenario_id,
+                    progress_chat_id=progress_chat,
+                ),
+                name=f"reels_yt_{str(scenario_id)[:8]}",
             )
-            await query.answer("Охват сохранён" if ok else "Ошибка")
-            if query.message and ok:
-                try:
-                    await query.message.edit_reply_markup(reply_markup=None)
-                except Exception:
-                    pass
+            try:
+                await self.user_storage.set_reels_scenario_feedback(
+                    scenario_id, status="approved", user_id=uid
+                )
+            except Exception:
+                pass
             return
 
         if action == "ok":
             ok = await self.user_storage.set_reels_scenario_feedback(
                 scenario_id, status="approved", user_id=uid
             )
-            await query.answer("В работу ✓" if ok else "Ошибка")
-            return
-
-        if action == "no":
+            await query.answer("Отметили: хороший" if ok else "Ошибка")
+        elif action == "no":
             ok = await self.user_storage.set_reels_scenario_feedback(
                 scenario_id, status="rejected", user_id=uid
             )
-            await query.answer("Отмечено 👎" if ok else "Ошибка")
+            await query.answer("Отметили: не подходит" if ok else "Ошибка")
+        else:
+            await query.answer(
+                "Устаревшая кнопка — сгенерируйте сценарий заново",
+                show_alert=True,
+            )
             return
 
-        if action == "pub":
-            ok = await self.user_storage.set_reels_scenario_feedback(
-                scenario_id, status="published", user_id=uid
-            )
-            await query.answer("Опубликовано — укажи охват")
-            if query.message and ok:
-                try:
-                    await query.message.edit_reply_markup(
-                        reply_markup=reach_keyboard(scenario_id)
-                    )
-                except Exception:
-                    if query.message:
-                        await query.message.answer(
-                            "Охват этого ролика:",
-                            reply_markup=reach_keyboard(scenario_id),
-                        )
-            return
+        if query.message and ok:
+            try:
+                await query.message.edit_reply_markup(reply_markup=None)
+            except Exception:
+                pass
 
 
 def _build_list(rows: list[dict]) -> tuple[str, InlineKeyboardMarkup]:
-    lines = ["📋 <b>Архивные эфиры</b> — выбери запись для Reels-сценариев:\n"]
+    lines = [
+        "📋 <b>Архивные эфиры</b>",
+        "Источник: письма Телемоста с расшифровкой (молитвы и конспекты скрыты).",
+        "Нажми эфир → появятся текстовые сценарии Reels.\n",
+    ]
     buttons: list[list[InlineKeyboardButton]] = []
     shown = rows[:_PAGE_SIZE * 3]
     for row in shown:
