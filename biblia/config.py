@@ -197,6 +197,7 @@ class AppConfig:
     SUPPORT_THREAD_ID: int = 0
     BIBLIA_REPORT_THREAD_ID: int = 0
     MEDIA_ID_TOPIC_ID: int = 0
+    TECH_ALERT_TOPIC_ID: int = 7746
 
     CLUB_GROUP_ID: int = 0
     CLUB_POST_LINK: str = ""
@@ -364,6 +365,7 @@ def load_app_config() -> AppConfig:
         SUPPORT_THREAD_ID=int(os.getenv("SUPPORT_THREAD_ID", "0")),
         BIBLIA_REPORT_THREAD_ID=int(os.getenv("BIBLIA_REPORT_THREAD_ID", "0") or "0"),
         MEDIA_ID_TOPIC_ID=int(os.getenv("MEDIA_ID_TOPIC_ID", "0")),
+        TECH_ALERT_TOPIC_ID=int(os.getenv("TECH_ALERT_TOPIC_ID", "7746") or "7746"),
         CLUB_GROUP_ID=int(os.getenv("CLUB_GROUP_ID", "0")),
         CLUB_POST_LINK=(os.getenv("CLUB_POST_LINK") or "").strip(),
         CLUB_INVITE_TTL_HOURS=int(os.getenv("CLUB_INVITE_TTL_HOURS", "24")),

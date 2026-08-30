@@ -149,6 +149,23 @@ def looks_like_telegram_html(s: str) -> bool:
     return is_substantive_telegram_html_markup(s)
 
 
+def _bold_markdown_in_html(s: str) -> str:
+    """**жирный** → <b>жирный</b> в тексте, где HTML уже есть.
+    Не экранирует существующие теги. Не трогает содержимое pre/code."""
+    parts = re.split(
+        r"(<pre\b.*?</pre>|<code\b.*?</code>)",
+        s,
+        flags=re.DOTALL | re.IGNORECASE,
+    )
+    for i in range(0, len(parts), 2):
+        parts[i] = re.sub(
+            r"\*\*([^*\n]{1,200}?)\*\*",
+            r"<b>\1</b>",
+            parts[i],
+        )
+    return "".join(parts)
+
+
 def normalize_llm_reply_for_telegram(text: str | None) -> str:
     """
     Ответ агента перед отправкой с parse_mode HTML.
@@ -161,6 +178,8 @@ def normalize_llm_reply_for_telegram(text: str | None) -> str:
         return ""
     s = normalize_fixed_markdown_phrases(text.strip())
     if is_substantive_telegram_html_markup(s):
+        if "**" in s:
+            s = _bold_markdown_in_html(s)
         return sanitize_telegram_html(s)
     if "**" in s or "```" in s:
         return sanitize_telegram_html(_markdownish_to_telegram_html(s))
@@ -185,6 +204,9 @@ def sanitize_telegram_html(text: str | None) -> str:
     out = re.sub(rf"<(?!\/?(?:{tags})\b)[^>]*>", "", out, flags=re.IGNORECASE)
 
     out = re.sub(r"<a\s+(?![^>]*\bhref\s*=)[^>]*>", "", out, flags=re.IGNORECASE)
+
+    # остатки непарных ** после конвертации парных
+    out = re.sub(r"\*\*", "", out)
 
     return balance_telegram_html_tags(out)
 

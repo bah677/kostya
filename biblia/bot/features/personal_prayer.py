@@ -1094,6 +1094,38 @@ class PersonalPrayerFeature(BaseFeature):
             )
             if sent:
                 logger.info("[%s] prayer audio sent uid=%s", self.name, uid)
+                if uid:
+                    try:
+                        await self.user_storage.log_interaction(
+                            user_id=uid,
+                            event_category="prayer",
+                            event_type="prayer_voice_sent",
+                            data={},
+                        )
+                    except Exception:
+                        pass
+                    try:
+                        # первая молитва → nudge через 4 дня
+                        n = await self.user_storage.count_sent_prayer_voices(uid)
+                        if n <= 1:
+                            snippet = ""
+                            # topic из последнего user в истории / caption
+                            hist = await self.user_storage.get_private_chat_history(
+                                uid, limit=12
+                            )
+                            for row in hist:
+                                if row.get("role") == "user":
+                                    from storage.db.second_prayer_nudge import (
+                                        clip_topic_snippet,
+                                    )
+
+                                    snippet = clip_topic_snippet(str(row.get("content") or ""))
+                                    break
+                            await self.user_storage.schedule_second_prayer_nudge(
+                                uid, snippet, delay_days=4
+                            )
+                    except Exception as e:
+                        logger.debug("[%s] schedule nudge uid=%s: %s", self.name, uid, e)
             else:
                 ogg = None
                 if uid:
@@ -1141,11 +1173,41 @@ class PersonalPrayerFeature(BaseFeature):
         body = (body or "").strip()
         uid = message.from_user.id if message.from_user else 0
         kb = self._prayer_support_kb()
+
         if uid and include_donation_footer:
             try:
-                await self.user_storage.increment_donation_button_counter(uid)
-            except Exception:
-                pass
+                from bot.services.crisis_classifier import is_crisis_context
+                from openai_client.agents_client import AgentsClient
+
+                inbound = (message.text or message.caption or "").strip()
+                if not inbound:
+                    try:
+                        hist = await self.user_storage.get_private_chat_history(
+                            uid, limit=6
+                        )
+                        for row in reversed(hist):
+                            if row.get("role") == "user" and (row.get("content") or "").strip():
+                                inbound = str(row["content"]).strip()
+                                break
+                    except Exception:
+                        pass
+                agents = AgentsClient(self.user_storage)
+                if await is_crisis_context(
+                    self.user_storage,
+                    agents,
+                    uid,
+                    inbound,
+                    point="prayer",
+                ):
+                    include_donation_footer = False
+                    await self.user_storage.set_owed_donation_ask(uid, True)
+            except Exception as e:
+                logger.warning("[%s] crisis check prayer uid=%s: %s", self.name, uid, e)
+                include_donation_footer = False
+                try:
+                    await self.user_storage.set_owed_donation_ask(uid, True)
+                except Exception:
+                    pass
 
         prayer_msg = f"🙏 Ваша молитва\n\n{body}" if body else "🙏 Ваша молитва"
         try:
@@ -1190,6 +1252,11 @@ class PersonalPrayerFeature(BaseFeature):
 
         try:
             await message.answer(footer, reply_markup=kb, parse_mode=parse_mode)
+            if uid:
+                try:
+                    await self.user_storage.increment_donation_button_counter(uid)
+                except Exception:
+                    pass
             logger.info("[%s] donation footer sent uid=%s pool=%s", self.name, uid, pool_progress)
         except Exception as e:
             logger.error(

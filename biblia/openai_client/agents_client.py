@@ -258,6 +258,93 @@ class AgentsClient:
             )
             return None
 
+    async def crisis_classify(self, text: str) -> str:
+        """Дешёвый классификатор crisis/ok (request_kind=crisis_classifier)."""
+        resp = await asyncio.wait_for(
+            self.client.chat.completions.create(
+                model=self.CHAT_MODEL,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "Ты классификатор. Определи, находится ли человек в остром кризисе.\n"
+                            "Ответь ровно одним словом: crisis или ok."
+                        ),
+                    },
+                    {"role": "user", "content": (text or "")[:2000]},
+                ],
+                temperature=0,
+                max_tokens=3,
+            ),
+            timeout=4.0,
+        )
+        try:
+            await self.user_storage.log_llm_completion_usage(
+                user_id=0,
+                provider="deepseek",
+                model=self.CHAT_MODEL,
+                usage=getattr(resp, "usage", None),
+                request_kind="crisis_classifier",
+                request_id=str(uuid.uuid4()),
+            )
+        except Exception:
+            pass
+        choice = resp.choices[0] if resp.choices else None
+        content = ""
+        if choice is not None and choice.message is not None:
+            content = (choice.message.content or "").strip()
+        return content.lower().split()[0] if content else ""
+
+    async def run_openai_fallback(
+        self, user_message: str, user_id: int
+    ) -> Optional[str]:
+        """Третья попытка генерации через OpenAI (после двух падений DeepSeek)."""
+        api_key = (os.getenv("OPENAI_API_KEY") or "").strip()
+        if not api_key:
+            logger.warning("OpenAI fallback: no OPENAI_API_KEY")
+            return await self.run(user_message, user_id)
+
+        model = (os.getenv("OPENAI_CHAT_MODEL") or "gpt-4o-mini").strip()
+        client = AsyncOpenAI(api_key=api_key, timeout=90.0)
+        history = await self.user_storage.get_private_chat_history(
+            user_id, limit=self.HISTORY_LIMIT
+        )
+        messages = [{"role": "system", "content": self.system_prompt}]
+        for msg in history:
+            messages.append({"role": msg["role"], "content": msg["content"]})
+        if (
+            not history
+            or history[-1]["role"] != "user"
+            or _strip_for_history_match(history[-1]["content"])
+            != _strip_for_history_match(user_message)
+        ):
+            messages.append({"role": "user", "content": user_message})
+
+        try:
+            response = await asyncio.wait_for(
+                client.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    temperature=0.7,
+                    max_tokens=2048,
+                ),
+                timeout=90.0,
+            )
+            choice = response.choices[0] if response.choices else None
+            reply_text = _message_text(choice.message if choice else None)
+            await self.user_storage.log_llm_completion_usage(
+                user_id=user_id,
+                provider="openai",
+                model=model,
+                usage=getattr(response, "usage", None),
+                request_kind="chat_completion_fallback",
+                request_id=str(uuid.uuid4()),
+            )
+            return reply_text
+        except Exception as e:
+            logger.error("OpenAI fallback failed user=%s: %s", user_id, e)
+            return None
+
     async def format_reply_to_telegram_html(self, raw_text: str, user_id: int) -> Optional[str]:
         """
         Отдельный вызов DeepSeek: Markdown/plain → HTML Telegram.

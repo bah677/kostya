@@ -446,6 +446,7 @@ class MessagesMixin:
                       AND deleted_at IS NULL
                       AND content IS NOT NULL AND content <> ''
                       AND ($3 OR message_type <> 'callback')
+                      AND message_type <> 'voice_failed'
                     ORDER BY created_at DESC, id DESC
                     LIMIT $2
                     """,

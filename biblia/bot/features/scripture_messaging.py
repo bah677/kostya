@@ -65,7 +65,9 @@ class ScriptureMessagingFeature(MessagingFeature):
                     continue
                 raise
 
-    async def _send_to_user(self, message: Message, response: str) -> None:
+    async def _send_to_user(
+        self, message: Message, response: str, *, inbound_text: str = ""
+    ) -> bool:
         try:
             uid = message.from_user.id if message.from_user else 0
 
@@ -78,15 +80,28 @@ class ScriptureMessagingFeature(MessagingFeature):
             )
 
             keyboard, donation_variant = await maybe_donation_keyboard(
-                self.user_storage, uid
+                self.user_storage,
+                uid,
+                text=inbound_text
+                or getattr(message, "text", None)
+                or getattr(message, "caption", None)
+                or "",
+                llm_client=self.agents_client,
             )
 
             await self._reply_html(message, text_out, keyboard=keyboard)
+            if keyboard is not None and uid:
+                try:
+                    await self.user_storage.increment_donation_button_counter(uid)
+                except Exception:
+                    pass
             logger.info(
                 "✅ Ответ пользователю %s отправлен (donation_keyboard=%s variant=%s)",
                 message.from_user.id,
                 keyboard is not None,
                 donation_variant,
             )
+            return True
         except Exception as e:
             logger.error("❌ Не удалось отправить ответ: %s", e)
+            return False

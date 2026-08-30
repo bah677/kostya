@@ -567,8 +567,21 @@ class ScriptureChallengeFeature(BaseFeature):
             reply, user_id=message.from_user.id
         )
         await self.user_storage.add_challenge_message(cid, "assistant", html_reply)
-        keyboard, _ = await maybe_donation_keyboard(self.user_storage, message.from_user.id)
+        keyboard, variant = await maybe_donation_keyboard(
+            self.user_storage,
+            message.from_user.id,
+            text=(message.text or message.caption or ""),
+            llm_client=getattr(self, "agents_client", None)
+            or getattr(getattr(self, "service", None), "agents", None),
+        )
         await self._reply_html(message, html_reply, keyboard=keyboard)
+        if keyboard is not None:
+            try:
+                await self.user_storage.increment_donation_button_counter(
+                    message.from_user.id
+                )
+            except Exception:
+                pass
 
     async def send_daily_passage(self, challenge: Dict[str, Any]) -> None:
         if not self.bot:
@@ -626,6 +639,11 @@ class ScriptureChallengeFeature(BaseFeature):
 
         keyboard, _ = await maybe_donation_keyboard(self.user_storage, user_id)
         await self._send_html(user_id, body, keyboard=keyboard)
+        if keyboard is not None:
+            try:
+                await self.user_storage.increment_donation_button_counter(user_id)
+            except Exception:
+                pass
 
         await self.user_storage.mark_plan_item_sent(item["id"])
         await self.user_storage.add_challenge_message(

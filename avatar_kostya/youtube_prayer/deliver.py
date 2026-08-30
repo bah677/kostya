@@ -28,7 +28,7 @@ async def deliver_topic_pack(
     covers: Optional[CoverPack] = None,
     metadata: Optional[VideoMetadata] = None,
 ) -> None:
-    """Шлёт шапку, описание YouTube, обложку и видео 16:9 в forum topic."""
+    """Шлёт шапку, описание YouTube, обложки и видео 16:9 в forum topic."""
     lang_l = (lang or "ru").lower()
     lang_tag = "EN · US" if lang_l == "en" else "RU"
     yt_title = (metadata.title if metadata else "") or (covers.title if covers else "")

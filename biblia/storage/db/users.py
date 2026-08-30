@@ -416,6 +416,35 @@ class UsersMixin:
             logger.error("❌ Failed to get/clear show donation flag for user %s: %s", user_id, e)
             return False
 
+    async def get_owed_donation_ask(self, user_id: int) -> bool:
+        try:
+            async with self.get_connection() as conn:
+                val = await conn.fetchval(
+                    "SELECT owed_donation_ask FROM users WHERE user_id = $1",
+                    int(user_id),
+                )
+                return bool(val)
+        except Exception as e:
+            logger.debug("get_owed_donation_ask uid=%s: %s", user_id, e)
+            return False
+
+    async def set_owed_donation_ask(self, user_id: int, value: bool = True) -> bool:
+        try:
+            async with self.get_connection() as conn:
+                await conn.execute(
+                    """
+                    UPDATE users
+                    SET owed_donation_ask = $1
+                    WHERE user_id = $2
+                    """,
+                    bool(value),
+                    int(user_id),
+                )
+                return True
+        except Exception as e:
+            logger.error("set_owed_donation_ask uid=%s: %s", user_id, e)
+            return False
+
     async def increment_donation_proposal_counter(self, user_id: int) -> bool:
         """Счётчик предложений доната из рассылки (флаг show_donation_on_next_response)."""
         try:

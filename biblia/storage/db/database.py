@@ -19,12 +19,14 @@ from storage.db.media_archive import MediaArchiveMixin
 from storage.db.messages import MessagesMixin
 from storage.db.orders import OrdersMixin
 from storage.db.payments import PaymentsMixin
+from storage.db.pending_reply import PendingReplyMixin
 from storage.db.prayer_stress import PrayerStressMixin
 from storage.db.prayer_tech_incidents import PrayerTechIncidentsMixin
 from storage.db.prayer_voice_poll import PrayerVoicePollMixin
 from storage.db.prayer_voice_quota import PrayerVoiceQuotaMixin
 from storage.db.referrals import ReferralsMixin
 from storage.db.scripture_challenge import ScriptureChallengeMixin
+from storage.db.second_prayer_nudge import SecondPrayerNudgeMixin
 from storage.db.subscription_outreach import SubscriptionOutreachMixin
 from storage.db.support import SupportMixin
 from storage.db.tariffs import TariffsMixin
@@ -41,6 +43,8 @@ class Database(
     PrayerTechIncidentsMixin,
     PrayerVoicePollMixin,
     PrayerVoiceQuotaMixin,
+    SecondPrayerNudgeMixin,
+    PendingReplyMixin,
     DonationSubscriptionsMixin,
     DonationMarathonsMixin,
     ScriptureChallengeMixin,

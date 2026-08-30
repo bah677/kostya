@@ -498,6 +498,8 @@ class MessageCopier:
         message_id: int,
         content: str,
         metadata: Optional[Dict] = None,
+        *,
+        message_type: Optional[str] = None,
     ) -> bool:
         """Обновляет content/metadata для уже сохранённого сообщения."""
         try:
@@ -517,19 +519,36 @@ class MessageCopier:
                 if metadata:
                     cur_meta.update(metadata)
 
-                await conn.execute(
-                    """
-                    UPDATE messages
-                       SET content = $1,
-                           metadata = $2,
-                           processing_time_ms = $3
-                     WHERE id = $4
-                    """,
-                    content,
-                    json.dumps(cur_meta),
-                    (metadata or {}).get("processing_time_ms"),
-                    message_id,
-                )
+                if message_type:
+                    await conn.execute(
+                        """
+                        UPDATE messages
+                           SET content = $1,
+                               metadata = $2,
+                               processing_time_ms = $3,
+                               message_type = $4
+                         WHERE id = $5
+                        """,
+                        content,
+                        json.dumps(cur_meta),
+                        (metadata or {}).get("processing_time_ms"),
+                        message_type,
+                        message_id,
+                    )
+                else:
+                    await conn.execute(
+                        """
+                        UPDATE messages
+                           SET content = $1,
+                               metadata = $2,
+                               processing_time_ms = $3
+                         WHERE id = $4
+                        """,
+                        content,
+                        json.dumps(cur_meta),
+                        (metadata or {}).get("processing_time_ms"),
+                        message_id,
+                    )
                 return True
         except Exception as e:
             logger.error("❌ update_message_content failed: %s", e, exc_info=True)

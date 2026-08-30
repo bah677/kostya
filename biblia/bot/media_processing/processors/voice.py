@@ -15,6 +15,32 @@ from openai_client.assistant import OpenAIClient, WhisperQuotaExceededError
 
 logger = logging.getLogger(__name__)
 
+_WHISPER_PROMPT_MARKERS = (
+    "если в аудио нет речи",
+    "просто верни",
+    "слов не разобрать",
+    "[тишина]",
+    "[шум, слов не разобрать]",
+)
+
+
+def _normalize_whisper_text(raw: Optional[str]) -> Optional[str]:
+    """None — распознавание неудачно / утечка промпта / тишина."""
+    if raw is None:
+        return None
+    t = str(raw).strip()
+    if not t:
+        return None
+    low = t.casefold()
+    if any(m in low for m in _WHISPER_PROMPT_MARKERS):
+        return None
+    # точное совпадение с кусками инструкции
+    if low.startswith("если в аудио"):
+        return None
+    if t in {"[тишина]", "[шум, слов не разобрать]", "тишина"}:
+        return None
+    return t
+
 
 class VoiceProcessor(BaseProcessor):
     """Обработка голосовых сообщений через Whisper"""
@@ -66,10 +92,12 @@ class VoiceProcessor(BaseProcessor):
             quota_exceeded = False
             logger.info("🔄 Attempting direct transcription...")
             try:
-                transcribed_text = await self.openai_client.transcribe_voice(
-                    audio_file_path=file_path,
-                    user_id=user_id,
-                    duration_sec=duration,
+                transcribed_text = _normalize_whisper_text(
+                    await self.openai_client.transcribe_voice(
+                        audio_file_path=file_path,
+                        user_id=user_id,
+                        duration_sec=duration,
+                    )
                 )
             except WhisperQuotaExceededError:
                 transcribed_text = None
@@ -91,10 +119,12 @@ class VoiceProcessor(BaseProcessor):
                 logger.info(f"✅ Audio converted to: {converted_path}")
 
                 try:
-                    transcribed_text = await self.openai_client.transcribe_voice(
-                        audio_file_path=converted_path,
-                        user_id=user_id,
-                        duration_sec=duration,
+                    transcribed_text = _normalize_whisper_text(
+                        await self.openai_client.transcribe_voice(
+                            audio_file_path=converted_path,
+                            user_id=user_id,
+                            duration_sec=duration,
+                        )
                     )
                 except WhisperQuotaExceededError:
                     transcribed_text = None
@@ -120,7 +150,7 @@ class VoiceProcessor(BaseProcessor):
                 confidence = 0.9
                 has_text = True
             else:
-                text = "[голосовое сообщение (речь не распознана)]"
+                text = ""
                 confidence = 0.0
                 has_text = False
             
@@ -137,7 +167,8 @@ class VoiceProcessor(BaseProcessor):
                 model_used='whisper-1',
                 metadata={
                     'duration_sec': duration,
-                    'transcription_length': len(transcribed_text) if transcribed_text else 0
+                    'transcription_length': len(transcribed_text) if transcribed_text else 0,
+                    'voice_failed': not has_text,
                 }
             )
             
@@ -151,7 +182,7 @@ class VoiceProcessor(BaseProcessor):
             logger.error(f"❌ Voice processing failed: {e}", exc_info=True)
             
             result = ProcessedMedia(
-                text="[голосовое сообщение (ошибка распознавания)]",
+                text="",
                 media_type=MediaType.VOICE,
                 user_id=user_id,
                 confidence=0.0,
@@ -160,7 +191,7 @@ class VoiceProcessor(BaseProcessor):
                 file_id=file_info.get('file_id'),
                 file_size=file_info.get('file_size'),
                 duration_sec=file_info.get('duration', 0),
-                metadata={'error': str(e)}
+                metadata={'error': str(e), 'voice_failed': True}
             )
             
             await self._log_processing(user_id, result, 'failed', error=str(e))

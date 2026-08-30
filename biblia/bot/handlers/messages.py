@@ -13,11 +13,17 @@ from aiogram.fsm.context import FSMContext
 
 from bot.features.base import FeatureManager
 from bot.media_processing import MediaProcessor, ProcessedMedia
+from bot.media_processing.models import MediaType
 from bot.logging.message_copier import MessageCopier
 from bot.logging.interaction_logger import InteractionLogger
 from bot.utils.chat_actions import media_processing_chat_action
 
 logger = logging.getLogger(__name__)
+
+_VOICE_FAIL_USER_TEXT = (
+    "Не расслышал голосовое — фоновый шум или очень тихо.\n"
+    "Попробуйте записать ещё раз или напишите текстом."
+)
 
 
 def text_for_feature_route(processed: ProcessedMedia, message: Message) -> str:
@@ -199,6 +205,22 @@ class MessageHandlers:
                             **processed.metadata,
                         },
                     )
+                elif (
+                    processed.media_type == MediaType.VOICE
+                    and not processed.has_text
+                ):
+                    await self.message_copier.update_message_content(
+                        message_id=logged_message_id,
+                        content="",
+                        metadata={
+                            'confidence': 0.0,
+                            'media_type': processed.media_type.value,
+                            'processing_time_ms': processed.processing_time_ms,
+                            'error': 'recognition_failed',
+                            **processed.metadata,
+                        },
+                        message_type="voice_failed",
+                    )
                 else:
                     error_text = f"[{processed.media_type.value} (не удалось обработать)]"
                     await self.message_copier.update_message_content(
@@ -212,11 +234,18 @@ class MessageHandlers:
                             **processed.metadata,
                         },
                     )
-            
-            # Если нет текста - сообщаем пользователю
-            #if not processed.has_text and processed.media_type != MediaType.TEXT:
-                #await message.answer("📝 Пожалуйста, отправьте текстовое сообщение")
-            #    return
+
+            # Голос без текста — один ответ пользователю, в LLM не отправляем
+            if (
+                processed.media_type == MediaType.VOICE
+                and not processed.has_text
+                and is_private_chat(message)
+            ):
+                try:
+                    await message.answer(_VOICE_FAIL_USER_TEXT)
+                except Exception as e:
+                    logger.warning("voice_failed notice uid=%s: %s", user_id, e)
+                return
             
             # Добавляем в очередь на обработку
             if self.bot:
