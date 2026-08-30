@@ -27,6 +27,7 @@
 
 # IDE / OS
 .cursor/
+.claude/
 .idea/
 .vscode/
 .DS_Store
