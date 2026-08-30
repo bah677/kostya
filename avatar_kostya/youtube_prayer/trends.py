@@ -182,8 +182,13 @@ def _fallback_topics(
         out.append(s)
         if len(out) >= n:
             break
-    if not out:
-        out = seeds[:n]
+    if len(out) < n:
+        for s in seeds:
+            if any(trends_similar(s.trend, x.trend) for x in out):
+                continue
+            out.append(s)
+            if len(out) >= n:
+                break
     return out[: max(1, n)]
 
 
@@ -323,7 +328,7 @@ async def select_prayer_topics(
     from youtube_prayer.topic_history import filter_out_recent, trends_similar
 
     lang = (lang or "ru").lower()
-    n = max(1, min(5, int(n)))
+    n = max(1, min(12, int(n)))
     recent = [str(x).strip() for x in recent_themes if str(x).strip()]
     fresh = filter_out_recent(trends, recent)
     pool = [t for t in (fresh if fresh else list(trends)) if not _heuristic_reject(t)]

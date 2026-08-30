@@ -16,7 +16,7 @@ from youtube_prayer.audio_pipeline import synthesize_prayer_audio
 from youtube_prayer.covers import CoverPack, generate_vertical_cover_pack
 from youtube_prayer.compose import deepseek_complete
 from youtube_prayer.pipeline import is_done, mark_done, run_dir_for_day
-from youtube_prayer.render import SHORT_H, SHORT_W, render_vertical_full
+from youtube_prayer.render import SHORT_H, SHORT_W, format_prayer_theme_label, render_vertical_full
 from youtube_prayer.stock_broll import build_broll_montage
 from youtube_prayer.topic_history import append_used_trends, load_recent_trends
 from youtube_prayer.trends import fetch_google_trends, select_prayer_topics
@@ -191,8 +191,10 @@ async def run_daily_youtube_shorts_pipeline(
                 trend=topic.trend,
                 brief=topic.brief,
                 broll_query=topic.broll_query,
+                broll_path=broll,
             )
             vertical = item_dir / "short_9x16.mp4"
+            theme_label = format_prayer_theme_label(topic.trend, topic.brief, lang="ru")
             await asyncio.to_thread(
                 render_vertical_full,
                 broll_path=broll,
@@ -201,6 +203,7 @@ async def run_daily_youtube_shorts_pipeline(
                 duration_sec=dur,
                 prayer_text=prayer,
                 work_dir=item_dir,
+                theme_label=theme_label,
             )
 
             premiere_label = ""

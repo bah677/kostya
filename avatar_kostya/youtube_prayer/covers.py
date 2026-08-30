@@ -35,14 +35,33 @@ def _ffmpeg() -> str:
 
 def _find_font() -> str:
     for p in (
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
-        "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf",
+        "/usr/share/fonts/truetype/noto/NotoSerifDisplay-Bold.ttf",
+        "/usr/share/fonts/truetype/noto/NotoSansDisplay-Bold.ttf",
+        "/usr/share/fonts/truetype/noto/NotoSerif-Bold.ttf",
         "/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSerif-Bold.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSerif-Bold.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
     ):
         if Path(p).is_file():
             return p
-    return "DejaVu Sans"
+    return "Noto Serif Display"
+
+
+async def _save_image_response_item(item, dest: Path) -> bool:
+    b64 = getattr(item, "b64_json", None)
+    url = getattr(item, "url", None)
+    if b64:
+        dest.write_bytes(base64.b64decode(b64))
+        return True
+    if url:
+        async with httpx.AsyncClient(timeout=90.0) as http:
+            r = await http.get(url)
+            r.raise_for_status()
+            dest.write_bytes(r.content)
+        return True
+    return False
 
 
 async def _gen_cover_bg(
@@ -79,21 +98,10 @@ async def _gen_cover_bg(
     )
     try:
         kwargs = {"model": model, "prompt": mood, "n": 1, "size": size}
-        if model.startswith("dall-e"):
-            kwargs["size"] = "1792x1024" if size == "1536x1024" else "1024x1792"
+        if model.startswith("dall-e-2"):
             kwargs["response_format"] = "b64_json"
         resp = await client.images.generate(**kwargs)
-        item = resp.data[0]
-        b64 = getattr(item, "b64_json", None)
-        url = getattr(item, "url", None)
-        if b64:
-            dest.write_bytes(base64.b64decode(b64))
-            return True
-        if url:
-            async with httpx.AsyncClient(timeout=90.0) as http:
-                r = await http.get(url)
-                r.raise_for_status()
-                dest.write_bytes(r.content)
+        if await _save_image_response_item(resp.data[0], dest):
             return True
     except Exception as e:
         logger.warning("cover bg gen failed model=%s: %s", model, e)
@@ -104,10 +112,9 @@ async def _gen_cover_bg(
                     prompt=mood,
                     n=1,
                     size="1024x1792" if size != "1536x1024" else "1792x1024",
-                    response_format="b64_json",
                 )
-                dest.write_bytes(base64.b64decode(resp.data[0].b64_json))
-                return True
+                if await _save_image_response_item(resp.data[0], dest):
+                    return True
             except Exception as e2:
                 logger.warning("cover dall-e-3 failed: %s", e2)
     return False
@@ -155,10 +162,10 @@ def _burn_title(
     vf = (
         f"scale={width}:{height}:force_original_aspect_ratio=increase,"
         f"crop={width}:{height},"
-        f"drawbox=x=0:y=ih*0.45:w=iw:h=ih*0.55:color=black@0.55:t=fill,"
+        f"drawbox=x=0:y=ih*0.45:w=iw:h=ih*0.55:color=black@0.48:t=fill,"
         f"drawtext=fontfile='{font_esc}':textfile='{text_esc}':"
-        f"fontsize={fontsize}:fontcolor=white:borderw=4:bordercolor=black@0.7:"
-        f"line_spacing=14:"
+        f"fontsize={fontsize}:fontcolor=0xFFF6E8:borderw=3:bordercolor=black@0.55:"
+        f"line_spacing=16:"
         f"x=(w-text_w)/2:y=h*0.56"
     )
     cmd = [
@@ -179,6 +186,41 @@ def _burn_title(
     return True
 
 
+def _extract_broll_frame(
+    broll: Path,
+    dest: Path,
+    *,
+    width: int,
+    height: int,
+    t_sec: float = 3.0,
+) -> bool:
+    if not broll.is_file():
+        return False
+    ffmpeg = _ffmpeg()
+    vf = (
+        f"scale={width}:{height}:force_original_aspect_ratio=increase,"
+        f"crop={width}:{height}"
+    )
+    cmd = [
+        ffmpeg,
+        "-y",
+        "-ss",
+        str(t_sec),
+        "-i",
+        str(broll),
+        "-vf",
+        vf,
+        "-frames:v",
+        "1",
+        str(dest),
+    ]
+    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=90, check=False)
+    if proc.returncode != 0 or not dest.is_file():
+        logger.warning("broll frame extract failed: %s", (proc.stderr or "")[-300:])
+        return False
+    return True
+
+
 async def generate_cover_pack(
     work_dir: Path,
     *,
@@ -187,6 +229,7 @@ async def generate_cover_pack(
     trend: str,
     brief: str = "",
     broll_query: str = "",
+    broll_path: Optional[Path] = None,
 ) -> Optional[CoverPack]:
     """AI-обложка 16:9 + кликбейтный заголовок на изображении."""
     work_dir.mkdir(parents=True, exist_ok=True)
@@ -211,6 +254,12 @@ async def generate_cover_pack(
             break
         logger.warning("cover AI attempt %s/%s failed", attempt, _GEN_ATTEMPTS)
         await asyncio.sleep(0.8 * attempt)
+    if not ok_h:
+        if broll_path and _extract_broll_frame(
+            broll_path, bg_h, width=_FULL_W, height=_FULL_H
+        ):
+            logger.info("cover fallback: frame from b-roll")
+            ok_h = True
     if not ok_h:
         logger.error("cover AI generation failed after %s attempts", _GEN_ATTEMPTS)
         return None
@@ -246,6 +295,7 @@ async def generate_vertical_cover_pack(
     trend: str,
     brief: str = "",
     broll_query: str = "",
+    broll_path: Optional[Path] = None,
 ) -> Optional[CoverPack]:
     """AI-обложка 9:16 для YouTube Shorts."""
     work_dir.mkdir(parents=True, exist_ok=True)
@@ -271,6 +321,12 @@ async def generate_vertical_cover_pack(
             break
         logger.warning("vertical cover AI attempt %s/%s failed", attempt, _GEN_ATTEMPTS)
         await asyncio.sleep(0.8 * attempt)
+    if not ok_v:
+        if broll_path and _extract_broll_frame(
+            broll_path, bg_v, width=_SHORT_W, height=_SHORT_H
+        ):
+            logger.info("vertical cover fallback: frame from b-roll")
+            ok_v = True
     if not ok_v:
         logger.error("vertical cover AI failed after %s attempts", _GEN_ATTEMPTS)
         return None

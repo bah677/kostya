@@ -23,7 +23,7 @@ async def _generate_one_short(work_dir: Path):
     from youtube_prayer.audio_pipeline import synthesize_prayer_audio
     from youtube_prayer.covers import generate_vertical_cover_pack
     from youtube_prayer.compose import deepseek_complete
-    from youtube_prayer.render import SHORT_H, SHORT_W, render_vertical_full
+    from youtube_prayer.render import SHORT_H, SHORT_W, format_prayer_theme_label, render_vertical_full
     from youtube_prayer.stock_broll import build_broll_montage
     from youtube_prayer.trends import PrayerTopic
     from youtube_shorts.compose import compose_short_prayer_for_topic
@@ -82,7 +82,8 @@ async def _generate_one_short(work_dir: Path):
     )
 
     vertical = work_dir / "sample_short_9x16.mp4"
-    logger.info("render vertical…")
+    theme_label = format_prayer_theme_label(topic.trend, topic.brief, lang="ru")
+    logger.info("render vertical theme=%r…", theme_label)
     await asyncio.to_thread(
         render_vertical_full,
         broll_path=broll,
@@ -91,6 +92,7 @@ async def _generate_one_short(work_dir: Path):
         duration_sec=dur,
         prayer_text=prayer,
         work_dir=work_dir,
+        theme_label=theme_label,
     )
     return topic, meta, vertical, covers, prayer, dur
 

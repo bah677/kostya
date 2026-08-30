@@ -26,7 +26,7 @@ from youtube_prayer.deliver import (
 )
 from youtube_prayer.youtube_uploader import upload_premiere_if_enabled
 from youtube_prayer.metadata import generate_video_metadata
-from youtube_prayer.render import render_horizontal
+from youtube_prayer.render import render_horizontal, format_prayer_theme_label
 from youtube_prayer.stock_broll import build_broll_montage
 from youtube_prayer.trends import (
     PrayerTopic,
@@ -216,6 +216,7 @@ async def _run_lang_pack(
             trend=topic.trend,
             brief=topic.brief,
             broll_query=topic.broll_query,
+            broll_path=broll,
         )
         if not covers:
             err = (
@@ -233,6 +234,9 @@ async def _run_lang_pack(
             raise RuntimeError(
                 f"[{label}] не удалось сгенерировать AI-обложку для «{topic.trend}»"
             )
+        theme_label = format_prayer_theme_label(
+            topic.trend, topic.brief, lang=lang
+        )
         horizontal = item_dir / "full_16x9.mp4"
         await asyncio.to_thread(
             render_horizontal,
@@ -240,6 +244,8 @@ async def _run_lang_pack(
             audio_wav=wav,
             out_path=horizontal,
             duration_sec=dur,
+            theme_label=theme_label,
+            work_dir=item_dir,
         )
 
         await deliver_topic_pack(

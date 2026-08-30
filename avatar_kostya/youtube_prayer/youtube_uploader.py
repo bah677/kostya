@@ -219,6 +219,7 @@ async def upload_premiere_if_enabled(
     day: str,
     index: int,
     work_dir: Path,
+    slots_msk: Optional[Sequence[int]] = None,
 ) -> Optional[YoutubeUploadResult]:
     """Идемпотентная загрузка: один раз на item_dir."""
     if not youtube_upload_enabled():
@@ -239,10 +240,11 @@ async def upload_premiere_if_enabled(
             premiere_label=str(existing.get("premiere_label") or ""),
         )
 
+    hours = list(slots_msk) if slots_msk else premiere_hours_msk()
     publish_at = premiere_slot_datetime(
         day=day,
         index=index,
-        slots_msk=premiere_hours_msk(),
+        slots_msk=hours,
     )
     category_id = str(_cfg("YT_PRAYER_YOUTUBE_CATEGORY_ID", "22") or "22")
     notify = bool(_cfg("YT_PRAYER_YOUTUBE_NOTIFY_SUBSCRIBERS", True))

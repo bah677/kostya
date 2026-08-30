@@ -342,8 +342,7 @@ async def _openai_images(
                 "n": 1,
                 "size": "1536x1024",
             }
-            if model.startswith("dall-e"):
-                kwargs["size"] = "1792x1024"
+            if model.startswith("dall-e-2"):
                 kwargs["response_format"] = "b64_json"
             resp = await client.images.generate(**kwargs)
             item = resp.data[0]
@@ -363,18 +362,27 @@ async def _openai_images(
             logger.info("OpenAI image saved %s", path.name)
         except Exception as e:
             logger.warning("OpenAI image gen failed (%s): %s", model, e)
-            if model != "dall-e-3":
+            if not model.startswith("dall-e"):
                 try:
                     resp = await client.images.generate(
                         model="dall-e-3",
                         prompt=base_prompt,
                         n=1,
                         size="1792x1024",
-                        response_format="b64_json",
                     )
-                    b64 = resp.data[0].b64_json
+                    item = resp.data[0]
                     path = dest_dir / f"openai_img_{i + 1}.png"
-                    path.write_bytes(base64.b64decode(b64))
+                    raw_b64 = getattr(item, "b64_json", None)
+                    url = getattr(item, "url", None)
+                    if raw_b64:
+                        path.write_bytes(base64.b64decode(raw_b64))
+                    elif url:
+                        async with httpx.AsyncClient(timeout=90.0) as http:
+                            r = await http.get(url)
+                            r.raise_for_status()
+                            path.write_bytes(r.content)
+                    else:
+                        raise RuntimeError("dall-e-3: empty image response")
                     out.append(path)
                 except Exception as e2:
                     logger.warning("dall-e-3 fallback failed: %s", e2)

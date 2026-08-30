@@ -51,31 +51,13 @@ async def upload_short_premiere_if_enabled(
     """Идемпотентная загрузка Short с премьерой в слот index (1–8)."""
     if not shorts_upload_enabled():
         return None
-    # Переиспользуем uploader; слоты и маркер — свои ключи через env на время вызова.
-    import os
-
-    prev_hours = os.environ.get("YT_PRAYER_YOUTUBE_PREMIERE_HOURS_MSK")
-    prev_enabled = os.environ.get("YT_PRAYER_YOUTUBE_UPLOAD_ENABLED")
-    try:
-        os.environ["YT_PRAYER_YOUTUBE_PREMIERE_HOURS_MSK"] = ",".join(
-            str(h) for h in shorts_premiere_hours_msk()
-        )
-        os.environ["YT_PRAYER_YOUTUBE_UPLOAD_ENABLED"] = "1"
-        return await upload_premiere_if_enabled(
-            video_path=video_path,
-            thumbnail_path=thumbnail_path,
-            metadata=metadata,
-            lang="ru",
-            day=day,
-            index=index,
-            work_dir=work_dir,
-        )
-    finally:
-        if prev_hours is None:
-            os.environ.pop("YT_PRAYER_YOUTUBE_PREMIERE_HOURS_MSK", None)
-        else:
-            os.environ["YT_PRAYER_YOUTUBE_PREMIERE_HOURS_MSK"] = prev_hours
-        if prev_enabled is None:
-            os.environ.pop("YT_PRAYER_YOUTUBE_UPLOAD_ENABLED", None)
-        else:
-            os.environ["YT_PRAYER_YOUTUBE_UPLOAD_ENABLED"] = prev_enabled
+    return await upload_premiere_if_enabled(
+        video_path=video_path,
+        thumbnail_path=thumbnail_path,
+        metadata=metadata,
+        lang="ru",
+        day=day,
+        index=index,
+        work_dir=work_dir,
+        slots_msk=shorts_premiere_hours_msk(),
+    )

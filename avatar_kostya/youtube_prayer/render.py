@@ -9,7 +9,7 @@ import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Sequence, Tuple
+from typing import List, Optional, Sequence, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -17,6 +17,15 @@ FULL_W = 1024
 FULL_H = 576
 SHORT_W = 1080
 SHORT_H = 1920
+
+# Шрифты: display-семейства (есть на сервере), не Arial/DejaVu.
+_FONT_THEME = "Noto Serif Display"
+_FONT_CAPTION = "Noto Sans Display"
+# ASS &HAABBGGRR — тёплый крем + мягкий уголь, без «кислотного» белого 90-х.
+_COL_THEME = "&H00D8E8FF"  # тёплый ivory
+_COL_CAPTION = "&H00F2F6FF"  # мягкий белый
+_COL_OUTLINE = "&H40101820"  # полупрозрачный тёмный
+_COL_SHADOW = "&H6E000000"
 
 
 @dataclass(frozen=True)
@@ -37,6 +46,49 @@ def _env_float(name: str, default: float) -> float:
         return float((os.getenv(name) or str(default)).strip())
     except ValueError:
         return default
+
+
+def format_prayer_theme_label(
+    trend: str,
+    brief: str = "",
+    *,
+    lang: str = "ru",
+    max_len: int = 56,
+) -> str:
+    """Постоянная подпись поверх ролика: «Молитва о …»."""
+    lang_l = (lang or "ru").lower()
+    brief = re.sub(r"\s+", " ", (brief or "").strip())
+    trend = re.sub(r"\s+", " ", (trend or "").strip())
+
+    def _clip(s: str) -> str:
+        s = s.strip(" .,—–-")
+        if len(s) <= max_len:
+            return s
+        cut = s[: max_len - 1].rsplit(" ", 1)[0].strip()
+        return (cut or s[: max_len - 1]).rstrip(".,") + "…"
+
+    if lang_l == "en":
+        if brief.lower().startswith("a prayer"):
+            first = re.split(r"[.!?]", brief, 1)[0].strip()
+            if len(first) >= 8:
+                return _clip(first)
+        t = re.sub(r"^(a\s+)?prayer\s+(for|about|of)\s+", "", trend, flags=re.I).strip()
+        return _clip(f"Prayer: {t}" if t else "Prayer")
+
+    if brief.lower().startswith("молитва"):
+        first = re.split(r"[.!?]", brief, 1)[0].strip()
+        if len(first) >= 8:
+            return _clip(first)
+    t = re.sub(
+        r"^молитва\s+(о|об|про|за|:)\s*",
+        "",
+        trend,
+        flags=re.I,
+    ).strip(" :.—–-")
+    if not t:
+        return "Молитва"
+    # Без склонения тренда — двоеточие читается чище, чем «о/об + именительный».
+    return _clip(f"Молитва: {t}")
 
 
 def _sec_to_ass_time(sec: float) -> str:
@@ -86,33 +138,89 @@ def _ass_escape_text(text: str) -> str:
     return (text or "").replace("\\", "\\\\").replace("{", "(").replace("}", ")")
 
 
-def _write_short_ass(path: Path, chunks: Sequence[Tuple[float, float, str]]) -> None:
+def _write_video_ass(
+    path: Path,
+    *,
+    play_w: int,
+    play_h: int,
+    duration_sec: float,
+    theme_label: str = "",
+    chunks: Sequence[Tuple[float, float, str]] = (),
+    vertical: bool = True,
+) -> None:
+    """
+    ASS с двумя слоями:
+    - Theme — постоянная подпись «Молитва о…» сверху
+    - Caption — бегущие субтитры снизу (если есть)
+    """
+    if vertical:
+        theme_size, theme_margin_v = 46, 110
+        cap_size, cap_margin_v, wrap_chars = 50, 220, 26
+        margin_lr = 64
+    else:
+        theme_size, theme_margin_v = 34, 36
+        cap_size, cap_margin_v, wrap_chars = 36, 48, 42
+        margin_lr = 40
+
     header = f"""[Script Info]
 ScriptType: v4.00+
-PlayResX: {SHORT_W}
-PlayResY: {SHORT_H}
+PlayResX: {play_w}
+PlayResY: {play_h}
 WrapStyle: 2
 ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Shorts,Arial,52,&H00FFFFFF,&H000000FF,&H00000000,&H64000000,-1,0,0,0,100,100,0,0,1,3,0,2,52,52,180,1
+Style: Theme,{_FONT_THEME},{theme_size},{_COL_THEME},&H000000FF,{_COL_OUTLINE},{_COL_SHADOW},0,0,0,0,100,100,1.2,0,1,2.4,1.2,8,{margin_lr},{margin_lr},{theme_margin_v},1
+Style: Caption,{_FONT_CAPTION},{cap_size},{_COL_CAPTION},&H000000FF,{_COL_OUTLINE},{_COL_SHADOW},0,0,0,0,100,100,0.6,0,1,2.6,1.0,2,{margin_lr},{margin_lr},{cap_margin_v},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
     lines = [header]
+    dur = max(1.0, float(duration_sec))
+    theme = (theme_label or "").strip()
+    if theme:
+        wrapped_theme = _ass_line_break(_wrap_line(theme, max_chars=wrap_chars))
+        if wrapped_theme:
+            # Лёгкое появление: fade 0.4с + мягкий blur на старте
+            lines.append(
+                f"Dialogue: 1,0:00:00.00,{_sec_to_ass_time(dur)},"
+                f"Theme,,0,0,0,,{{\\fad(400,0)\\blur0.4}}{wrapped_theme}"
+            )
     for start, end, text in chunks:
         if end <= start or not (text or "").strip():
             continue
-        wrapped = _ass_line_break(_wrap_line(text))
+        wrapped = _ass_line_break(_wrap_line(text, max_chars=wrap_chars))
         if not wrapped:
             continue
         lines.append(
             f"Dialogue: 0,{_sec_to_ass_time(start)},{_sec_to_ass_time(end)},"
-            f"Shorts,,0,0,0,,{wrapped}"
+            f"Caption,,0,0,0,,{{\\fad(80,80)}}{wrapped}"
         )
     path.write_text("\n".join(lines), encoding="utf-8")
+
+
+def _write_short_ass(
+    path: Path,
+    chunks: Sequence[Tuple[float, float, str]],
+    *,
+    theme_label: str = "",
+    duration_sec: float = 0.0,
+) -> None:
+    """Совместимость: вертикальный ASS (Shorts)."""
+    dur = duration_sec
+    if dur <= 0 and chunks:
+        dur = max(end for _s, end, _t in chunks)
+    _write_video_ass(
+        path,
+        play_w=SHORT_W,
+        play_h=SHORT_H,
+        duration_sec=max(1.0, dur),
+        theme_label=theme_label,
+        chunks=chunks,
+        vertical=True,
+    )
 
 
 def _paragraphs(text: str) -> List[str]:
@@ -222,16 +330,38 @@ def render_horizontal(
     duration_sec: float,
     width: int = FULL_W,
     height: int = FULL_H,
+    theme_label: str = "",
+    work_dir: Optional[Path] = None,
 ) -> Path:
-    """16:9 фиксированный кадр (по умолчанию 1024×576), без искажения пропорций."""
+    """16:9 фиксированный кадр + постоянная подпись темы."""
     ffmpeg = _ffmpeg()
     dur = max(10.0, float(duration_sec))
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    # broll_montage уже близко к нужному размеру; fill + setsar=1 без искажения
-    vf_fill = (
+    wd = work_dir or out_path.parent
+    wd.mkdir(parents=True, exist_ok=True)
+
+    vf_base = (
         f"scale={width}:{height}:force_original_aspect_ratio=increase,"
         f"crop={width}:{height},setsar=1,fps=25,format=yuv420p"
     )
+    theme = (theme_label or "").strip()
+    ass_path: Optional[Path] = None
+    if theme:
+        ass_path = wd / f"{out_path.stem}_theme.ass"
+        _write_video_ass(
+            ass_path,
+            play_w=width,
+            play_h=height,
+            duration_sec=dur,
+            theme_label=theme,
+            chunks=(),
+            vertical=False,
+        )
+        ass_esc = ass_path.resolve().as_posix().replace("\\", "/").replace(":", "\\:")
+        vf = f"{vf_base},ass='{ass_esc}'"
+    else:
+        vf = vf_base
+
     cmd = [
         ffmpeg,
         "-y",
@@ -246,7 +376,7 @@ def render_horizontal(
         "-map",
         "1:a:0",
         "-vf",
-        vf_fill,
+        vf,
         "-c:v",
         "libx264",
         "-preset",
@@ -268,13 +398,24 @@ def render_horizontal(
     ]
     proc = subprocess.run(cmd, capture_output=True, text=True, timeout=600, check=False)
     if proc.returncode != 0 or not out_path.is_file():
-        raise RuntimeError(f"horizontal render failed: {(proc.stderr or '')[-600:]}")
+        if ass_path is not None:
+            logger.warning(
+                "horizontal with theme failed, retry plain: %s",
+                (proc.stderr or "")[-400:],
+            )
+            cmd[cmd.index("-vf") + 1] = vf_base
+            proc = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=600, check=False
+            )
+        if proc.returncode != 0 or not out_path.is_file():
+            raise RuntimeError(f"horizontal render failed: {(proc.stderr or '')[-600:]}")
     logger.info(
-        "horizontal ok %s %sx%s bytes=%s",
+        "horizontal ok %s %sx%s bytes=%s theme=%r",
         out_path.name,
         width,
         height,
         out_path.stat().st_size,
+        theme[:40] if theme else "",
     )
     return out_path
 
@@ -288,8 +429,9 @@ def render_short(
     prayer_text: str,
     full_duration: float,
     work_dir: Path,
+    theme_label: str = "",
 ) -> Path:
-    """9:16 = 1080×1920, субтитры по словам окна аудио."""
+    """9:16 = 1080×1920, субтитры по словам окна аудио + тема сверху."""
     ffmpeg = _ffmpeg()
     length = max(5.0, end_sec - start_sec)
     ass_path = work_dir / f"{out_path.stem}.ass"
@@ -302,16 +444,19 @@ def render_short(
         words_per_cue=5,
         offset_sec=offset,
     )
-    _write_short_ass(ass_path, chunks)
+    _write_short_ass(
+        ass_path,
+        chunks,
+        theme_label=theme_label,
+        duration_sec=length,
+    )
 
     ass_esc = ass_path.resolve().as_posix().replace("\\", "/").replace(":", "\\:")
-    # из 16:9 → 9:16: увеличение + центр-кроп, setsar=1 (без растяжения)
     vf = (
         f"scale={SHORT_W}:{SHORT_H}:force_original_aspect_ratio=increase,"
         f"crop={SHORT_W}:{SHORT_H},setsar=1,"
         f"ass='{ass_esc}'"
     )
-    # -ss после -i точнее для A/V sync (медленнее, но субтитры не «плывут»)
     cmd = [
         ffmpeg,
         "-y",
@@ -383,8 +528,9 @@ def render_vertical_full(
     work_dir: Path,
     width: int = SHORT_W,
     height: int = SHORT_H,
+    theme_label: str = "",
 ) -> Path:
-    """9:16 полная молитва: b-roll + аудио + субтитры по всему тексту."""
+    """9:16 полная молитва: b-roll + аудио + субтитры + постоянная тема."""
     ffmpeg = _ffmpeg()
     dur = max(10.0, float(duration_sec))
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -396,7 +542,12 @@ def render_vertical_full(
         words_per_cue=5,
         offset_sec=offset,
     )
-    _write_short_ass(ass_path, chunks)
+    _write_short_ass(
+        ass_path,
+        chunks,
+        theme_label=theme_label,
+        duration_sec=dur,
+    )
     ass_esc = ass_path.resolve().as_posix().replace("\\", "/").replace(":", "\\:")
     vf_fill = (
         f"scale={width}:{height}:force_original_aspect_ratio=increase,"
@@ -454,11 +605,12 @@ def render_vertical_full(
                 f"vertical render failed: {(proc2.stderr or '')[-600:]}"
             )
     logger.info(
-        "vertical ok %s %sx%s bytes=%s",
+        "vertical ok %s %sx%s bytes=%s theme=%r",
         out_path.name,
         width,
         height,
         out_path.stat().st_size,
+        (theme_label or "")[:40],
     )
     return out_path
 
@@ -469,6 +621,7 @@ def render_all_shorts(
     prayer_text: str,
     duration_sec: float,
     work_dir: Path,
+    theme_label: str = "",
 ) -> List[ShortClip]:
     windows = split_short_windows(duration_sec, prayer_text)
     clips: List[ShortClip] = []
@@ -482,6 +635,7 @@ def render_all_shorts(
             prayer_text=prayer_text,
             full_duration=duration_sec,
             work_dir=work_dir,
+            theme_label=theme_label,
         )
         clips.append(
             ShortClip(index=i, path=out, start_sec=start, end_sec=end, caption=cap)
