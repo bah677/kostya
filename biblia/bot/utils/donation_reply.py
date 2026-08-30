@@ -28,7 +28,7 @@ def build_random_inline_button() -> InlineKeyboardButton:
     if r == 2:
         return InlineKeyboardButton(text=_CLUB_BUTTON_TEXT, url=_CLUB_REF_URL)
     return InlineKeyboardButton(
-        text="🙏 Помолиться о своём",
+        text="🙏 Помолиться",
         callback_data="prayer_start",
     )
 
@@ -61,7 +61,7 @@ def is_donation_club_random_meta(btn: dict) -> bool:
 def describe_random_donation_club_button() -> str:
     """Текст для превью рассылки."""
     return (
-        "«💳 Поддержать проект», «Клуб Любящие Бога» или «🙏 Помолиться о своём» "
+        "«💳 Поддержать проект», «Клуб Любящие Бога» или «🙏 Помолиться» "
         "(случайный выбор для каждого получателя)"
     )
 
