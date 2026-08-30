@@ -1,4 +1,4 @@
-"""Команда /reels: список архивных эфиров + кнопка «Создать сценарий»."""
+"""Команда /reels: список архивных эфиров + кнопка «Создать сценарий» + фидбек сценариев."""
 
 from __future__ import annotations
 
@@ -19,11 +19,23 @@ from aiogram.types import (
 from bot.admin_guard import is_admin_or_super
 from bot.features.base import BaseFeature
 from telemost_audio.recording_kind import KIND_LABELS, recording_kind_from_pending
+from telemost_audio.reels_director import (
+    CB_REELS_FB,
+    parse_feedback_cb,
+    reach_keyboard,
+)
 
 logger = logging.getLogger(__name__)
 
 CB_PREFIX = "reels:gen:"
 _PAGE_SIZE = 10
+
+_REACH_MAP = {
+    "r1": 500,
+    "r5": 3000,
+    "r20": 12000,
+    "r50": 25000,
+}
 
 
 def _short_date(row: dict) -> str:
@@ -68,7 +80,11 @@ class ReelsFeature(BaseFeature):
             self._cb_gen,
             F.data.startswith(CB_PREFIX),
         )
-        logger.info("[%s] /reels зарегистрирован", self.name)
+        dp.callback_query.register(
+            self._cb_feedback,
+            F.data.startswith(CB_REELS_FB),
+        )
+        logger.info("[%s] /reels + feedback зарегистрированы", self.name)
 
     async def _cmd_reels(self, message: Message) -> None:
         if message.from_user is None or message.from_user.is_bot:
@@ -111,7 +127,6 @@ class ReelsFeature(BaseFeature):
                 parse_mode=ParseMode.HTML,
             )
 
-        # Запускаем pipeline — bot_app нужен для отправки результата
         bot_app = getattr(self, "_bot_app", None)
         if bot_app is None:
             logger.error("reels_feature: bot_app не привязан")
@@ -124,6 +139,72 @@ class ReelsFeature(BaseFeature):
             run_reels_brief_for_row(bot_app, row),
             name=f"reels_manual_{str(pending_id)[:8]}",
         )
+
+    async def _cb_feedback(self, query: CallbackQuery) -> None:
+        if query.from_user is None:
+            return
+        if not await is_admin_or_super(self.user_storage, query.from_user.id):
+            await query.answer("Нет доступа", show_alert=True)
+            return
+
+        parsed = parse_feedback_cb(query.data or "")
+        if not parsed:
+            await query.answer("Неверная кнопка", show_alert=True)
+            return
+        action, scenario_id = parsed
+
+        if not hasattr(self.user_storage, "set_reels_scenario_feedback"):
+            await query.answer("БД ещё без таблицы сценариев", show_alert=True)
+            return
+
+        uid = int(query.from_user.id)
+
+        if action in _REACH_MAP:
+            ok = await self.user_storage.set_reels_scenario_feedback(
+                scenario_id,
+                status="published",
+                user_id=uid,
+                reach=_REACH_MAP[action],
+            )
+            await query.answer("Охват сохранён" if ok else "Ошибка")
+            if query.message and ok:
+                try:
+                    await query.message.edit_reply_markup(reply_markup=None)
+                except Exception:
+                    pass
+            return
+
+        if action == "ok":
+            ok = await self.user_storage.set_reels_scenario_feedback(
+                scenario_id, status="approved", user_id=uid
+            )
+            await query.answer("В работу ✓" if ok else "Ошибка")
+            return
+
+        if action == "no":
+            ok = await self.user_storage.set_reels_scenario_feedback(
+                scenario_id, status="rejected", user_id=uid
+            )
+            await query.answer("Отмечено 👎" if ok else "Ошибка")
+            return
+
+        if action == "pub":
+            ok = await self.user_storage.set_reels_scenario_feedback(
+                scenario_id, status="published", user_id=uid
+            )
+            await query.answer("Опубликовано — укажи охват")
+            if query.message and ok:
+                try:
+                    await query.message.edit_reply_markup(
+                        reply_markup=reach_keyboard(scenario_id)
+                    )
+                except Exception:
+                    if query.message:
+                        await query.message.answer(
+                            "Охват этого ролика:",
+                            reply_markup=reach_keyboard(scenario_id),
+                        )
+            return
 
 
 def _build_list(rows: list[dict]) -> tuple[str, InlineKeyboardMarkup]:

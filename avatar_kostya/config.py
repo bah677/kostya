@@ -262,6 +262,11 @@ class AppConfig:
     TELEMOST_REELS_BRIEF_CROSSCHECK_ENABLED: bool = True
     TELEMOST_REELS_BRIEF_REVIEW_MODEL: str = "deepseek-chat"
     TELEMOST_REELS_BRIEF_PROJECT_DESC: str = ""
+    TELEMOST_REELS_TOP_IDEAS: int = 5
+    TELEMOST_REELS_HOOK_VARIANTS: int = 6
+    TELEMOST_REELS_BODY_VARIANTS: int = 2
+    TELEMOST_REELS_WINDOW_PAD_SEC: float = 75.0
+    TELEMOST_REELS_REVIEW_ROUNDS: int = 2
     TELEMOST_EFIR_TOPIC_ID: int = 3
     TELEMOST_MOLITVA_TOPIC_ID: int = 2
     # Топик «Покаяние» — задать позже (0 = пока не публиковать в клубной ветке).
@@ -844,6 +849,21 @@ def load_app_config() -> AppConfig:
         TELEMOST_REELS_BRIEF_PROJECT_DESC=(
             os.getenv("TELEMOST_REELS_BRIEF_PROJECT_DESC") or ""
         ).strip(),
+        TELEMOST_REELS_TOP_IDEAS=_safe_int_env(
+            "TELEMOST_REELS_TOP_IDEAS", 5, min_v=1, max_v=12
+        ),
+        TELEMOST_REELS_HOOK_VARIANTS=_safe_int_env(
+            "TELEMOST_REELS_HOOK_VARIANTS", 6, min_v=3, max_v=10
+        ),
+        TELEMOST_REELS_BODY_VARIANTS=_safe_int_env(
+            "TELEMOST_REELS_BODY_VARIANTS", 2, min_v=1, max_v=4
+        ),
+        TELEMOST_REELS_WINDOW_PAD_SEC=float(
+            os.getenv("TELEMOST_REELS_WINDOW_PAD_SEC", "75") or 75
+        ),
+        TELEMOST_REELS_REVIEW_ROUNDS=_safe_int_env(
+            "TELEMOST_REELS_REVIEW_ROUNDS", 2, min_v=0, max_v=3
+        ),
         TELEMOST_EFIR_TOPIC_ID=int(os.getenv("TELEMOST_EFIR_TOPIC_ID", "3") or 3),
         TELEMOST_MOLITVA_TOPIC_ID=int(
             os.getenv("TELEMOST_MOLITVA_TOPIC_ID", "2") or 2

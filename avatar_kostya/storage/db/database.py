@@ -25,6 +25,7 @@ from storage.db.yandex_disk import YandexDiskMixin
 from storage.db.telemost_mail import TelemostMailMixin
 from storage.db.rag_import_cache import RagImportCacheMixin
 from storage.db.rag_source_visibility import RagSourceVisibilityMixin
+from storage.db.reels_scenarios import ReelsScenariosMixin
 
 
 class Database(
@@ -47,6 +48,7 @@ class Database(
     TelemostMailMixin,
     RagSourceVisibilityMixin,
     RagImportCacheMixin,
+    ReelsScenariosMixin,
     DatabaseBase,
 ):
     """Единая точка доступа к PostgreSQL.
@@ -67,5 +69,6 @@ class Database(
       - ReferralsMixin        — referrals + ref_keys
       - GiftsMixin            — gifts
       - MediaArchiveMixin     — media_inbound_files
+      - ReelsScenariosMixin   — reels_scenarios (фидбек сценариев)
       - DatabaseBase          — пул подключений и get_connection()
     """
