@@ -196,6 +196,9 @@ class AppConfig:
     SUPER_ADMIN_ID: int = 0
     SUPPORT_THREAD_ID: int = 0
     SUPPORT_AI_DRAFT_ENABLED: bool = True
+    SUPPORT_DRAFT_LOG_PATHS: str = ""
+    SUPPORT_DRAFT_LOG_WINDOW_MIN: int = 120
+    SUPPORT_DRAFT_LOG_TAIL_BYTES: int = 3_000_000
     BIBLIA_REPORT_THREAD_ID: int = 0
     MEDIA_ID_TOPIC_ID: int = 0
     TECH_ALERT_TOPIC_ID: int = 7746
@@ -366,6 +369,17 @@ def load_app_config() -> AppConfig:
         SUPPORT_THREAD_ID=int(os.getenv("SUPPORT_THREAD_ID", "0")),
         SUPPORT_AI_DRAFT_ENABLED=_parse_bool_env(
             os.getenv("SUPPORT_AI_DRAFT_ENABLED"), True
+        ),
+        SUPPORT_DRAFT_LOG_PATHS=(os.getenv("SUPPORT_DRAFT_LOG_PATHS") or "").strip(),
+        SUPPORT_DRAFT_LOG_WINDOW_MIN=max(
+            15, min(720, int(os.getenv("SUPPORT_DRAFT_LOG_WINDOW_MIN", "120") or "120"))
+        ),
+        SUPPORT_DRAFT_LOG_TAIL_BYTES=max(
+            100_000,
+            min(
+                20_000_000,
+                int(os.getenv("SUPPORT_DRAFT_LOG_TAIL_BYTES", "3000000") or "3000000"),
+            ),
         ),
         BIBLIA_REPORT_THREAD_ID=int(os.getenv("BIBLIA_REPORT_THREAD_ID", "0") or "0"),
         MEDIA_ID_TOPIC_ID=int(os.getenv("MEDIA_ID_TOPIC_ID", "0")),

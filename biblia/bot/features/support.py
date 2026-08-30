@@ -455,6 +455,7 @@ class SupportFeature(BaseFeature):
             ticket_number=ticket_number,
             topic=str(row.get("topic") or ""),
             user_message=str(row.get("user_message") or ""),
+            ticket_created_at=row.get("created_at"),
         )
         thread_id = (
             int(row["channel_thread_id"])
