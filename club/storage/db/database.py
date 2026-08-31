@@ -28,6 +28,7 @@ from storage.db.promo_campaigns import PromoCampaignsMixin
 from storage.db.referrals import ReferralsMixin
 from storage.db.touch_key_labels import TouchKeyLabelsMixin
 from storage.db.wish_board import WishBoardMixin
+from storage.db.speargun_fund import SpeargunFundMixin
 from storage.db.subscription_outreach import SubscriptionOutreachMixin
 from storage.db.support import SupportMixin
 from storage.db.tariffs import TariffsMixin
@@ -35,6 +36,7 @@ from storage.db.users import UsersMixin
 
 
 class Database(
+    SpeargunFundMixin,
     AngelPoolMixin,
     AdminsMixin,
     UsersMixin,

@@ -19,6 +19,7 @@ from youtube_prayer.metadata import VideoMetadata
 from youtube_prayer.render import SHORT_H, SHORT_W, format_prayer_theme_label, render_vertical_full
 from youtube_prayer.stock_broll import build_broll_montage
 from youtube_prayer.trends import PrayerTopic
+from youtube_prayer.work_cleanup import cleanup_item_media_after_youtube_upload
 from youtube_shorts.deliver import deliver_short_pack
 from youtube_shorts.metadata import _ensure_shorts_title
 from youtube_shorts.uploader import upload_short_premiere_if_enabled
@@ -248,6 +249,9 @@ async def run_reels_scenario_to_youtube_short(
                 )
             except Exception:
                 pass
+            await asyncio.to_thread(
+                cleanup_item_media_after_youtube_upload, work_dir
+            )
 
         await _notify(f"✅ Short готов и отправлен в топик YouTube.\nТема: {idea_title}")
         logger.info("reels→yt done scenario=%s dur=%.1f", sid, dur)

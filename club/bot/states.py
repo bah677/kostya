@@ -23,6 +23,10 @@ class AdminRefKeyStates(StatesGroup):
     waiting_name = State()
 
 
+class SpeargunFundStates(StatesGroup):
+    waiting_custom_amount = State()
+
+
 class MemberGiftExtensionStates(StatesGroup):
     """Подарок продления подписки участнику клуба."""
     waiting_recipient_query = State()

@@ -120,6 +120,17 @@ class Config:
     WISH_BOARD_GROUP_REMINDER_GAP_DAYS: int = 3
     WISH_BOARD_GROUP_REMINDER_MAX: int = 3
     WISH_BOARD_MAX_ACTIVE_PER_REQUESTER: int = 2
+    #: Сбор «подводное ружьё» (отдельная схема speargun, не выручка клуба).
+    SPEARGUN_FUND_ENABLED: bool = False
+    SPEARGUN_DEEP_LINK: str = "gun"
+    SPEARGUN_USD_TO_RUB: float = 90.0
+    SPEARGUN_EUR_TO_RUB: float = 100.0
+    SPEARGUN_WEB_URL: str = "https://speargun.mironbot.ru"
+    SPEARGUN_CAMPAIGN_TITLE: str = "Сбор на подводное ружьё для Константина"
+    SPEARGUN_CAMPAIGN_GOAL: str = (
+        "Константину нужно подводное ружьё. Скидываемся — любая сумма идёт "
+        "только в этот сбор (не в выручку Клуба)."
+    )
     #: URL legacy admin-БД (старый Adm) для миграции исторических club_snapshots.
     LEGACY_ADMIN_DB_URL: Optional[str] = None
     WELCOME_TOPIC_ID: int = 0
@@ -304,6 +315,10 @@ class Config:
             and self.WISH_BOARD_ADMIN_TOPIC_ID > 0
             and self.WISH_BOARD_DIGEST_TOPIC_ID > 0
         )
+
+    @property
+    def speargun_fund_active(self) -> bool:
+        return bool(self.SPEARGUN_FUND_ENABLED)
 
     @property
     def club_schedule_topic_active(self) -> bool:
@@ -595,6 +610,24 @@ def load_config() -> Config:
         WISH_BOARD_MAX_ACTIVE_PER_REQUESTER=max(
             1, int(os.getenv("WISH_BOARD_MAX_ACTIVE_PER_REQUESTER", "2") or "2")
         ),
+        SPEARGUN_FUND_ENABLED=_env_bool("SPEARGUN_FUND_ENABLED", False),
+        SPEARGUN_DEEP_LINK=(os.getenv("SPEARGUN_DEEP_LINK") or "gun").strip() or "gun",
+        SPEARGUN_USD_TO_RUB=float(os.getenv("SPEARGUN_USD_TO_RUB", "90") or "90"),
+        SPEARGUN_EUR_TO_RUB=float(os.getenv("SPEARGUN_EUR_TO_RUB", "100") or "100"),
+        SPEARGUN_WEB_URL=(
+            os.getenv("SPEARGUN_WEB_URL") or "https://speargun.mironbot.ru"
+        ).rstrip("/"),
+        SPEARGUN_CAMPAIGN_TITLE=(
+            os.getenv("SPEARGUN_CAMPAIGN_TITLE")
+            or "Сбор на подводное ружьё для Константина"
+        ).strip(),
+        SPEARGUN_CAMPAIGN_GOAL=(
+            os.getenv("SPEARGUN_CAMPAIGN_GOAL")
+            or (
+                "Константину нужно подводное ружьё. Скидываемся — любая сумма идёт "
+                "только в этот сбор (не в выручку Клуба)."
+            )
+        ).strip(),
         LEGACY_ADMIN_DB_URL=(os.getenv("LEGACY_ADMIN_DB_URL") or "").strip() or None,
         WELCOME_TOPIC_ID=int(os.getenv("WELCOME_TOPIC_ID", "0")),
         CLUB_JOIN_DEBUG_LOG=_norm_club_join_debug_log(os.getenv("CLUB_JOIN_DEBUG_LOG", "")),

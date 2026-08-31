@@ -28,6 +28,7 @@ from bot.features.media_id_helper import MediaIdHelperFeature
 from bot.features.member_gift_extension import MemberGiftExtensionFeature
 from bot.features.angel_pool import AngelPoolFeature
 from bot.features.wish_board import WishBoardFeature
+from bot.features.speargun_fund import SpeargunFundFeature
 from bot.features.member_proactive import MemberProactiveFeature
 from bot.features.messaging import MessagingFeature
 from bot.features.onboarding import OnboardingFeature
@@ -224,6 +225,10 @@ class TelegramBot(TelegramBotApp):
             user_storage=self.user_storage,
             feature_manager=self.feature_manager,
         )
+        speargun_fund_feature = SpeargunFundFeature(
+            user_storage=self.user_storage,
+            feature_manager=self.feature_manager,
+        )
         angel_pool_feature = AngelPoolFeature(
             user_storage=self.user_storage,
             feature_manager=self.feature_manager,
@@ -264,6 +269,7 @@ class TelegramBot(TelegramBotApp):
             user_menu_feature,
             member_gift_extension_feature,
             wish_board_feature,
+            speargun_fund_feature,
             angel_pool_feature,
             admin_console_feature,
         ]

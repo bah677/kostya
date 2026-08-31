@@ -221,6 +221,27 @@ class OnboardingFeature(BaseFeature):
                 )
                 return
 
+        if param and self.feature_manager:
+            try:
+                speargun = self.feature_manager.get("speargun_fund")
+            except KeyError:
+                speargun = None
+            if speargun and await speargun.try_open_from_start(message, state, param):
+                if is_new_user:
+                    followup = self.feature_manager.get("followup")
+                    if followup:
+                        await followup.on_start(
+                            user_id, is_new_user=True, start_param=param
+                        )
+                await state.clear()
+                logger.info(
+                    "[%s] Speargun fund deep link handled for user %s param=%r",
+                    self.name,
+                    user_id,
+                    param,
+                )
+                return
+
         if param:
             if param.startswith("gift_"):
                 gift_code = param[5:]

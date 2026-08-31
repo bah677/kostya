@@ -20,6 +20,7 @@ from youtube_prayer.render import SHORT_H, SHORT_W, format_prayer_theme_label, r
 from youtube_prayer.stock_broll import build_broll_montage
 from youtube_prayer.topic_history import append_used_trends, load_recent_trends
 from youtube_prayer.trends import fetch_google_trends, select_prayer_topics
+from youtube_prayer.work_cleanup import cleanup_item_media_after_youtube_upload
 from youtube_shorts.compose import ShortComposeIncompleteError, compose_short_prayer_for_topic
 from youtube_shorts.deliver import deliver_short_pack
 from youtube_shorts.metadata import generate_short_metadata
@@ -252,6 +253,9 @@ async def run_daily_youtube_shorts_pipeline(
                     )
                 except Exception:
                     pass
+                await asyncio.to_thread(
+                    cleanup_item_media_after_youtube_upload, item_dir
+                )
 
             theme_names.append(topic.trend)
             logger.info("yt_shorts item %s done trend=%r", i, topic.trend)

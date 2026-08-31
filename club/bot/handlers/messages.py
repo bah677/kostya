@@ -16,7 +16,13 @@ from bot.filters import PRIVATE_CHAT_ONLY, PRIVATE_INLINE_CALLBACK_ONLY
 from bot.media_processing import MediaProcessor, ProcessedMedia
 from bot.logging.message_copier import MessageCopier
 from bot.logging.interaction_logger import InteractionLogger
-from bot.states import AngelPoolStates, LegalConsentStates, MemberGiftExtensionStates, WishBoardStates
+from bot.states import (
+    AngelPoolStates,
+    LegalConsentStates,
+    MemberGiftExtensionStates,
+    SpeargunFundStates,
+    WishBoardStates,
+)
 from bot.texts import ru_messaging as msg_txt
 from config import config
 
@@ -92,6 +98,12 @@ async def route_message_to_feature(
             mgift = feature_manager.get("member_gift_extension")
             if mgift:
                 await mgift.handle_recipient_query(message, state, text)
+            return
+
+        elif current_state == SpeargunFundStates.waiting_custom_amount.state:
+            sgf = feature_manager.get("speargun_fund")
+            if sgf:
+                await sgf.handle_custom_amount(message, state, text)
             return
 
         elif current_state == WishBoardStates.waiting_description.state:

@@ -28,6 +28,7 @@ from youtube_prayer.youtube_uploader import upload_premiere_if_enabled
 from youtube_prayer.metadata import generate_video_metadata
 from youtube_prayer.render import render_horizontal, format_prayer_theme_label
 from youtube_prayer.stock_broll import build_broll_montage
+from youtube_prayer.work_cleanup import cleanup_item_media_after_youtube_upload
 from youtube_prayer.trends import (
     PrayerTopic,
     fetch_google_trends,
@@ -304,6 +305,10 @@ async def _run_lang_pack(
                     parse_mode="HTML",
                     message_thread_id=int(topic_id) if topic_id else None,
                     disable_web_page_preview=True,
+                )
+                # Исходники больше не нужны — освобождаем диск до следующего ролика.
+                await asyncio.to_thread(
+                    cleanup_item_media_after_youtube_upload, item_dir
                 )
         except Exception as e:
             logger.exception("yt_prayer YouTube upload failed trend=%r: %s", topic.trend, e)
