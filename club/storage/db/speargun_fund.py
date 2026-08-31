@@ -24,6 +24,7 @@ class SpeargunFundMixin:
         donor_name: Optional[str] = None,
         yookassa_payment_id: Optional[str] = None,
         confirmation_url: Optional[str] = None,
+        payment_provider: str = "yookassa",
         meta: Optional[dict] = None,
     ) -> Optional[int]:
         try:
@@ -33,9 +34,10 @@ class SpeargunFundMixin:
                     INSERT INTO speargun.donations (
                         source, telegram_user_id, telegram_username, donor_name,
                         amount, currency, amount_rub,
-                        yookassa_payment_id, confirmation_url, status, meta
+                        yookassa_payment_id, confirmation_url, payment_provider,
+                        status, meta
                     ) VALUES (
-                        $1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending', $10::jsonb
+                        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'pending', $11::jsonb
                     )
                     RETURNING id
                     """,
@@ -48,6 +50,7 @@ class SpeargunFundMixin:
                     amount_rub,
                     yookassa_payment_id,
                     confirmation_url,
+                    payment_provider,
                     json.dumps(meta or {}, ensure_ascii=False),
                 )
                 return int(row["id"]) if row else None
@@ -55,11 +58,12 @@ class SpeargunFundMixin:
             logger.error("speargun_create_donation: %s", e)
             return None
 
-    async def speargun_attach_yookassa(
+    async def speargun_attach_payment(
         self,
         donation_id: int,
         *,
-        yookassa_payment_id: str,
+        payment_provider: str,
+        provider_payment_id: str,
         confirmation_url: str,
     ) -> None:
         try:
@@ -69,23 +73,39 @@ class SpeargunFundMixin:
                     UPDATE speargun.donations
                     SET yookassa_payment_id = $2,
                         confirmation_url = $3,
+                        payment_provider = $4,
                         updated_at = NOW()
                     WHERE id = $1
                     """,
                     donation_id,
-                    yookassa_payment_id,
+                    provider_payment_id,
                     confirmation_url,
+                    payment_provider,
                 )
         except Exception as e:
-            logger.error("speargun_attach_yookassa id=%s: %s", donation_id, e)
+            logger.error("speargun_attach_payment id=%s: %s", donation_id, e)
+
+    async def speargun_attach_yookassa(
+        self,
+        donation_id: int,
+        *,
+        yookassa_payment_id: str,
+        confirmation_url: str,
+    ) -> None:
+        await self.speargun_attach_payment(
+            donation_id,
+            payment_provider="yookassa",
+            provider_payment_id=yookassa_payment_id,
+            confirmation_url=confirmation_url,
+        )
 
     async def speargun_list_pending(self, limit: int = 50) -> List[Dict[str, Any]]:
         try:
             async with self.get_connection() as conn:
                 rows = await conn.fetch(
                     """
-                    SELECT id, yookassa_payment_id, amount, currency, amount_rub,
-                           telegram_user_id
+                    SELECT id, yookassa_payment_id, payment_provider,
+                           amount, currency, amount_rub, telegram_user_id
                     FROM speargun.donations
                     WHERE status = 'pending'
                       AND yookassa_payment_id IS NOT NULL

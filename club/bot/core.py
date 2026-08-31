@@ -228,6 +228,7 @@ class TelegramBot(TelegramBotApp):
         speargun_fund_feature = SpeargunFundFeature(
             user_storage=self.user_storage,
             feature_manager=self.feature_manager,
+            bzb_service=self.bzb_service,
         )
         angel_pool_feature = AngelPoolFeature(
             user_storage=self.user_storage,

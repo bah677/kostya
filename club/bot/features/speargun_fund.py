@@ -19,6 +19,7 @@ from aiogram.types import (
 
 from bot.features.base import BaseFeature
 from bot.filters import PRIVATE_CHAT_ONLY, PRIVATE_INLINE_CALLBACK_ONLY
+from bot.payments.bzb_service import BZBCreatePaymentError, BZBService
 from bot.payments.yookassa_service import YooKassaService
 from bot.utils.user_ui import render_user_screen
 from config import config
@@ -71,15 +72,26 @@ def _to_rub(amount: Decimal, currency: str) -> Decimal:
     raise ValueError(currency)
 
 
+def _provider_for_currency(currency: str) -> str:
+    """Как донаты библии/клуба: RUB → ЮKassa, USD/EUR → BZB."""
+    cur = (currency or "").strip().upper()
+    if cur == "RUB":
+        return "yookassa"
+    if cur in {"USD", "EUR"}:
+        return "bzb"
+    raise ValueError(currency)
+
+
 class SpeargunFundFeature(BaseFeature):
     name = "speargun_fund"
 
-    def __init__(self, user_storage, feature_manager=None):
+    def __init__(self, user_storage, feature_manager=None, bzb_service=None):
         super().__init__()
         self.user_storage = user_storage
         self.feature_manager = feature_manager
         self._bot = None
-        self._yk: Optional[YooKassaService] = None
+        self._yookassa: Optional[YooKassaService] = None
+        self._bzb = bzb_service
 
     def set_bot(self, bot_app) -> None:
         self._bot = getattr(bot_app, "bot", bot_app)
@@ -243,10 +255,18 @@ class SpeargunFundFeature(BaseFeature):
             edit=False,
         )
 
-    def _yk(self) -> YooKassaService:
-        if self._yk is None:
-            self._yk = YooKassaService()
-        return self._yk
+    def _yookassa_svc(self) -> YooKassaService:
+        if self._yookassa is None:
+            self._yookassa = YooKassaService()
+        return self._yookassa
+
+    def _bzb_svc(self) -> Optional[BZBService]:
+        if self._bzb is not None:
+            return self._bzb
+        if getattr(config, "BZB_API_KEY", None):
+            self._bzb = BZBService()
+            return self._bzb
+        return None
 
     async def _create_pay(
         self,
@@ -257,8 +277,9 @@ class SpeargunFundFeature(BaseFeature):
         amount: Decimal,
         edit: bool,
     ) -> None:
-        amount_rub = _to_rub(amount, currency)
+        amount_rub = _to_rub(amount, currency)  # предварительный учёт; поллер speargun пересчитает по ЦБ
         sym = CURRENCY_SYMBOL[currency]
+        provider = _provider_for_currency(currency)
         bot_username = (config.TELEGRAM_BOT_USERNAME or "Talk_God_Bot").lstrip("@")
         donation_id = await self.user_storage.speargun_create_donation(
             source="bot",
@@ -268,6 +289,7 @@ class SpeargunFundFeature(BaseFeature):
             telegram_user_id=user.id,
             telegram_username=user.username,
             donor_name=(user.full_name or "")[:120] or None,
+            payment_provider=provider,
             meta={"deep_link": _deep_link()},
         )
         if not donation_id:
@@ -275,27 +297,63 @@ class SpeargunFundFeature(BaseFeature):
                 message, text="Не удалось создать запись платежа.", edit=edit
             )
             return
+
+        pay_label = "ЮKassa" if provider == "yookassa" else "BZB (карты не РФ)"
         try:
-            url, payment_id, _ = await self._yk().create_payment(
-                amount=float(amount_rub),
-                description=f"Speargun · {amount} {currency}",
-                user_id=user.id,
-                payment_type="one_time",
-                bot_username=bot_username,
+            if provider == "yookassa":
+                # Списание только в RUB — валюта уже RUB.
+                url, payment_id, _ = await self._yookassa_svc().create_payment(
+                    amount=float(amount),
+                    description=f"Speargun · {amount} {currency}",
+                    user_id=user.id,
+                    payment_type="one_time",
+                    bot_username=bot_username,
+                )
+            else:
+                bzb = self._bzb_svc()
+                if not bzb:
+                    await render_user_screen(
+                        message, text="BZB не настроена для оплаты в валюте.", edit=edit
+                    )
+                    return
+                # Списание в USD/EUR как есть — без конвертации в ЮKassa.
+                url, payment_id, _ = await bzb.create_payment(
+                    amount=float(amount),
+                    description=f"Speargun · {amount} {currency}",
+                    user_id=user.id,
+                    payment_type="one_time",
+                    bot_username=bot_username,
+                    currency=currency,
+                    title=getattr(
+                        config,
+                        "SPEARGUN_CAMPAIGN_TITLE",
+                        "Speargun fund",
+                    )[:50],
+                )
+        except BZBCreatePaymentError as e:
+            logger.warning("speargun bzb: %s", e)
+            await render_user_screen(
+                message,
+                text=e.user_message or f"Не удалось создать платёж: {e}",
+                edit=edit,
             )
+            return
         except Exception as e:
-            logger.exception("speargun yookassa: %s", e)
+            logger.exception("speargun payment (%s): %s", provider, e)
             await render_user_screen(
                 message, text=f"Не удалось создать платёж: {e}", edit=edit
             )
             return
         if not url or not payment_id:
             await render_user_screen(
-                message, text="ЮKassa не вернула ссылку на оплату.", edit=edit
+                message, text=f"{pay_label} не вернула ссылку на оплату.", edit=edit
             )
             return
-        await self.user_storage.speargun_attach_yookassa(
-            donation_id, yookassa_payment_id=payment_id, confirmation_url=url
+        await self.user_storage.speargun_attach_payment(
+            donation_id,
+            payment_provider=provider,
+            provider_payment_id=payment_id,
+            confirmation_url=url,
         )
         kb = InlineKeyboardMarkup(
             inline_keyboard=[
@@ -306,8 +364,9 @@ class SpeargunFundFeature(BaseFeature):
         await render_user_screen(
             message,
             text=(
-                f"Готово к оплате: <b>{amount} {sym}</b> (≈ {amount_rub:.0f} ₽)\n\n"
-                f"Нажмите кнопку — откроется ЮKassa.\n"
+                f"Готово к оплате: <b>{amount} {sym}</b>"
+                + (f" (≈ {amount_rub:.0f} ₽ для учёта)" if currency != "RUB" else "")
+                + f"\n\nНажмите кнопку — откроется {pay_label}.\n"
                 f"Спасибо! 🔫"
             ),
             reply_markup=kb,
