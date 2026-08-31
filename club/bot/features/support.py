@@ -2,22 +2,33 @@
 import asyncio
 import html
 import logging
+import re
 from datetime import datetime
 from io import BytesIO
 from typing import Any, Dict, List, Optional, Tuple
 
-from aiogram import Bot, Dispatcher
-from aiogram.enums import ParseMode
+from aiogram import Bot, Dispatcher, F
+from aiogram.enums import ChatType, ParseMode
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
-from aiogram.types import Message
+from aiogram.types import (
+    CallbackQuery,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Message,
+    User,
+)
 
+from bot.admin_guard import is_telegram_admin
 from bot.features.base import BaseFeature
 from bot.texts import ru_support as support_txt
 from bot.utils.admin_channel import (
+    admin_channel_chat_id,
+    edit_admin_channel_message,
     send_admin_animation_bytes,
     send_admin_document_bytes,
     send_admin_html_message,
+    send_admin_html_message_main_bot,
     send_admin_photo_bytes,
     send_admin_video_bytes,
     send_admin_video_note_bytes,
@@ -31,6 +42,8 @@ from config import config
 logger = logging.getLogger(__name__)
 
 _TICKET_MEDIA_CAPTION_MAX = 900
+_TICKET_PATTERN = re.compile(r"#?(TKT_CL)[A-Z0-9]+", re.IGNORECASE)
+_CB_DRAFT_PREFIX = "stkd:"
 
 
 class SupportFeature(BaseFeature):
@@ -75,6 +88,26 @@ class SupportFeature(BaseFeature):
 
     def register_handlers(self, dp: Dispatcher) -> None:
         dp.message.register(self.start_feedback, PRIVATE_CHAT_ONLY, Command("feedback"))
+
+        gid = admin_channel_chat_id()
+        if gid and config.SUPPORT_THREAD_ID > 0:
+            dp.message.register(
+                self._support_thread_reply,
+                F.chat.id == gid,
+                F.message_thread_id == config.SUPPORT_THREAD_ID,
+                F.reply_to_message,
+                F.text,
+            )
+            dp.callback_query.register(
+                self._support_draft_callback,
+                F.data.startswith(_CB_DRAFT_PREFIX),
+            )
+            logger.info(
+                "[%s] Reply на тикеты + AI-черновики: chat=%s thread=%s",
+                self.name,
+                gid,
+                config.SUPPORT_THREAD_ID,
+            )
 
     async def start_support(
         self, message: Message, state: FSMContext, *, edit: bool = False
@@ -162,6 +195,9 @@ class SupportFeature(BaseFeature):
                 is_feedback=(mode == "feedback"),
             )
 
+            if mode != "feedback" and getattr(config, "SUPPORT_AI_DRAFT_ENABLED", True):
+                self._enqueue_ai_draft(ticket_number)
+
             await state.clear()
             self._current_mode.pop(user_id, None)
 
@@ -226,6 +262,11 @@ class SupportFeature(BaseFeature):
             esc_msg=esc_msg,
             created_time=datetime.now().strftime("%d.%m.%Y %H:%M"),
         )
+        if not is_feedback:
+            notification_text += (
+                "\n\n<i>Reply на это сообщение — свой ответ. "
+                "Через минуту придёт 🤖 черновик ИИ (можно отправить или поправить reply).</i>"
+            )
 
         try:
             thread_kw = (
@@ -233,12 +274,17 @@ class SupportFeature(BaseFeature):
                 if config.SUPPORT_THREAD_ID and config.SUPPORT_THREAD_ID > 0
                 else None
             )
-            ok = await send_admin_html_message(
+            msg_id = await send_admin_html_message_main_bot(
                 self._bot,
                 notification_text,
                 thread_id=thread_kw,
             )
-            if ok:
+            if msg_id:
+                await self.user_storage.update_support_ticket_channel(
+                    ticket_number,
+                    channel_message_id=int(msg_id),
+                    channel_thread_id=thread_kw,
+                )
                 logger.info(
                     f"✅ Admin notification sent for ticket {ticket_number} (feedback={is_feedback})"
                 )
@@ -413,6 +459,426 @@ class SupportFeature(BaseFeature):
                 f"❌ Error forwarding ticket media ({ticket_number}): {e}",
                 exc_info=True,
             )
+
+    # ------------------------------------------------------------------ #
+    # AI-черновик ответа + reply админа в топике поддержки
+    # ------------------------------------------------------------------ #
+
+    def _draft_keyboard(self, ticket_number: str) -> InlineKeyboardMarkup:
+        tn = ticket_number.strip().upper()
+        return InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="✅ Отправить черновик",
+                        callback_data=f"{_CB_DRAFT_PREFIX}ok:{tn}",
+                    ),
+                    InlineKeyboardButton(
+                        text="🔄 Заново",
+                        callback_data=f"{_CB_DRAFT_PREFIX}rg:{tn}",
+                    ),
+                ]
+            ]
+        )
+
+    def _format_draft_admin_message(self, ticket_number: str, draft: str) -> str:
+        esc_draft = html.escape(draft.strip())
+        return (
+            f"🤖 <b>Черновик ответа</b> · <code>{html.escape(ticket_number)}</code>\n\n"
+            f"{esc_draft}\n\n"
+            f"━━━━━━━━━━━━━━━━━━━━━\n"
+            f"· <b>✅ Отправить</b> — как есть\n"
+            f"· <b>Reply на это сообщение</b> — с вашими правками\n"
+            f"· <b>Reply на тикет выше</b> — полностью свой текст"
+        )
+
+    def _enqueue_ai_draft(self, ticket_number: str) -> None:
+        asyncio.create_task(
+            self._generate_and_post_ai_draft(ticket_number),
+            name=f"support_draft_{ticket_number[-8:]}",
+        )
+
+    async def _generate_and_post_ai_draft(self, ticket_number: str) -> None:
+        if not self._bot:
+            return
+        ticket_number = ticket_number.strip().upper()
+        row = await self.user_storage.get_ticket_by_number(ticket_number)
+        if not row or row.get("status") not in ("open", "delivery_failed"):
+            return
+        from bot.services.support_ai_draft import generate_support_ticket_draft
+
+        draft = await generate_support_ticket_draft(
+            self.user_storage,
+            user_id=int(row["user_id"]),
+            ticket_number=ticket_number,
+            topic=str(row.get("topic") or ""),
+            user_message=str(row.get("user_message") or ""),
+            ticket_created_at=row.get("created_at"),
+        )
+        thread_id = (
+            int(row["channel_thread_id"])
+            if row.get("channel_thread_id")
+            else (
+                config.SUPPORT_THREAD_ID
+                if config.SUPPORT_THREAD_ID and config.SUPPORT_THREAD_ID > 0
+                else None
+            )
+        )
+        if not draft:
+            await send_admin_html_message(
+                self._bot,
+                f"⚠️ <b>Черновик не собрался</b> · <code>{html.escape(ticket_number)}</code>\n"
+                f"Ответьте на тикет вручную (reply выше).",
+                thread_id=thread_id,
+            )
+            return
+
+        text = self._format_draft_admin_message(ticket_number, draft)
+        msg_id = await send_admin_html_message_main_bot(
+            self._bot,
+            text,
+            thread_id=thread_id,
+            reply_markup=self._draft_keyboard(ticket_number),
+        )
+        if not msg_id:
+            logger.error("support draft post failed ticket=%s", ticket_number)
+            return
+        await self.user_storage.save_support_ai_draft(
+            ticket_number,
+            draft_text=draft,
+            draft_message_id=int(msg_id),
+        )
+        logger.info("support AI draft posted ticket=%s mid=%s", ticket_number, msg_id)
+
+    def _extract_ticket_number(self, text: str) -> Optional[str]:
+        if not text:
+            return None
+        m = _TICKET_PATTERN.search(text)
+        if not m:
+            return None
+        return m.group(0).lstrip("#").upper()
+
+    async def _resolve_ticket_from_reply(
+        self, orig: Message
+    ) -> tuple[Optional[str], bool]:
+        if not orig:
+            return None, False
+        draft_row = await self.user_storage.get_open_ticket_by_draft_message_id(
+            int(orig.message_id)
+        )
+        if draft_row:
+            return str(draft_row["ticket_number"]), True
+        orig_text = orig.text or orig.caption or ""
+        ticket_number = self._extract_ticket_number(orig_text)
+        return ticket_number, False
+
+    async def _support_ticket_reply_error(self, ticket_number: str) -> str:
+        ticket_number = (ticket_number or "").strip().upper()
+        row = await self.user_storage.get_ticket_by_number(ticket_number)
+        if not row:
+            return f"Тикет {ticket_number} не найден в базе."
+        status = str(row.get("status") or "")
+        if status == "closed":
+            updated = row.get("updated_at")
+            when = (
+                updated.strftime("%d.%m.%Y %H:%M")
+                if hasattr(updated, "strftime")
+                else "—"
+            )
+            return (
+                f"Тикет {ticket_number} уже закрыт ({when}). "
+                "Повторный ответ в этот тикет невозможен."
+            )
+        if status == "answered":
+            return (
+                f"Тикет {ticket_number}: ответ уже записан, доставка пользователю в очереди."
+            )
+        return f"Тикет {ticket_number} в статусе «{status}» — ответ сейчас принять нельзя."
+
+    async def _deliver_ticket_reply(
+        self,
+        *,
+        ticket_number: str,
+        body: str,
+        admin: User,
+        orig_for_append: Optional[Message] = None,
+        from_ai_draft: bool = False,
+    ) -> tuple[bool, Optional[str]]:
+        row = await self.user_storage.apply_support_ticket_admin_reply(
+            ticket_number,
+            body,
+            admin.id,
+        )
+        if not row:
+            return False, await self._support_ticket_reply_error(ticket_number)
+
+        user_dm = self._format_response_message(
+            {"ticket_number": ticket_number, "admin_response": body}
+        )
+        ok_send = False
+        try:
+            await self._bot.send_message(
+                int(row["user_id"]),
+                user_dm,
+                parse_mode=ParseMode.HTML,
+                disable_web_page_preview=True,
+            )
+            ok_send = True
+        except Exception as send_exc:
+            logger.warning(
+                "support reply send failed ticket=%s user=%s: %s",
+                ticket_number,
+                row.get("user_id"),
+                send_exc,
+            )
+
+        await self.user_storage.update_ticket_status(
+            ticket_number,
+            "closed" if ok_send else "answered",
+            admin_id=admin.id,
+            admin_response=body,
+        )
+
+        append_mid: Optional[int] = None
+        append_chat_id: Optional[int] = None
+        append_orig_text = ""
+        if orig_for_append and orig_for_append.chat and not from_ai_draft:
+            append_mid = int(orig_for_append.message_id)
+            append_chat_id = int(orig_for_append.chat.id)
+            append_orig_text = orig_for_append.text or orig_for_append.caption or ""
+        ticket_for_append = await self.user_storage.get_ticket_by_number(ticket_number)
+        if from_ai_draft and ticket_for_append:
+            ch_mid = int(ticket_for_append.get("channel_message_id") or 0)
+            gid = admin_channel_chat_id()
+            if ch_mid and gid:
+                append_mid = ch_mid
+                append_chat_id = gid if isinstance(gid, int) else None
+                if append_chat_id is None and isinstance(gid, str) and gid.lstrip("-").isdigit():
+                    append_chat_id = int(gid)
+                append_orig_text = self._ticket_channel_stub_text(ticket_for_append)
+        if append_mid and append_chat_id:
+            await self._append_support_answer_block_by_id(
+                chat_id=append_chat_id,
+                message_id=append_mid,
+                reply_text=body,
+                admin=admin,
+                original_text=append_orig_text,
+            )
+
+        ticket = ticket_for_append or await self.user_storage.get_ticket_by_number(
+            ticket_number
+        )
+        draft_mid = int(ticket.get("ai_draft_message_id") or 0) if ticket else 0
+        if draft_mid and self._bot:
+            suffix = (
+                "\n\n━━━━━━━━━━━━━━━━━━━━━\n"
+                f"✅ <b>Отправлено</b> ({'черновик ИИ' if from_ai_draft else 'ответ админа'})"
+            )
+            await edit_admin_channel_message(
+                self._bot,
+                message_id=draft_mid,
+                text=self._format_draft_admin_message(
+                    ticket_number, ticket.get("ai_draft_response") or body
+                )
+                + suffix,
+                chat_id=admin_channel_chat_id(),
+                reply_markup=None,
+            )
+            await self.user_storage.clear_support_ai_draft_message(ticket_number)
+
+        return ok_send, None
+
+    def _ticket_channel_stub_text(self, ticket: Dict[str, Any]) -> str:
+        tn = html.escape(str(ticket.get("ticket_number") or ""))
+        msg = html.escape(str(ticket.get("user_message") or "")[:300])
+        return (
+            f"🆕 <b>НОВЫЙ ТИКЕТ ПОДДЕРЖКИ</b>\n\n"
+            f"🎫 <b>Номер:</b> <code>{tn}</code>\n"
+            f"💬 <b>Сообщение:</b>\n{msg}"
+        )
+
+    async def _append_support_answer_block_by_id(
+        self,
+        *,
+        chat_id: int,
+        message_id: int,
+        reply_text: str,
+        admin: User,
+        original_text: str = "",
+    ) -> None:
+        base = re.sub(r"#\w+", "", original_text or "").strip()
+        while "\n\n\n" in base:
+            base = base.replace("\n\n\n", "\n\n")
+        ts = datetime.now().strftime("%d.%m.%Y %H:%M")
+        un = f" (@{admin.username})" if admin.username else ""
+        block = (
+            f"\n\n━━━━━━━━━━━━━━━━━━━━━\n"
+            f"✅ <b>Ответ поддержки</b>\n"
+            f"👤 <b>Админ:</b> {html.escape(admin.full_name)}{html.escape(un)}\n"
+            f"⏰ <b>Время:</b> {ts}\n\n"
+            f"{html.escape(reply_text)}"
+        )
+        new_text = (base + block) if base else block.lstrip()
+        await edit_admin_channel_message(
+            self._bot,
+            message_id=message_id,
+            text=new_text,
+            chat_id=chat_id,
+        )
+
+    async def _ensure_support_admin(self, message: Message) -> bool:
+        if message.chat.type != ChatType.SUPERGROUP:
+            return False
+        if message.from_user is None or message.from_user.is_bot:
+            return False
+        uid = message.from_user.id
+        if not await is_telegram_admin(self.user_storage, uid):
+            await message.reply(
+                "⛔ Нет доступа. Telegram ID должен быть в таблице <code>admins</code>.",
+                parse_mode=ParseMode.HTML,
+            )
+            return False
+        return True
+
+    async def _support_thread_reply(self, message: Message) -> None:
+        if not self._bot:
+            return
+        if not await self._ensure_support_admin(message):
+            return
+
+        processing = await message.reply("⏳ Записываю ответ в тикет…")
+        ticket_number: Optional[str] = None
+        err: Optional[str] = None
+
+        try:
+            orig = message.reply_to_message
+            ticket_number, is_draft = await self._resolve_ticket_from_reply(orig)
+            if not ticket_number:
+                err = "Не найден номер тикета (ожидается TKT_CL…) в сообщении."
+                return
+
+            body = (message.text or "").strip()
+            if not body:
+                err = "Пустой ответ."
+                return
+
+            ok_send, err = await self._deliver_ticket_reply(
+                ticket_number=ticket_number,
+                body=body,
+                admin=message.from_user,
+                orig_for_append=orig if not is_draft else orig,
+                from_ai_draft=is_draft,
+            )
+            if err:
+                return
+
+            if ok_send:
+                await self._dm_ok(
+                    message.from_user.id,
+                    "✅ Ответ по тикету отправлен пользователю; тикет закрыт.",
+                )
+            else:
+                await self._dm_ok(
+                    message.from_user.id,
+                    "⚠️ Ответ записан, но отправка пользователю не удалась — "
+                    "доставит фоновый цикл поддержки.",
+                )
+        except Exception as e:
+            logger.exception("support_thread_reply: %s", e)
+            err = str(e)[:200]
+        finally:
+            for mid in (processing.message_id, message.message_id):
+                try:
+                    await self._bot.delete_message(message.chat.id, mid)
+                except Exception:
+                    pass
+            if err:
+                await self._dm_err(message.from_user.id, err, ticket_number)
+
+    async def _support_draft_callback(self, query: CallbackQuery) -> None:
+        if not self._bot or query.from_user is None:
+            return
+        if not await is_telegram_admin(self.user_storage, query.from_user.id):
+            await query.answer("Нет доступа", show_alert=True)
+            return
+
+        raw = (query.data or "").removeprefix(_CB_DRAFT_PREFIX)
+        if ":" not in raw:
+            await query.answer("Неверная кнопка", show_alert=True)
+            return
+        action, ticket_number = raw.split(":", 1)
+        ticket_number = ticket_number.strip().upper()
+        action = action.strip().lower()
+
+        if action == "rg":
+            await query.answer("Перегенерирую…")
+            if query.message:
+                await edit_admin_channel_message(
+                    self._bot,
+                    message_id=query.message.message_id,
+                    text=(
+                        f"⏳ <b>Перегенерация</b> · <code>{html.escape(ticket_number)}</code>"
+                    ),
+                    chat_id=query.message.chat.id,
+                    reply_markup=None,
+                )
+            await self._generate_and_post_ai_draft(ticket_number)
+            return
+
+        if action != "ok":
+            await query.answer("Неизвестная кнопка", show_alert=True)
+            return
+
+        ticket = await self.user_storage.get_ticket_by_number(ticket_number)
+        if not ticket:
+            await query.answer("Тикет не найден", show_alert=True)
+            return
+        if ticket.get("status") not in ("open", "delivery_failed"):
+            await query.answer("Тикет уже закрыт", show_alert=True)
+            return
+        body = (ticket.get("ai_draft_response") or "").strip()
+        if not body:
+            await query.answer("Черновик пуст — нажмите «Заново»", show_alert=True)
+            return
+
+        await query.answer("Отправляю…")
+        ok_send, err = await self._deliver_ticket_reply(
+            ticket_number=ticket_number,
+            body=body,
+            admin=query.from_user,
+            orig_for_append=query.message,
+            from_ai_draft=True,
+        )
+        if err:
+            await self._dm_err(query.from_user.id, err, ticket_number)
+            return
+        if ok_send:
+            await self._dm_ok(
+                query.from_user.id,
+                f"✅ Черновик по {ticket_number} отправлен пользователю.",
+            )
+        else:
+            await self._dm_ok(
+                query.from_user.id,
+                f"⚠️ Ответ записан; доставит фоновый цикл ({ticket_number}).",
+            )
+
+    async def _dm_ok(self, admin_id: int, text: str) -> None:
+        try:
+            await self._bot.send_message(admin_id, text, parse_mode=ParseMode.HTML)
+        except Exception as e:
+            logger.debug("dm_ok to admin %s: %s", admin_id, e)
+
+    async def _dm_err(
+        self, admin_id: int, err: str, label: Optional[str] = None
+    ) -> None:
+        prefix = f"❌ {label}: " if label else "❌ "
+        try:
+            await self._bot.send_message(
+                admin_id, f"{prefix}{html.escape(err)}", parse_mode=ParseMode.HTML
+            )
+        except Exception as e:
+            logger.debug("dm_err to admin %s: %s", admin_id, e)
 
     async def _answered_tickets_loop(self) -> None:
         while self._monitor_running:

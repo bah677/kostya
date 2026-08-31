@@ -289,13 +289,8 @@ class AdminConsoleFeature(BaseFeature):
         )
 
         if config.SUPPORT_THREAD_ID > 0:
-            dp.message.register(
-                self._support_thread_reply,
-                admin_chat,
-                F.message_thread_id == config.SUPPORT_THREAD_ID,
-                F.reply_to_message,
-                F.text,
-            )
+            # Reply на тикеты ТП — в SupportFeature (AI-черновики + доставка).
+            pass
 
         if config.ADMIN_DIALOG_THREAD_ID > 0:
             dp.message.register(

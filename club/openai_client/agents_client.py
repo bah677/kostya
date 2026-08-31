@@ -443,3 +443,47 @@ class AgentsClient:
         except Exception as e:
             logger.error("quick_reply extract failed user=%s: %s", user_id, e)
             return []
+
+    async def complete(
+        self,
+        *,
+        system_prompt: str,
+        user_content: str,
+        user_id: int,
+        request_kind: str = "chat_completion",
+        temperature: float = 0.6,
+        max_tokens: int = 2048,
+    ) -> Optional[str]:
+        """Один изолированный запрос к DeepSeek без истории из БД."""
+        try:
+            response = await asyncio.wait_for(
+                self.client.chat.completions.create(
+                    model=self.CHAT_MODEL,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_content},
+                    ],
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                ),
+                timeout=60.0,
+            )
+            usage = getattr(response, "usage", None)
+            request_id = str(uuid.uuid4())
+            choice = response.choices[0] if response.choices else None
+            reply_text = (choice.message.content or "").strip() if choice else ""
+            await self.user_storage.log_llm_completion_usage(
+                user_id=user_id,
+                provider="deepseek",
+                model=self.CHAT_MODEL,
+                usage=usage,
+                request_kind=request_kind,
+                request_id=request_id,
+            )
+            return reply_text or None
+        except asyncio.TimeoutError:
+            logger.warning("DeepSeek complete timeout kind=%s user=%s", request_kind, user_id)
+            return None
+        except Exception as e:
+            logger.error("DeepSeek complete (%s) user=%s: %s", request_kind, user_id, e)
+            return None

@@ -61,6 +61,7 @@ class SupportMixin:
                 row = await conn.fetchrow(
                     """
                     SELECT
+                        ticket_id,
                         ticket_number,
                         topic,
                         user_message,
@@ -68,7 +69,14 @@ class SupportMixin:
                         status,
                         created_at,
                         updated_at,
-                        user_id
+                        user_id,
+                        admin_id,
+                        channel_message_id,
+                        channel_thread_id,
+                        ai_draft_response,
+                        ai_draft_at,
+                        ai_draft_message_id,
+                        replied_at
                     FROM support_tickets
                     WHERE ticket_number = $1
                     """,
@@ -78,6 +86,92 @@ class SupportMixin:
         except Exception as e:
             logger.error(f"❌ Failed to get ticket {ticket_number}: {e}")
             return None
+
+    async def get_open_ticket_by_draft_message_id(
+        self, message_id: int
+    ) -> Optional[Dict[str, Any]]:
+        try:
+            async with self.get_connection() as conn:
+                row = await conn.fetchrow(
+                    """
+                    SELECT ticket_number, user_id, status, ai_draft_response
+                    FROM support_tickets
+                    WHERE ai_draft_message_id = $1
+                      AND status IN ('open', 'delivery_failed')
+                    LIMIT 1
+                    """,
+                    int(message_id),
+                )
+                return dict(row) if row else None
+        except Exception as e:
+            logger.error("get_open_ticket_by_draft_message_id: %s", e)
+            return None
+
+    async def update_support_ticket_channel(
+        self,
+        ticket_number: str,
+        *,
+        channel_message_id: Optional[int] = None,
+        channel_thread_id: Optional[int] = None,
+    ) -> None:
+        try:
+            async with self.get_connection() as conn:
+                await conn.execute(
+                    """
+                    UPDATE support_tickets
+                       SET channel_message_id = COALESCE($2, channel_message_id),
+                           channel_thread_id = COALESCE($3, channel_thread_id),
+                           updated_at = NOW()
+                     WHERE ticket_number = $1
+                    """,
+                    ticket_number,
+                    channel_message_id,
+                    channel_thread_id,
+                )
+        except Exception as e:
+            logger.error("update_support_ticket_channel %s: %s", ticket_number, e)
+
+    async def save_support_ai_draft(
+        self,
+        ticket_number: str,
+        *,
+        draft_text: str,
+        draft_message_id: Optional[int] = None,
+    ) -> bool:
+        try:
+            async with self.get_connection() as conn:
+                await conn.execute(
+                    """
+                    UPDATE support_tickets
+                       SET ai_draft_response = $2,
+                           ai_draft_at = NOW(),
+                           ai_draft_message_id = COALESCE($3, ai_draft_message_id),
+                           updated_at = NOW()
+                     WHERE ticket_number = $1
+                    """,
+                    ticket_number,
+                    draft_text,
+                    draft_message_id,
+                )
+            return True
+        except Exception as e:
+            logger.error("save_support_ai_draft %s: %s", ticket_number, e)
+            return False
+
+    async def clear_support_ai_draft_message(self, ticket_number: str) -> None:
+        try:
+            async with self.get_connection() as conn:
+                await conn.execute(
+                    """
+                    UPDATE support_tickets
+                       SET ai_draft_message_id = NULL,
+                           updated_at = NOW()
+                     WHERE ticket_number = $1
+                    """,
+                    ticket_number,
+                )
+        except Exception as e:
+            logger.error("clear_support_ai_draft_message %s: %s", e)
 
     async def update_ticket_status(
         self,

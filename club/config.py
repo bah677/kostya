@@ -69,6 +69,11 @@ class Config:
     DIALOG_FORUM_GROUP_ID: int = 0
     PAYMENT_THREAD_ID: int = 0
     SUPPORT_THREAD_ID: int = 0
+    #: ИИ-черновики ответов в топике поддержки (DeepSeek).
+    SUPPORT_AI_DRAFT_ENABLED: bool = True
+    SUPPORT_DRAFT_LOG_PATHS: str = ""
+    SUPPORT_DRAFT_LOG_WINDOW_MIN: int = 120
+    SUPPORT_DRAFT_LOG_TAIL_BYTES: int = 3_000_000
     MEDIA_ID_TOPIC_ID: int = 0
 
     CLUB_GROUP_ID: int = 0
@@ -514,6 +519,18 @@ def load_config() -> Config:
         DIALOG_FORUM_GROUP_ID=int(os.getenv("DIALOG_FORUM_GROUP_ID", "0") or "0"),
         PAYMENT_THREAD_ID=int(os.getenv("PAYMENT_THREAD_ID", "0")),
         SUPPORT_THREAD_ID=int(os.getenv("SUPPORT_THREAD_ID", "0")),
+        SUPPORT_AI_DRAFT_ENABLED=_env_bool("SUPPORT_AI_DRAFT_ENABLED", True),
+        SUPPORT_DRAFT_LOG_PATHS=(os.getenv("SUPPORT_DRAFT_LOG_PATHS") or "").strip(),
+        SUPPORT_DRAFT_LOG_WINDOW_MIN=max(
+            15, min(720, int(os.getenv("SUPPORT_DRAFT_LOG_WINDOW_MIN", "120") or "120"))
+        ),
+        SUPPORT_DRAFT_LOG_TAIL_BYTES=max(
+            100_000,
+            min(
+                20_000_000,
+                int(os.getenv("SUPPORT_DRAFT_LOG_TAIL_BYTES", "3000000") or "3000000"),
+            ),
+        ),
         MEDIA_ID_TOPIC_ID=int(os.getenv("MEDIA_ID_TOPIC_ID", "0")),
         CLUB_GROUP_ID=int(os.getenv("CLUB_GROUP_ID", "0")),
         CLUB_POST_LINK=(os.getenv("CLUB_POST_LINK") or "").strip(),
