@@ -113,15 +113,15 @@ class SpeargunFundFeature(BaseFeature):
         goal = getattr(
             config,
             "SPEARGUN_CAMPAIGN_GOAL",
-            "Константину нужно подводное ружьё. Скидываемся — любая сумма идёт "
-            "только в этот сбор (не в выручку Клуба).",
+            "Константин давно мечтает о настоящем подводном ружье. "
+            "Давайте скинемся вместе — любая сумма поможет приблизить этот момент.",
         )
         text = (
             f"🔫 <b>{title}</b>\n\n"
             f"{goal}\n\n"
-            f"Уже собрали: <b>{totals['raised_rub']:.0f} ₽</b> "
-            f"от {totals['donors']} чел.\n\n"
-            f"Выберите валюту:"
+            f"Уже собрали: <b>{totals['raised_rub']:.0f} ₽</b>"
+            f" · поддержали: <b>{totals['donors']}</b>\n\n"
+            f"Выберите удобную валюту — дальше сумма и оплата в пару нажатий 💛"
         )
         await render_user_screen(
             message,

@@ -128,8 +128,8 @@ class Config:
     SPEARGUN_WEB_URL: str = "https://speargun.mironbot.ru"
     SPEARGUN_CAMPAIGN_TITLE: str = "Сбор на подводное ружьё для Константина"
     SPEARGUN_CAMPAIGN_GOAL: str = (
-        "Константину нужно подводное ружьё. Скидываемся — любая сумма идёт "
-        "только в этот сбор (не в выручку Клуба)."
+        "Константин давно мечтает о настоящем подводном ружье. "
+        "Давайте скинемся вместе — любая сумма поможет приблизить этот момент."
     )
     #: URL legacy admin-БД (старый Adm) для миграции исторических club_snapshots.
     LEGACY_ADMIN_DB_URL: Optional[str] = None
@@ -624,8 +624,8 @@ def load_config() -> Config:
         SPEARGUN_CAMPAIGN_GOAL=(
             os.getenv("SPEARGUN_CAMPAIGN_GOAL")
             or (
-                "Константину нужно подводное ружьё. Скидываемся — любая сумма идёт "
-                "только в этот сбор (не в выручку Клуба)."
+                "Константин давно мечтает о настоящем подводном ружье. "
+                "Давайте скинемся вместе — любая сумма поможет приблизить этот момент."
             )
         ).strip(),
         LEGACY_ADMIN_DB_URL=(os.getenv("LEGACY_ADMIN_DB_URL") or "").strip() or None,
