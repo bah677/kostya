@@ -46,3 +46,12 @@ class DatabaseBase:
             raise RuntimeError("Database not connected")
         async with self.pool.acquire() as connection:
             yield connection
+
+    async def db_ping(self) -> bool:
+        try:
+            async with self.get_connection() as conn:
+                await conn.fetchval("SELECT 1")
+            return True
+        except Exception as e:
+            logger.warning("db_ping failed: %s", e)
+            return False

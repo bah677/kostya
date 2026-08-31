@@ -243,6 +243,10 @@ class TelemostMailFeature(BaseFeature):
             return
         text = self._format_notify_text(note)
         pid = note["pending_id"]
+        row = await self._app.user_storage.get_telemost_mail_pending(uuid.UUID(pid))
+        if not row:
+            logger.error("telemost notify skip: pending %s not in DB", pid)
+            return
         try:
             msg = await bot.send_message(
                 chat_id,
@@ -251,9 +255,15 @@ class TelemostMailFeature(BaseFeature):
                 reply_markup=self._approval_keyboard(pid),
                 message_thread_id=topic_id,
             )
-            await self._app.user_storage.set_telemost_notify_message_id(
+            saved = await self._app.user_storage.set_telemost_notify_message_id(
                 uuid.UUID(pid), msg.message_id
             )
+            if saved is False:
+                logger.error(
+                    "telemost notify mid not saved pending=%s msg=%s",
+                    pid,
+                    msg.message_id,
+                )
         except Exception as e:
             logger.error("telemost notify failed: %s", e)
 

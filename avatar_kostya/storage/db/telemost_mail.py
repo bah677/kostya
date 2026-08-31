@@ -556,7 +556,7 @@ class TelemostMailMixin:
 
     async def set_telemost_notify_message_id(
         self, pending_id: uuid.UUID, message_id: int
-    ) -> None:
+    ) -> bool:
         try:
             async with self.get_connection() as conn:
                 await conn.execute(
@@ -568,5 +568,7 @@ class TelemostMailMixin:
                     pending_id,
                     int(message_id),
                 )
+            return True
         except Exception as e:
             logger.error("set_telemost_notify_message_id: %s", e)
+            return False

@@ -167,7 +167,7 @@ class TelemostMailService:
             default_product=self._default_product,
         )
         pending_id = uuid.uuid4()
-        await self._storage.insert_telemost_mail_pending(
+        ok = await self._storage.insert_telemost_mail_pending(
             pending_id=pending_id,
             imap_uid=mail.uid,
             message_id=mail.message_id,
@@ -185,6 +185,10 @@ class TelemostMailService:
                 "started_at": parsed.started_at,
             },
         )
+        if not ok:
+            raise RuntimeError(
+                f"не удалось сохранить pending в БД (uid={mail.uid})"
+            )
         if parsed.meeting_id:
             await self._storage.link_recording_to_pending(
                 parsed.meeting_id, pending_id
@@ -288,6 +292,9 @@ class TelemostMailService:
         """Новые письма → pending в БД → данные для уведомления в Telegram."""
         if not self._imap.configured:
             return []
+        if not await self._storage.db_ping():
+            logger.warning("telemost_mail: БД недоступна — пропускаем опрос почты")
+            return []
 
         last_uid = await self._storage.get_telemost_mail_last_uid()
         mails: List[FetchedMail] = await asyncio.to_thread(
@@ -317,7 +324,15 @@ class TelemostMailService:
                 await self._skip_mail_without_attachment(mail)
                 continue
 
-            _pid, note = await self._create_pending_from_mail(mail)
+            try:
+                _pid, note = await self._create_pending_from_mail(mail)
+            except Exception as e:
+                logger.error(
+                    "telemost_mail: pending uid=%s не создан: %s",
+                    mail.uid,
+                    e,
+                )
+                continue
             notifications.append(note)
 
         if max_uid > last_uid:
@@ -559,6 +574,8 @@ class TelemostMailService:
         register_mail_decision_wait(pid_s)
         await notify_cb(note)
         stats.offered += 1
+        if decision_timeout_sec <= 0:
+            return
         outcome = await wait_mail_decision(pid_s, timeout_sec=decision_timeout_sec)
         if outcome and outcome.startswith("load"):
             row = await self._storage.get_telemost_mail_pending(pending_id)
