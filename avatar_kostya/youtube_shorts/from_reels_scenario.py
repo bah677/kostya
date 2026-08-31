@@ -16,12 +16,12 @@ from youtube_prayer.audio_pipeline import synthesize_prayer_audio
 from youtube_prayer.covers import generate_vertical_cover_pack
 from youtube_prayer.compose import deepseek_complete
 from youtube_prayer.metadata import VideoMetadata
-from youtube_prayer.render import SHORT_H, SHORT_W, format_prayer_theme_label, render_vertical_full
+from youtube_prayer.render import SHORT_H, SHORT_W, render_vertical_full
 from youtube_prayer.stock_broll import build_broll_montage
 from youtube_prayer.trends import PrayerTopic
 from youtube_prayer.work_cleanup import cleanup_item_media_after_youtube_upload
 from youtube_shorts.deliver import deliver_short_pack
-from youtube_shorts.metadata import _ensure_shorts_title
+from youtube_shorts.metadata import _ensure_shorts_title, generate_short_metadata, theme_overlay_label
 from youtube_shorts.uploader import upload_short_premiere_if_enabled
 
 logger = logging.getLogger(__name__)
@@ -79,6 +79,7 @@ def _work_root() -> Path:
 def _metadata_from_scenario(
     *, idea_title: str, cover: str, body: str, desc: str
 ) -> VideoMetadata:
+    """Fallback без LLM (если generate_short_metadata недоступен)."""
     title = _ensure_shorts_title(cover or idea_title or "Размышление")
     thumb = (cover or idea_title or title)[:42]
     description = (
@@ -92,6 +93,11 @@ def _metadata_from_scenario(
         description=description,
         hashtags=["#Shorts", "#вера", "#духовность", "#РазговорыСБогом", "#христианство"],
     )
+
+
+async def _complete_metadata(system: str, user: str) -> Optional[str]:
+    text, _ = await deepseek_complete(system, user, temperature=0.4, max_tokens=1800)
+    return text
 
 
 async def _broll_query(idea_title: str, body: str) -> str:
@@ -184,8 +190,11 @@ async def run_reels_scenario_to_youtube_short(
             height=SHORT_H,
             prayer_text=body,
         )
-        meta = _metadata_from_scenario(
-            idea_title=idea_title, cover=cover, body=body, desc=desc
+        meta = await generate_short_metadata(
+            trend=idea_title,
+            brief=(desc or body[:300]),
+            complete_fn=_complete_metadata,
+            work_dir=work_dir,
         )
         covers = await generate_vertical_cover_pack(
             work_dir,
@@ -197,7 +206,7 @@ async def run_reels_scenario_to_youtube_short(
             broll_path=broll,
         )
         vertical = work_dir / "short_9x16.mp4"
-        theme_label = format_prayer_theme_label(idea_title, topic.brief, lang="ru")
+        theme_label = theme_overlay_label(meta, idea_title)
         await asyncio.to_thread(
             render_vertical_full,
             broll_path=broll,

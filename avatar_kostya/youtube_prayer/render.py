@@ -119,31 +119,25 @@ def format_prayer_theme_label(
     *,
     lang: str = "ru",
     max_len: int = 56,
+    short: bool = False,
 ) -> str:
-    """Постоянная подпись поверх ролика: «Молитва о …»."""
+    """Постоянная подпись поверх ролика: коротко «Молитва: …»."""
     lang_l = (lang or "ru").lower()
     brief = re.sub(r"\s+", " ", (brief or "").strip())
     trend = re.sub(r"\s+", " ", (trend or "").strip())
+    overlay_max = 38 if short else max_len
 
-    def _clip(s: str) -> str:
+    def _clip(s: str, limit: int = overlay_max) -> str:
         s = s.strip(" .,—–-")
-        if len(s) <= max_len:
+        if len(s) <= limit:
             return s
-        cut = s[: max_len - 1].rsplit(" ", 1)[0].strip()
-        return (cut or s[: max_len - 1]).rstrip(".,") + "…"
+        cut = s[: limit - 1].rsplit(" ", 1)[0].strip()
+        return (cut or s[: limit - 1]).rstrip(".,") + "…"
 
     if lang_l == "en":
-        if brief.lower().startswith("a prayer"):
-            first = re.split(r"[.!?]", brief, 1)[0].strip()
-            if len(first) >= 8:
-                return _clip(first)
         t = re.sub(r"^(a\s+)?prayer\s+(for|about|of)\s+", "", trend, flags=re.I).strip()
         return _clip(f"Prayer: {t}" if t else "Prayer")
 
-    if brief.lower().startswith("молитва"):
-        first = re.split(r"[.!?]", brief, 1)[0].strip()
-        if len(first) >= 8:
-            return _clip(first)
     t = re.sub(
         r"^молитва\s+(о|об|про|за|:)\s*",
         "",
@@ -153,6 +147,12 @@ def format_prayer_theme_label(
     if not t:
         return "Молитва"
     # Без склонения тренда — двоеточие читается чище, чем «о/об + именительный».
+    if short:
+        return _clip(f"Молитва: {t}")
+    if brief.lower().startswith("молитва"):
+        first = re.split(r"[.!?]", brief, 1)[0].strip()
+        if 8 <= len(first) <= overlay_max:
+            return _clip(first)
     return _clip(f"Молитва: {t}")
 
 
@@ -247,12 +247,14 @@ def _write_video_ass(
     - Caption — кинетическая строка молитвы крупно снизу
     """
     if vertical:
-        theme_size, theme_margin_v = 44, 100
+        theme_size, theme_margin_v = 58, 92
+        theme_wrap = 16
         cap_size, cap_margin_v, wrap_chars = 68, 260, 22
         hook_size, wrap_hook = 72, 18
         margin_lr = 56
     else:
         theme_size, theme_margin_v = 42, 48
+        theme_wrap = 22
         cap_size, cap_margin_v, wrap_chars = 58, 72, 36
         hook_size, wrap_hook = 78, 28
         margin_lr = 64
@@ -266,7 +268,7 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Theme,{_FONT_THEME},{theme_size},{_COL_THEME},&H000000FF,{_COL_OUTLINE},{_COL_SHADOW},0,0,0,0,100,100,1.2,0,1,2.4,1.2,8,{margin_lr},{margin_lr},{theme_margin_v},1
+Style: Theme,{_FONT_THEME},{theme_size},{_COL_THEME},&H000000FF,{_COL_OUTLINE},{_COL_SHADOW},1,0,0,0,100,100,1.2,0,1,3.2,1.4,8,{margin_lr},{margin_lr},{theme_margin_v},1
 Style: Caption,{_FONT_CAPTION},{cap_size},{_COL_CAPTION},&H000000FF,{_COL_OUTLINE},{_COL_SHADOW},0,0,0,0,100,100,0.8,0,1,3.2,1.4,2,{margin_lr},{margin_lr},{cap_margin_v},1
 Style: Hook,{_FONT_THEME},{hook_size},{_COL_THEME},&H000000FF,{_COL_OUTLINE},{_COL_SHADOW},0,0,0,0,100,100,1.0,0,1,4.0,2.0,5,{margin_lr},{margin_lr},0,1
 
@@ -287,7 +289,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             )
     theme = (theme_label or "").strip()
     if theme:
-        wrapped_theme = _ass_line_break(_wrap_line(theme, max_chars=wrap_chars))
+        wrapped_theme = _ass_line_break(_wrap_line(theme, max_chars=theme_wrap))
         if wrapped_theme:
             # тема появляется после hook, чтобы не конкурировать
             theme_start = h_sec if hook else 0.0

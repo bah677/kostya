@@ -23,7 +23,7 @@ from youtube_prayer.trends import fetch_google_trends, select_prayer_topics
 from youtube_prayer.work_cleanup import cleanup_item_media_after_youtube_upload
 from youtube_shorts.compose import ShortComposeIncompleteError, compose_short_prayer_for_topic
 from youtube_shorts.deliver import deliver_short_pack
-from youtube_shorts.metadata import generate_short_metadata
+from youtube_shorts.metadata import generate_short_metadata, theme_overlay_label
 from youtube_shorts.uploader import upload_short_premiere_if_enabled
 
 logger = logging.getLogger(__name__)
@@ -196,7 +196,7 @@ async def run_daily_youtube_shorts_pipeline(
                 broll_path=broll,
             )
             vertical = item_dir / "short_9x16.mp4"
-            theme_label = format_prayer_theme_label(topic.trend, topic.brief, lang="ru")
+            theme_label = theme_overlay_label(meta, topic.trend)
             await asyncio.to_thread(
                 render_vertical_full,
                 broll_path=broll,

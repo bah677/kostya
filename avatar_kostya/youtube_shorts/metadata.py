@@ -8,13 +8,22 @@ import re
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional, Sequence
+from typing import Awaitable, Callable, List, Optional, Sequence
 from zoneinfo import ZoneInfo
 
 from youtube_prayer.metadata import VideoMetadata, _clamp_title, _normalize_hashtags
 
 logger = logging.getLogger(__name__)
 _MSK = ZoneInfo("Europe/Moscow")
+
+CompleteFn = Callable[[str, str], Awaitable[Optional[str]]]
+
+# Повелительное после тире, обрыв «Молитва, когда X — …»
+_BAD_TITLE_RES = (
+    re.compile(r"—\s*(обратись|помолись|прочитай|слушай|скажи|открой|вспомни)\b", re.I),
+    re.compile(r"^\s*молитва,\s*когда\s+[^—]+—\s*\S", re.I),
+    re.compile(r"\?\s*#?\s*shorts\s*$", re.I),
+)
 
 
 def _ensure_shorts_title(title: str) -> str:
@@ -25,8 +34,88 @@ def _ensure_shorts_title(title: str) -> str:
     return _clamp_title(f"{base} #Shorts", max_len=95)
 
 
+def _strip_shorts_suffix(title: str) -> str:
+    t = re.sub(r"\s+", " ", (title or "").strip())
+    return re.sub(r"\s*#shorts\s*$", "", t, flags=re.I).strip()
+
+
+def _title_quality_ok(title: str) -> bool:
+    core = _strip_shorts_suffix(title)
+    if len(core) < 12 or len(core) > 88:
+        return False
+    if core.count("—") > 1:
+        return False
+    if core.endswith(("—", ",", ":", ";", "…")):
+        return False
+    if not re.search(r"[а-яёa-z0-9]", core, flags=re.I):
+        return False
+    for rx in _BAD_TITLE_RES:
+        if rx.search(core):
+            return False
+    # После тире — не голый глагол в повелительном наклонении.
+    m = re.search(r"—\s*(\S+)", core)
+    if m and re.match(
+        r"^(обратись|помолись|прочитай|слушай|скажи|открой|вспомни|приди|доверься)\b",
+        m.group(1),
+        re.I,
+    ):
+        return False
+    return True
+
+
+def _viral_fallback_title(trend: str) -> str:
+    t = re.sub(r"\s+", " ", (trend or "").strip(" .,—–-"))
+    t = re.sub(r"^молитва\s+(о|об|про|за|:)\s*", "", t, flags=re.I).strip()
+    if not t:
+        t = "тяжело на душе"
+    low = t.lower()
+    if "?" in t:
+        title = f"{t} — молитва, которая поддержит"
+    elif low.startswith("когда "):
+        title = f"{t[0].upper()}{t[1:]} — молитва, которая поддержит"
+    else:
+        title = f"Когда {t} — молитва, которая поддержит"
+    return _ensure_shorts_title(title)
+
+
+def theme_overlay_label(meta: VideoMetadata, trend: str = "") -> str:
+    """Короткая подпись на ролике (3–6 слов), не полное SEO-название."""
+    thumb = re.sub(r"\s+", " ", (meta.thumbnail_title or "").strip())
+    if thumb and 4 <= len(thumb) <= 42:
+        return thumb[:42]
+    from youtube_prayer.render import format_prayer_theme_label
+
+    return format_prayer_theme_label(trend or _strip_shorts_suffix(meta.title), short=True)
+
+
+def _metadata_system_prompt(*, strict: bool = False) -> str:
+    extra = ""
+    if strict:
+        extra = (
+            "\nПРЕДЫДУЩИЙ title был грамматически кривым или нецепляющим. "
+            "Перепиши с нуля: законченная фраза, вирусный крючок.\n"
+        )
+    return (
+        "Ты пишешь метаданные для YouTube Shorts — коротких вертикальных молитв (1–2 мин). "
+        "Ответ СТРОГО JSON:\n"
+        '{"title":"...","thumbnail_title":"...","description":"...","hashtags":["#Shorts",...]}\n\n'
+        + extra
+        + "title: 40–85 символов ДО суффикса #Shorts. Вирусный крючок — боль, вопрос или узнавание.\n"
+        "Хорошие форматы:\n"
+        "· «Не можешь уснуть? Молитва, которая успокаивает»\n"
+        "· «Когда родители болеют — слова, которые держат на плаву»\n"
+        "· «Тревога за близких — молитва, которую стоит услышать»\n"
+        "ЗАПРЕЩЕНО: обрыв на «—», «Молитва, когда X — обратись…», повелительное после тире, "
+        "канцелярит, SEO-простыня без эмоции.\n"
+        "thumbnail_title: 3–6 коротких слов для подписи НА ВИДЕО (крупно), без #Shorts.\n"
+        "description: 2–4 коротких абзаца + CTA; в конце Keywords через ---.\n"
+        "hashtags: 6–10 тегов, первый #Shorts.\n"
+    )
+
+
 def _fallback_short_metadata(*, trend: str, brief: str) -> VideoMetadata:
-    title = _ensure_shorts_title(f"Молитва: {trend[:40]}")
+    title = _viral_fallback_title(trend)
+    core = _strip_shorts_suffix(title)
     desc = (
         f"Короткая молитва на 1–2 минуты: {brief}\n\n"
         "Спокойный голос, можно слушать с закрытыми глазами.\n"
@@ -37,60 +126,84 @@ def _fallback_short_metadata(*, trend: str, brief: str) -> VideoMetadata:
     tags = ["#Shorts", "#молитва", "#вера", "#христианство", "#утешение"]
     return VideoMetadata(
         title=title,
-        thumbnail_title=title[:42],
+        thumbnail_title=core[:42],
         description=desc,
         hashtags=tags,
     )
 
 
-async def generate_short_metadata(
-    *,
-    trend: str,
-    brief: str,
-    complete_fn,
-    trend_pool: Optional[Sequence[str]] = None,
-    work_dir: Optional[Path] = None,
-) -> VideoMetadata:
-    today = datetime.now(_MSK).strftime("%d.%m.%Y")
-    pool = [t for t in (trend_pool or []) if t and t != trend][:10]
-    pool_txt = "\n".join(f"- {t}" for t in pool) if pool else "(нет доп. трендов)"
-    system = (
-        "Ты пишешь метаданные для YouTube Shorts — коротких вертикальных молитв (1–2 мин). "
-        "Ответ СТРОГО JSON:\n"
-        '{"title":"...","thumbnail_title":"...","description":"...","hashtags":["#Shorts",...]}\n\n'
-        "title: 40–85 символов, цепляющий, в конце обязательно #Shorts (если не влезает — сократи текст).\n"
-        "thumbnail_title: 3–6 слов для обложки.\n"
-        "description: 2–4 коротких абзаца + CTA; в конце Keywords через ---.\n"
-        "hashtags: 6–10 тегов, первый #Shorts.\n"
-    )
-    user = (
-        f"Дата (МСК): {today}\n"
-        f"Тренд: {trend}\n"
-        f"Бриф: {brief}\n"
-        f"Другие тренды:\n{pool_txt}"
-    )
-    raw = await complete_fn(system, user)
+async def _parse_metadata_response(
+    raw: Optional[str], *, trend: str, brief: str
+) -> Optional[VideoMetadata]:
     try:
-        text = (raw or "").strip()
-        text = re.sub(r"^```(?:json)?\s*", "", text)
-        text = re.sub(r"\s*```$", "", text)
-        data = json.loads(text)
+        data = _parse_json_obj(raw or "")
         title = _ensure_shorts_title(str(data.get("title") or ""))
-        thumb = str(data.get("thumbnail_title") or title).strip()[:42]
+        thumb = str(data.get("thumbnail_title") or "").strip()[:42]
+        if not thumb:
+            thumb = _strip_shorts_suffix(title)[:42]
         description = str(data.get("description") or "").strip()
         hashtags = _normalize_hashtags(data.get("hashtags") or [], lang="ru")
         if "#Shorts".casefold() not in {h.casefold() for h in hashtags}:
             hashtags = ["#Shorts"] + hashtags
         if len(title) < 8 or len(description) < 40:
             raise ValueError("metadata too short")
-        meta = VideoMetadata(
+        if not _title_quality_ok(title):
+            raise ValueError(f"title quality: {title!r}")
+        return VideoMetadata(
             title=title,
             thumbnail_title=thumb,
             description=description,
             hashtags=hashtags[:12],
         )
     except Exception as e:
-        logger.warning("short metadata LLM failed trend=%r: %s", trend, e)
+        logger.warning("short metadata parse failed trend=%r: %s", trend, e)
+        return None
+
+
+def _parse_json_obj(raw: str) -> dict:
+    text = (raw or "").strip()
+    text = re.sub(r"^```(?:json)?\s*", "", text)
+    text = re.sub(r"\s*```$", "", text)
+    try:
+        return json.loads(text)
+    except Exception:
+        m = re.search(r"\{[\s\S]+\}", text)
+        if m:
+            return json.loads(m.group(0))
+        raise
+
+
+async def generate_short_metadata(
+    *,
+    trend: str,
+    brief: str,
+    complete_fn: CompleteFn,
+    trend_pool: Optional[Sequence[str]] = None,
+    work_dir: Optional[Path] = None,
+) -> VideoMetadata:
+    today = datetime.now(_MSK).strftime("%d.%m.%Y")
+    pool = [t for t in (trend_pool or []) if t and t != trend][:10]
+    pool_txt = "\n".join(f"- {t}" for t in pool) if pool else "(нет доп. трендов)"
+    user = (
+        f"Дата (МСК): {today}\n"
+        f"Тренд: {trend}\n"
+        f"Бриф: {brief}\n"
+        f"Другие тренды:\n{pool_txt}"
+    )
+
+    meta: Optional[VideoMetadata] = None
+    for attempt, strict in enumerate((False, True)):
+        raw = await complete_fn(_metadata_system_prompt(strict=strict), user)
+        meta = await _parse_metadata_response(raw, trend=trend, brief=brief)
+        if meta is not None:
+            break
+        if attempt == 0:
+            user += (
+                "\n\nПодсказка: title должен быть грамматически законченным и цепляющим, "
+                "без «— обратись к Богу» и подобных обрывов."
+            )
+
+    if meta is None:
         meta = _fallback_short_metadata(trend=trend, brief=brief)
 
     if work_dir is not None:

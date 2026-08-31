@@ -302,7 +302,7 @@ class SpeargunFundFeature(BaseFeature):
         try:
             if provider == "yookassa":
                 # Списание только в RUB — валюта уже RUB.
-                url, payment_id, _ = await self._yookassa_svc().create_payment(
+                url, payment_id, _, _ = await self._yookassa_svc().create_payment(
                     amount=float(amount),
                     description=f"Speargun · {amount} {currency}",
                     user_id=user.id,
