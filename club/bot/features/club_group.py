@@ -695,6 +695,69 @@ class ClubGroupFeature(BaseFeature):
             logger.error(f"❌ Admin gift invite message failed for user {user_id}: {e}")
             return False
 
+    async def send_wish_board_gift_invite(
+        self,
+        user_id: int,
+        *,
+        duration_label: str,
+        expires_str: str,
+    ) -> bool:
+        """После оплаты просьбы о продлении — текст + одноразовый инвайт в группу."""
+        if config.CLUB_GROUP_ID == 0:
+            return False
+
+        if await self._still_in_supergroup_membership(user_id):
+            from bot.texts import ru_member_gift as mg_txt
+
+            try:
+                await self.bot.send_message(
+                    user_id,
+                    mg_txt.WISH_GIFT_RECIPIENT_ALREADY_IN_CLUB_HTML.format(
+                        duration=mg_txt.escape_name(duration_label),
+                        expires=expires_str,
+                    ),
+                    parse_mode=ParseMode.HTML,
+                )
+                return True
+            except Exception as e:
+                logger.error(
+                    "[%s] wish gift in-club notify uid=%s: %s",
+                    self.name,
+                    user_id,
+                    e,
+                )
+                return False
+
+        link = await self._create_fresh_invite_link(user_id)
+        if not link:
+            return False
+        message_text = club_txt.wish_board_gift_invite_html(
+            duration=html.escape(duration_label or ""),
+            expires_str=html.escape(expires_str or ""),
+            inside_block=club_txt.club_inside_block(),
+            invite_footer=club_txt.invite_link_footer(
+                ttl_hours=config.CLUB_INVITE_TTL_HOURS
+            ),
+        )
+        try:
+            await self._send_invite_message(
+                user_id,
+                link,
+                message_text=message_text,
+                log_source="wish_board_gift",
+                log_subtype="club_invite",
+            )
+            logger.info("[%s] wish board gift invite sent uid=%s", self.name, user_id)
+            return True
+        except Exception as e:
+            logger.error(
+                "[%s] wish board gift invite failed uid=%s: %s",
+                self.name,
+                user_id,
+                e,
+            )
+            return False
+
     async def _revoke_user_unused_invites(self, user_id: int) -> int:
         """Отозвать все неиспользованные инвайты пользователя перед выдачей новой ссылки."""
         if config.CLUB_GROUP_ID == 0:

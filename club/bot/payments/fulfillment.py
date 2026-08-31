@@ -322,17 +322,41 @@ class PaidOrderFulfillment:
             except Exception as e:
                 logger.error("member gift donor notify uid=%s: %s", donor_id, e)
 
-        try:
-            await self.bot.send_message(
-                recipient_id,
-                mg_txt.RECIPIENT_ANONYMOUS_HTML.format(
-                    duration=mg_txt.escape_name(duration_label),
-                    expires=expires_str,
-                ),
-                parse_mode=ParseMode.HTML,
-            )
-        except Exception as e:
-            logger.error("member gift recipient notify uid=%s: %s", recipient_id, e)
+        club = self.feature_manager.get("club_group") if self.feature_manager else None
+        if completed_wish:
+            sent = False
+            if club:
+                sent = await club.send_wish_board_gift_invite(
+                    recipient_id,
+                    duration_label=duration_label,
+                    expires_str=expires_str,
+                )
+            if not sent:
+                try:
+                    await self.bot.send_message(
+                        recipient_id,
+                        mg_txt.WISH_GIFT_RECIPIENT_FALLBACK_HTML.format(
+                            duration=mg_txt.escape_name(duration_label),
+                            expires=expires_str,
+                        ),
+                        parse_mode=ParseMode.HTML,
+                    )
+                except Exception as e:
+                    logger.error(
+                        "wish gift recipient fallback uid=%s: %s", recipient_id, e
+                    )
+        else:
+            try:
+                await self.bot.send_message(
+                    recipient_id,
+                    mg_txt.RECIPIENT_ANONYMOUS_HTML.format(
+                        duration=mg_txt.escape_name(duration_label),
+                        expires=expires_str,
+                    ),
+                    parse_mode=ParseMode.HTML,
+                )
+            except Exception as e:
+                logger.error("member gift recipient notify uid=%s: %s", recipient_id, e)
 
         await self._notify_admins_about_member_gift(
             order=order,

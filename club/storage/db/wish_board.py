@@ -489,6 +489,59 @@ class WishBoardMixin:
             logger.error("wish_release id=%s: %s", wish_id, e)
             return None
 
+    async def wish_admin_reopen_to_pool(
+        self,
+        wish_id: int,
+        *,
+        actor_id: Optional[int] = None,
+        clear_digest_notice: bool = True,
+    ) -> Optional[Dict[str, Any]]:
+        """Админ: вернуть взятуую просьбу в open и сбросить digest для повторного поста."""
+        try:
+            async with self.get_connection() as conn:
+                prev = await conn.fetchrow(
+                    """
+                    SELECT donor_user_id FROM wish_requests
+                    WHERE id = $1 AND status = 'taken'
+                    """,
+                    wish_id,
+                )
+                if not prev:
+                    return None
+                previous_donor_id = prev.get("donor_user_id")
+                row = await conn.fetchrow(
+                    """
+                    UPDATE wish_requests
+                    SET status = 'open',
+                        donor_user_id = NULL,
+                        taken_at = NULL,
+                        digest_notice_message_id = CASE
+                            WHEN $2 THEN NULL ELSE digest_notice_message_id
+                        END,
+                        updated_at = NOW()
+                    WHERE id = $1
+                      AND status = 'taken'
+                    RETURNING *
+                    """,
+                    wish_id,
+                    clear_digest_notice,
+                )
+                if not row:
+                    return None
+                meta: Dict[str, Any] = {}
+                if previous_donor_id is not None:
+                    meta["previous_donor_id"] = int(previous_donor_id)
+                await self._wish_log_event(
+                    conn, wish_id, actor_id, "admin_reopened", meta or None
+                )
+                out = dict(row)
+                if previous_donor_id is not None:
+                    out["_previous_donor_id"] = int(previous_donor_id)
+                return out
+        except Exception as e:
+            logger.error("wish_admin_reopen_to_pool id=%s: %s", wish_id, e)
+            return None
+
     async def wish_mark_done(
         self, wish_id: int, donor_id: int
     ) -> Optional[Dict[str, Any]]:

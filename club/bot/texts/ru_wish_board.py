@@ -372,7 +372,18 @@ ADM_EVENT_CANCELLED = "Отменена автором просьбы"
 ADM_EVENT_APPROVED = "Одобрена → в общем списке"
 ADM_EVENT_REJECTED = "Отклонена"
 ADM_EVENT_EXPIRED = "Истекла (авто)"
+ADM_EVENT_ADMIN_REOPENED = "Возвращена в общий пул (админ)"
 
+NOTIFY_ADMIN_REOPENED_REQUESTER_HTML = (
+    "<b>💫 Ваша просьба снова на доске добрых дел</b>\n\n"
+    "Прежний даритель не завершил помощь — просьба снова доступна "
+    "другим участникам клуба. Мы опубликовали её в группе как новую."
+)
+NOTIFY_ADMIN_REOPENED_DONOR_HTML = (
+    "<b>↩️ Просьба возвращена в общий пул</b>\n\n"
+    "Просьба #{wish_id} снова открыта для других дарителей — "
+    "оплата или помощь не были завершены в срок."
+)
 
 def admin_event_taken_timeout(timeout_days: int) -> str:
     return f"Таймаут {timeout_days} дн. → снова в пуле"

@@ -74,6 +74,26 @@ def admin_gift_invite_html(
     )
 
 
+def wish_board_gift_invite_html(
+    *,
+    duration: str,
+    expires_str: str,
+    inside_block: str,
+    invite_footer: str,
+) -> str:
+    return (
+        "🎁 <b>Ваша просьба о продлении исполнена!</b>\n\n"
+        "Кто-то из участников клуба оплатил для вас продление "
+        f"на <b>{duration}</b>.\n"
+        f"📅 <b>Доступ до:</b> {expires_str}\n\n"
+        "Теперь вы снова можете вернуться в закрытый клуб "
+        "«Любящие Бога» — ниже одноразовая ссылка для входа в группу.\n\n"
+        f"{inside_block}\n\n"
+        f"{invite_footer}\n\n"
+        "Узнать срок доступа: /subs"
+    )
+
+
 def club_inside_block() -> str:
     return (
         "<b>✨ Что вас ждет внутри:</b>\n"

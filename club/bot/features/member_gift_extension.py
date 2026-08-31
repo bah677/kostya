@@ -69,6 +69,26 @@ class MemberGiftExtensionFeature(BaseFeature):
             edit=edit,
         )
 
+    async def _validate_wish_board_gift(
+        self,
+        *,
+        wish_id: int,
+        donor_id: int,
+        recipient_id: int,
+    ) -> bool:
+        wish = await self.user_storage.wish_get(wish_id)
+        if not wish:
+            return False
+        if wish.get("status") != "taken":
+            return False
+        if wish.get("gift_type") != "subscription":
+            return False
+        if int(wish.get("donor_user_id") or 0) != donor_id:
+            return False
+        if int(wish.get("requester_user_id") or 0) != recipient_id:
+            return False
+        return True
+
     async def start_for_recipient(
         self,
         message: Message,
@@ -84,7 +104,19 @@ class MemberGiftExtensionFeature(BaseFeature):
         if donor_id and recipient_id == donor_id:
             await render_user_screen(message, text=mg_txt.ERR_SELF, edit=edit)
             return
-        if not await self.user_storage.user_has_active_license(recipient_id):
+
+        via_wish = wish_id is not None
+        if via_wish:
+            if not donor_id or not await self._validate_wish_board_gift(
+                wish_id=wish_id,
+                donor_id=donor_id,
+                recipient_id=recipient_id,
+            ):
+                await render_user_screen(
+                    message, text=mg_txt.ERR_WISH_GIFT_STALE, edit=edit
+                )
+                return
+        elif not await self.user_storage.user_has_active_license(recipient_id):
             await render_user_screen(message, text=mg_txt.ERR_NOT_FOUND, edit=edit)
             return
 
@@ -164,7 +196,15 @@ class MemberGiftExtensionFeature(BaseFeature):
                 ],
             ]
         )
-        if hide:
+        wish_id = fsm.get("wish_board_wish_id")
+        if wish_id is not None:
+            if hide:
+                caption = mg_txt.CONFIRM_RECIPIENT_WISH_ANON_HTML
+            else:
+                caption = mg_txt.CONFIRM_RECIPIENT_WISH_HTML.format(
+                    name=mg_txt.escape_name(name)
+                )
+        elif hide:
             caption = mg_txt.CONFIRM_RECIPIENT_ANON_HTML
         else:
             caption = (
@@ -287,14 +327,27 @@ class MemberGiftExtensionFeature(BaseFeature):
                 callback.message, text=mg_txt.ERR_SELF, edit=True
             )
             return
-        if not await self.user_storage.user_has_active_license(recipient_id):
+
+        fsm = await state.get_data()
+        wish_id = fsm.get("wish_board_wish_id")
+        via_wish = wish_id is not None
+        if via_wish:
+            if not await self._validate_wish_board_gift(
+                wish_id=int(wish_id),
+                donor_id=callback.from_user.id,
+                recipient_id=recipient_id,
+            ):
+                await render_user_screen(
+                    callback.message, text=mg_txt.ERR_WISH_GIFT_STALE, edit=True
+                )
+                return
+        elif not await self.user_storage.user_has_active_license(recipient_id):
             await render_user_screen(
                 callback.message, text=mg_txt.ERR_NOT_FOUND, edit=True
             )
             return
 
         user = await self.user_storage.get_user(recipient_id) or {}
-        fsm = await state.get_data()
         hide = bool(fsm.get("gift_recipient_anonymous"))
         name = "" if hide else mg_txt.display_name({**user, "user_id": recipient_id})
         await state.update_data(
