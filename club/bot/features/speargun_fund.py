@@ -20,24 +20,27 @@ from aiogram.types import (
 from bot.features.base import BaseFeature
 from bot.filters import PRIVATE_CHAT_ONLY, PRIVATE_INLINE_CALLBACK_ONLY
 from bot.payments.bzb_service import BZBCreatePaymentError, BZBService
-from bot.payments.yookassa_service import YooKassaService
+from bot.texts.speargun_fund_campaign import (
+    DEFAULT_BODY as _DEFAULT_BODY,
+    DEFAULT_TBANK_URL as _DEFAULT_TBANK_URL,
+    DEFAULT_TITLE as _DEFAULT_TITLE,
+)
 from bot.utils.user_ui import render_user_screen
 from config import config
 
 logger = logging.getLogger(__name__)
 
 AMOUNT_PRESETS = {
-    "RUB": [500, 1000, 5000],
     "USD": [5, 10, 50],
     "EUR": [5, 10, 50],
 }
-MIN_AMOUNT = {"RUB": 100, "USD": 1, "EUR": 1}
+MIN_AMOUNT = {"USD": 1, "EUR": 1}
 CURRENCY_LABEL = {
-    "RUB": "🇷🇺 Рубли",
     "USD": "🇺🇸 Доллары",
     "EUR": "🇪🇺 Евро",
 }
-CURRENCY_SYMBOL = {"RUB": "₽", "USD": "$", "EUR": "€"}
+CURRENCY_SYMBOL = {"USD": "$", "EUR": "€"}
+CURRENCIES = ("USD", "EUR")
 
 CB_CUR = "sgf_cur:"
 CB_AMT = "sgf_amt:"
@@ -73,13 +76,26 @@ def _to_rub(amount: Decimal, currency: str) -> Decimal:
 
 
 def _provider_for_currency(currency: str) -> str:
-    """Как донаты библии/клуба: RUB → ЮKassa, USD/EUR → BZB."""
     cur = (currency or "").strip().upper()
-    if cur == "RUB":
-        return "yookassa"
     if cur in {"USD", "EUR"}:
         return "bzb"
     raise ValueError(currency)
+
+
+def _campaign_body() -> str:
+    return (getattr(config, "SPEARGUN_CAMPAIGN_GOAL", None) or "").strip() or _DEFAULT_BODY
+
+
+def _campaign_title() -> str:
+    return (
+        getattr(config, "SPEARGUN_CAMPAIGN_TITLE", None) or _DEFAULT_TITLE
+    ).strip() or _DEFAULT_TITLE
+
+
+def _tbank_url() -> str:
+    return (
+        getattr(config, "SPEARGUN_TBANK_URL", None) or _DEFAULT_TBANK_URL
+    ).strip() or _DEFAULT_TBANK_URL
 
 
 class SpeargunFundFeature(BaseFeature):
@@ -90,7 +106,6 @@ class SpeargunFundFeature(BaseFeature):
         self.user_storage = user_storage
         self.feature_manager = feature_manager
         self._bot = None
-        self._yookassa: Optional[YooKassaService] = None
         self._bzb = bzb_service
 
     def set_bot(self, bot_app) -> None:
@@ -117,31 +132,36 @@ class SpeargunFundFeature(BaseFeature):
 
     async def show_intro(self, message: Message, *, edit: bool = False) -> None:
         totals = await self.user_storage.speargun_totals()
-        title = getattr(
-            config,
-            "SPEARGUN_CAMPAIGN_TITLE",
-            "Сбор на подводное ружьё для Константина",
-        )
-        goal = getattr(
-            config,
-            "SPEARGUN_CAMPAIGN_GOAL",
-            "Константин давно мечтает о настоящем подводном ружье. "
-            "Давайте скинемся вместе — любая сумма поможет приблизить этот момент.",
-        )
         text = (
-            f"🔫 <b>{title}</b>\n\n"
-            f"{goal}\n\n"
+            f"🔫 <b>{_campaign_title()}</b>\n\n"
+            f"{_campaign_body()}\n\n"
             f"Уже собрали: <b>{totals['raised_rub']:.0f} ₽</b>"
             f" · поддержали: <b>{totals['donors']}</b>\n\n"
-            f"Выберите удобную валюту — дальше сумма и оплата в пару нажатий 💛"
+            f"🇷🇺 Для РФ — сбор в Т-банке (кнопка ниже).\n"
+            f"🌍 Для других стран — доллары или евро 💛"
         )
         await render_user_screen(
             message,
             text=text,
-            reply_markup=self._currency_kb(),
+            reply_markup=self._intro_kb(),
             edit=edit,
             add_main_menu=True,
         )
+
+    def _intro_kb(self) -> InlineKeyboardMarkup:
+        rows = [
+            [InlineKeyboardButton(text="🇷🇺 Сбор в Т-банке (РФ)", url=_tbank_url())],
+            [
+                InlineKeyboardButton(
+                    text=CURRENCY_LABEL[c], callback_data=f"{CB_CUR}{c}"
+                )
+                for c in CURRENCIES
+            ],
+        ]
+        web = (getattr(config, "SPEARGUN_WEB_URL", None) or "").strip()
+        if web:
+            rows.append([InlineKeyboardButton(text="🌐 Страница сбора", url=web)])
+        return InlineKeyboardMarkup(inline_keyboard=rows)
 
     def _currency_kb(self) -> InlineKeyboardMarkup:
         return InlineKeyboardMarkup(
@@ -151,8 +171,9 @@ class SpeargunFundFeature(BaseFeature):
                         text=CURRENCY_LABEL[c], callback_data=f"{CB_CUR}{c}"
                     )
                 ]
-                for c in ("RUB", "USD", "EUR")
+                for c in CURRENCIES
             ]
+            + [[InlineKeyboardButton(text="◀️ Назад", callback_data=CB_BACK)]]
         )
 
     def _amount_kb(self, currency: str) -> InlineKeyboardMarkup:
@@ -234,7 +255,7 @@ class SpeargunFundFeature(BaseFeature):
         self, message: Message, state: FSMContext, text: str
     ) -> None:
         data = await state.get_data()
-        currency = (data.get("sgf_currency") or "RUB").upper()
+        currency = (data.get("sgf_currency") or "USD").upper()
         raw = re.sub(r"[^\d.]", "", (text or "").replace(",", ".").strip())
         try:
             amount = Decimal(raw)
@@ -254,11 +275,6 @@ class SpeargunFundFeature(BaseFeature):
             amount=amount,
             edit=False,
         )
-
-    def _yookassa_svc(self) -> YooKassaService:
-        if self._yookassa is None:
-            self._yookassa = YooKassaService()
-        return self._yookassa
 
     def _bzb_svc(self) -> Optional[BZBService]:
         if self._bzb is not None:
@@ -298,38 +314,23 @@ class SpeargunFundFeature(BaseFeature):
             )
             return
 
-        pay_label = "ЮKassa" if provider == "yookassa" else "BZB (карты не РФ)"
+        pay_label = "BZB (карты не РФ)"
         try:
-            if provider == "yookassa":
-                # Списание только в RUB — валюта уже RUB.
-                url, payment_id, _, _ = await self._yookassa_svc().create_payment(
-                    amount=float(amount),
-                    description=f"Speargun · {amount} {currency}",
-                    user_id=user.id,
-                    payment_type="one_time",
-                    bot_username=bot_username,
+            bzb = self._bzb_svc()
+            if not bzb:
+                await render_user_screen(
+                    message, text="BZB не настроена для оплаты в валюте.", edit=edit
                 )
-            else:
-                bzb = self._bzb_svc()
-                if not bzb:
-                    await render_user_screen(
-                        message, text="BZB не настроена для оплаты в валюте.", edit=edit
-                    )
-                    return
-                # Списание в USD/EUR как есть — без конвертации в ЮKassa.
-                url, payment_id, _ = await bzb.create_payment(
-                    amount=float(amount),
-                    description=f"Speargun · {amount} {currency}",
-                    user_id=user.id,
-                    payment_type="one_time",
-                    bot_username=bot_username,
-                    currency=currency,
-                    title=getattr(
-                        config,
-                        "SPEARGUN_CAMPAIGN_TITLE",
-                        "Speargun fund",
-                    )[:50],
-                )
+                return
+            url, payment_id, _ = await bzb.create_payment(
+                amount=float(amount),
+                description=f"Speargun · {amount} {currency}",
+                user_id=user.id,
+                payment_type="one_time",
+                bot_username=bot_username,
+                currency=currency,
+                title=_campaign_title()[:50],
+            )
         except BZBCreatePaymentError as e:
             logger.warning("speargun bzb: %s", e)
             await render_user_screen(

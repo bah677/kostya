@@ -126,11 +126,9 @@ class Config:
     SPEARGUN_USD_TO_RUB: float = 90.0
     SPEARGUN_EUR_TO_RUB: float = 100.0
     SPEARGUN_WEB_URL: str = "https://speargun.mironbot.ru"
+    SPEARGUN_TBANK_URL: str = "https://www.tbank.ru/cf/HMkHKe3GT3"
     SPEARGUN_CAMPAIGN_TITLE: str = "Сбор на подводное ружьё для Константина"
-    SPEARGUN_CAMPAIGN_GOAL: str = (
-        "Константин давно мечтает о настоящем подводном ружье. "
-        "Давайте скинемся вместе — любая сумма поможет приблизить этот момент."
-    )
+    SPEARGUN_CAMPAIGN_GOAL: str = ""
     #: URL legacy admin-БД (старый Adm) для миграции исторических club_snapshots.
     LEGACY_ADMIN_DB_URL: Optional[str] = None
     WELCOME_TOPIC_ID: int = 0
@@ -617,17 +615,14 @@ def load_config() -> Config:
         SPEARGUN_WEB_URL=(
             os.getenv("SPEARGUN_WEB_URL") or "https://speargun.mironbot.ru"
         ).rstrip("/"),
+        SPEARGUN_TBANK_URL=(
+            os.getenv("SPEARGUN_TBANK_URL") or "https://www.tbank.ru/cf/HMkHKe3GT3"
+        ).strip(),
         SPEARGUN_CAMPAIGN_TITLE=(
             os.getenv("SPEARGUN_CAMPAIGN_TITLE")
             or "Сбор на подводное ружьё для Константина"
         ).strip(),
-        SPEARGUN_CAMPAIGN_GOAL=(
-            os.getenv("SPEARGUN_CAMPAIGN_GOAL")
-            or (
-                "Константин давно мечтает о настоящем подводном ружье. "
-                "Давайте скинемся вместе — любая сумма поможет приблизить этот момент."
-            )
-        ).strip(),
+        SPEARGUN_CAMPAIGN_GOAL=(os.getenv("SPEARGUN_CAMPAIGN_GOAL") or "").strip(),
         LEGACY_ADMIN_DB_URL=(os.getenv("LEGACY_ADMIN_DB_URL") or "").strip() or None,
         WELCOME_TOPIC_ID=int(os.getenv("WELCOME_TOPIC_ID", "0")),
         CLUB_JOIN_DEBUG_LOG=_norm_club_join_debug_log(os.getenv("CLUB_JOIN_DEBUG_LOG", "")),
