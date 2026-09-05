@@ -54,16 +54,25 @@ class BanBlacklistPolicy(AccessPolicy):
             public_commands
             or (
                 "/start",
+                "/menu",
                 "/support",
                 "/payment",
                 "/donat",
-                "/club",
+                "/affiliate",
+                "/refstats",
+                "/refs",
+                "/myrefs",
                 "/feedback",
-                "/subs",
+                "/prayer",
+                "/molitva",
+                "/more",
+                "/challenge",
+                "/chellenge",
+                "/challenge_cancel",
             )
         )
         self.public_callback_prefixes: FrozenSet[str] = frozenset(
-            public_callback_prefixes or ()
+            public_callback_prefixes or ("menu_act:",)
         )
 
     def is_public_route(self, event_type: str, event_obj) -> bool:

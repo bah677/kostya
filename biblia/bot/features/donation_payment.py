@@ -225,7 +225,10 @@ class DonationPaymentFeature(BaseFeature):
         *,
         state: Optional[FSMContext] = None,
         from_user_id: Optional[int] = None,
+        edit: bool = False,
     ) -> None:
+        from bot.utils.user_ui import render_user_screen
+
         uid = from_user_id or (message.from_user.id if message.from_user else 0)
         await self._bump_donation_menu_open(uid)
         active_sub = await self.user_storage.get_user_active_donation_subscription(uid)
@@ -234,21 +237,27 @@ class DonationPaymentFeature(BaseFeature):
             if state is not None:
                 await state.update_data(donation_mode="one_time")
                 await state.set_state(None)
-            await message.answer(
-                await self._donation_intro_text() + "Выберите валюту для доната:",
+            await render_user_screen(
+                message,
+                text=await self._donation_intro_text() + "Выберите валюту для доната:",
                 reply_markup=self._currency_keyboard(
                     include_crypto=True,
                     show_subscription_mgmt=bool(active_sub),
                     show_back=False,
                 ),
+                edit=edit,
                 parse_mode=ParseMode.MARKDOWN,
+                add_main_menu=True,
             )
             return
 
-        await message.answer(
-            await self._donation_intro_text() + "Выберите формат поддержки:",
+        await render_user_screen(
+            message,
+            text=await self._donation_intro_text() + "Выберите формат поддержки:",
             reply_markup=self._mode_keyboard(show_subscription_mgmt=bool(active_sub)),
+            edit=edit,
             parse_mode=ParseMode.MARKDOWN,
+            add_main_menu=True,
         )
 
     async def handle_callback(self, callback: CallbackQuery, state: FSMContext) -> None:

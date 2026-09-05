@@ -90,14 +90,22 @@ class ReferralProgramFeature(ReferralFeature):
         except Exception as e:
             logger.error("❌ Error registering referral: %s", e, exc_info=True)
 
-    async def show_affiliate_link(self, message: Message, user_id: int) -> None:
+    async def show_affiliate_link(
+        self, message: Message, user_id: int, *, edit: bool = False
+    ) -> None:
+        from bot.utils.user_ui import render_user_screen
+
         try:
             bot_username = await resolve_telegram_bot_username(self.aiogram_bot)
             if not bot_username:
-                await message.answer(
-                    "❌ Не удалось узнать адрес бота для ссылки. "
-                    "Задайте в .env <code>TELEGRAM_BOT_USERNAME</code> (username без @).",
-                    parse_mode=ParseMode.HTML,
+                await render_user_screen(
+                    message,
+                    text=(
+                        "❌ Не удалось узнать адрес бота для ссылки. "
+                        "Задайте в .env <code>TELEGRAM_BOT_USERNAME</code> (username без @)."
+                    ),
+                    edit=edit,
+                    add_main_menu=True,
                 )
                 return
 
@@ -126,17 +134,22 @@ class ReferralProgramFeature(ReferralFeature):
 
             lines.append("Спасибо, что делитесь! 🙏")
 
-            await message.answer(
-                "".join(lines),
-                parse_mode=ParseMode.HTML,
+            await render_user_screen(
+                message,
+                text="".join(lines),
+                edit=edit,
+                add_main_menu=True,
                 disable_web_page_preview=True,
             )
             logger.info("✅ Affiliate link user_id=%s", user_id)
 
         except Exception as e:
             logger.error("❌ Affiliate: %s", e, exc_info=True)
-            await message.answer(
-                "❌ Произошла ошибка при формировании ссылки. Попробуйте позже."
+            await render_user_screen(
+                message,
+                text="❌ Произошла ошибка при формировании ссылки. Попробуйте позже.",
+                edit=edit,
+                add_main_menu=True,
             )
 
     async def show_referral_stats(
@@ -145,8 +158,11 @@ class ReferralProgramFeature(ReferralFeature):
         user_id: int,
         *,
         viewer_id: int | None = None,
+        edit: bool = False,
     ) -> None:
         """Статистика переходов по персональной реферальной ссылке."""
+        from bot.utils.user_ui import render_user_screen
+
         try:
             bot_username = await resolve_telegram_bot_username(self.aiogram_bot)
             stats = await self.user_storage.get_referral_stats(user_id)
@@ -199,17 +215,22 @@ class ReferralProgramFeature(ReferralFeature):
                     "статистика появится здесь.</i>\n"
                 )
 
-            await message.answer(
-                "".join(lines),
-                parse_mode=ParseMode.HTML,
+            await render_user_screen(
+                message,
+                text="".join(lines),
+                edit=edit,
+                add_main_menu=True,
                 disable_web_page_preview=True,
             )
             logger.info("✅ Referral stats user_id=%s total=%s", user_id, total)
 
         except Exception as e:
             logger.error("❌ Referral stats: %s", e, exc_info=True)
-            await message.answer(
-                "❌ Не удалось загрузить статистику. Попробуйте позже."
+            await render_user_screen(
+                message,
+                text="❌ Не удалось загрузить статистику. Попробуйте позже.",
+                edit=edit,
+                add_main_menu=True,
             )
 
     async def _notify_referrer(self, referrer_id: int, user_name: str) -> None:

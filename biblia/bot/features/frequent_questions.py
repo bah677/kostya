@@ -81,6 +81,11 @@ class FrequentQuestionsFeature(BaseFeature):
         dp.callback_query.register(self.on_more_button, F.data.startswith("more_button_"))
 
     async def on_more_command(self, message: Message) -> None:
+        await self.show_more(message, edit=False)
+
+    async def show_more(self, message: Message, *, edit: bool = False) -> None:
+        from bot.utils.user_ui import render_user_screen
+
         rows: List[dict] = []
         if self.user_storage is not None:
             try:
@@ -89,9 +94,13 @@ class FrequentQuestionsFeature(BaseFeature):
                 logger.warning("get_more_buttons: %s", e)
 
         if rows:
-            await message.answer(
-                _MORE_INTRO_LEGACY,
+            await render_user_screen(
+                message,
+                text=_MORE_INTRO_LEGACY,
                 reply_markup=_build_more_keyboard_db(rows),
+                edit=edit,
+                parse_mode=ParseMode.HTML,
+                add_main_menu=True,
             )
             return
 
@@ -101,11 +110,15 @@ class FrequentQuestionsFeature(BaseFeature):
                 for i, (label, _) in enumerate(_PRESET_FAQ_ITEMS)
             ]
         )
-        await message.answer(
-            "<b>Частые запросы</b>\n\n"
-            "Выберите тему — бот подставит формулировку и ответит.",
+        await render_user_screen(
+            message,
+            text=(
+                "<b>Частые запросы</b>\n\n"
+                "Выберите тему — бот подставит формулировку и ответит."
+            ),
             reply_markup=ik,
-            parse_mode=ParseMode.HTML,
+            edit=edit,
+            add_main_menu=True,
         )
 
     async def on_preset_faq(self, callback: CallbackQuery, state: FSMContext) -> None:

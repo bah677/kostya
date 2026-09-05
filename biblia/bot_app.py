@@ -23,6 +23,7 @@ from bot.features.scheduled_mailing import ScheduledMailingFeature
 from bot.features.scripture_encouragement_mailing import ScriptureEncouragementMailingFeature
 from bot.features.scripture_messaging import ScriptureMessagingFeature
 from bot.features.support import SupportFeature
+from bot.features.user_menu import UserMenuFeature
 from bot.features import admin_mailing
 from bot.handlers.messages import MessageHandlers
 
@@ -114,6 +115,10 @@ class BotApplication(TelegramBotApp):
             user_storage=self.user_storage,
             bot=self.bot,
         )
+        user_menu = UserMenuFeature(
+            user_storage=self.user_storage,
+            feature_manager=self.feature_manager,
+        )
 
         features = [
             messaging_feature,
@@ -135,6 +140,7 @@ class BotApplication(TelegramBotApp):
             daily_report,
             admin_panel,
             background_jobs,
+            user_menu,
         ]
         for feature in features:
             self.feature_manager.register(feature)

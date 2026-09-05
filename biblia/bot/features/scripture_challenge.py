@@ -213,19 +213,42 @@ class ScriptureChallengeFeature(BaseFeature):
     async def on_challenge_command(self, message: Message, state: FSMContext) -> None:
         if not message.from_user:
             return
-        await self._start_challenge(message, state, user_id=message.from_user.id)
+        await self._start_challenge(
+            message, state, user_id=message.from_user.id, edit=False
+        )
+
+    async def start_from_menu(
+        self,
+        message: Message,
+        state: FSMContext,
+        *,
+        user_id: int,
+        edit: bool = False,
+    ) -> None:
+        await self._start_challenge(message, state, user_id=user_id, edit=edit)
 
     async def _start_challenge(
-        self, message: Message, state: FSMContext, *, user_id: int
+        self,
+        message: Message,
+        state: FSMContext,
+        *,
+        user_id: int,
+        edit: bool = False,
     ) -> None:
+        from bot.utils.user_ui import render_user_screen
+
         active = await self.user_storage.get_user_active_scripture_challenge(user_id)
         if active:
             status = active.get("status")
             if status == "active":
-                await message.answer(
-                    "У вас уже идёт челлендж чтения Писания.\n"
-                    "Пишите сюда — я помню контекст. Завершить: /challenge_cancel",
-                    parse_mode=ParseMode.HTML,
+                await render_user_screen(
+                    message,
+                    text=(
+                        "У вас уже идёт челлендж чтения Писания.\n"
+                        "Пишите сюда — я помню контекст. Завершить: /challenge_cancel"
+                    ),
+                    edit=edit,
+                    add_main_menu=True,
                 )
                 return
             await state.set_state(
@@ -234,20 +257,33 @@ class ScriptureChallengeFeature(BaseFeature):
                 else ScriptureChallengeStates.intake
             )
             await state.update_data(challenge_id=active["id"])
-            await message.answer(
-                "Продолжаем настройку челленджа. Напишите ответ или /challenge_cancel."
+            await render_user_screen(
+                message,
+                text="Продолжаем настройку челленджа. Напишите ответ или /challenge_cancel.",
+                edit=edit,
+                add_main_menu=True,
             )
             return
 
         challenge_id = await self.user_storage.create_scripture_challenge(user_id)
         if not challenge_id:
-            await message.answer("Не удалось начать челлендж. Попробуйте позже.")
+            await render_user_screen(
+                message,
+                text="Не удалось начать челлендж. Попробуйте позже.",
+                edit=edit,
+                add_main_menu=True,
+            )
             return
 
         await state.set_state(ScriptureChallengeStates.intake)
         await state.update_data(challenge_id=challenge_id)
 
-        await message.answer(_CHALLENGE_INTRO_HTML, parse_mode=ParseMode.HTML)
+        await render_user_screen(
+            message,
+            text=_CHALLENGE_INTRO_HTML,
+            edit=edit,
+            add_main_menu=True,
+        )
 
     async def on_challenge_cancel_command(self, message: Message, state: FSMContext) -> None:
         data = await state.get_data()

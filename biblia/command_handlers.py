@@ -1,9 +1,9 @@
-"""Команды бота «Библия»: поддержка проекта и рефералка без клубных /subs."""
+"""Команды бота «Библия»: /start, /menu + алиасы старых команд."""
 
 import logging
 
-from aiogram import Dispatcher
-from aiogram.enums import ParseMode
+from aiogram import Dispatcher, F
+from aiogram.enums import ChatType, ParseMode
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
@@ -14,14 +14,16 @@ from bot.features.referral_program import parse_referrer_id_arg
 
 logger = logging.getLogger(__name__)
 
-# Текст после /start (main.py) — правьте константу ниже.
+_PRIVATE = F.chat.type == ChatType.PRIVATE
+
+# Текст после /start — правьте константу ниже.
 _BIBLIA_WELCOME = (
     "Привет 👋\n"
     "Бог любит тебя и я тоже!\n\n"
     "Я не буду учить тебя жить и раздавать советы, со мной все просто и по-человечески комфортно 🤝\n\n"
     "💬 Здесь тебе не нужно подбирать правильные слова. Просто напиши, что с тобой сейчас происходит, что беспокоит, своими словами, как есть…\n\n"
     "📖 Я подберу слова из Священного Писания и помогу увидеть, как через них Бог отвечает именно в твою ситуацию.🙏\n\n"
-    "👉 Также можешь воспользоваться готовыми кнопками запросов в меню, там я собрал самые частые вопросы\n\n📖\n"
+    "👉 Открой <b>/menu</b> — там частые запросы, молитва, поддержка проекта и другие возможности\n\n📖\n"
     "<blockquote>Придите ко Мне все труждающиеся и обременённые, и Я успокою вас\n\n"
     "<i>(Мф. 11:28)</i></blockquote>"
 )
@@ -34,17 +36,27 @@ class AppCommandHandlers:
 
     def register_handlers(self) -> None:
         self.dp.message.register(self._start_handler, Command(commands=["start"]))
-        self.dp.message.register(self._support_handler, Command(commands=["support"]))
         self.dp.message.register(
-            self._payment_handler, Command(commands=["payment", "donat"])
+            self._menu_handler, Command(commands=["menu"]), _PRIVATE
         )
-        self.dp.message.register(self._affiliate_handler, Command(commands=["affiliate"]))
+        # Алиасы: старые slash-команды остаются, основной вход — /menu
+        self.dp.message.register(
+            self._support_handler, Command(commands=["support"]), _PRIVATE
+        )
+        self.dp.message.register(
+            self._payment_handler, Command(commands=["payment", "donat"]), _PRIVATE
+        )
+        self.dp.message.register(
+            self._affiliate_handler, Command(commands=["affiliate"]), _PRIVATE
+        )
         self.dp.message.register(
             self._refstats_handler,
             Command(commands=["refstats", "refs", "myrefs"]),
+            _PRIVATE,
         )
         logger.info(
-            "✅ Команды /start /support /payment /donat /affiliate /refstats /refs /myrefs"
+            "✅ Команды /start /menu "
+            "(алиасы: /support /payment /donat /affiliate /refstats /refs /myrefs)"
         )
 
     async def _start_handler(self, message: Message, state: FSMContext):
@@ -78,6 +90,17 @@ class AppCommandHandlers:
         await state.clear()
         await message.answer(_BIBLIA_WELCOME, parse_mode=ParseMode.HTML)
 
+        menu = self.features.get("user_menu")
+        if menu and message.chat.type == ChatType.PRIVATE:
+            await menu.show_menu(message, edit=False)
+
+    async def _menu_handler(self, message: Message, state: FSMContext):
+        menu = self.features.get("user_menu")
+        if menu:
+            await menu.cmd_menu(message, state)
+        else:
+            await message.answer("Меню временно недоступно.")
+
     async def _support_handler(self, message: Message, state: FSMContext):
         support = self.features.get("support")
         await support.start_support(message, state)
@@ -110,7 +133,7 @@ class AppCommandHandlers:
             if not await is_telegram_admin(stor, uid):
                 await message.answer(
                     "⛔ Смотреть статистику другого user_id могут только админы.\n"
-                    "Без аргумента — ваша личная статистика: /refstats",
+                    "Без аргумента — ваша личная статистика: /menu → реферальная статистика",
                     parse_mode=ParseMode.HTML,
                 )
                 return

@@ -319,7 +319,9 @@ class PersonalPrayerFeature(BaseFeature):
     async def on_prayer_command(
         self, message: Message, state: FSMContext, command: CommandObject
     ) -> None:
-        await self._start_prayer(message, state, args=(command.args or "").strip())
+        await self._start_prayer(
+            message, state, args=(command.args or "").strip(), edit=False
+        )
 
     async def on_prayer_callback(
         self, callback: CallbackQuery, state: FSMContext
@@ -328,11 +330,23 @@ class PersonalPrayerFeature(BaseFeature):
         await callback.answer()
         if not callback.message:
             return
-        await self._start_prayer(callback.message, state, args="")
+        await self._start_prayer(callback.message, state, args="", edit=False)
+
+    async def start_from_menu(
+        self, message: Message, state: FSMContext, *, edit: bool = False
+    ) -> None:
+        await self._start_prayer(message, state, args="", edit=edit)
 
     async def _start_prayer(
-        self, message: Message, state: FSMContext, *, args: str = ""
+        self,
+        message: Message,
+        state: FSMContext,
+        *,
+        args: str = "",
+        edit: bool = False,
     ) -> None:
+        from bot.utils.user_ui import render_user_screen
+
         await state.clear()
         await state.set_state(PrayerStates.collecting)
         await state.update_data(prayer_turns=[], clarify_count=0)
@@ -341,10 +355,16 @@ class PersonalPrayerFeature(BaseFeature):
             await self._on_user_turn(message, state, args)
             return
 
-        await message.answer(
-            "Напишите одной строкой, о чём на сердце.\n\n"
-            "Например: «тревога за сына» или «нет сил и страшно».\n\n"
-            "Я помолюсь об этом с вами.",
+        await render_user_screen(
+            message,
+            text=(
+                "Напишите одной строкой, о чём на сердце.\n\n"
+                "Например: «тревога за сына» или «нет сил и страшно».\n\n"
+                "Я помолюсь об этом с вами."
+            ),
+            edit=edit,
+            parse_mode=ParseMode.HTML,
+            add_main_menu=True,
         )
 
     async def handle_message(self, message: Message, state: FSMContext, text: str) -> None:

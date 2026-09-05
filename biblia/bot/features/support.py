@@ -109,41 +109,56 @@ class SupportFeature(BaseFeature):
                 self.name,
             )
 
-    async def start_support(self, message: Message, state: FSMContext) -> None:
+    async def start_support(
+        self, message: Message, state: FSMContext, *, edit: bool = False
+    ) -> None:
+        from bot.utils.user_ui import render_user_screen
+
         user_id = message.from_user.id
         self._current_mode[user_id] = "support"
         await state.set_state(SupportStates.waiting_for_message)
 
-        await message.answer(
-            "<b>📞 Служба поддержки</b>\n\n"
-            "<b>💬 Опишите вашу проблему подробно:</b>\n"
-            "• Что произошло?\n"
-            "• Какие действия привели к проблеме?\n"
-            "• Какой результат ожидали?\n\n"
-            "Чем подробнее опишете - тем быстрее поможем! 🛠️",
-            parse_mode=ParseMode.HTML,
+        await render_user_screen(
+            message,
+            text=(
+                "<b>📞 Служба поддержки</b>\n\n"
+                "<b>💬 Опишите вашу проблему подробно:</b>\n"
+                "• Что произошло?\n"
+                "• Какие действия привели к проблеме?\n"
+                "• Какой результат ожидали?\n\n"
+                "Чем подробнее опишете - тем быстрее поможем! 🛠️"
+            ),
+            edit=edit,
+            add_main_menu=True,
         )
 
         logger.info(f"✅ Support started for user_id={user_id}")
 
-    async def start_feedback(self, message: Message, state: FSMContext) -> None:
+    async def start_feedback(
+        self, message: Message, state: FSMContext, *, edit: bool = False
+    ) -> None:
+        from bot.utils.user_ui import render_user_screen
+
         user_id = message.from_user.id
         self._current_mode[user_id] = "feedback"
         await state.set_state(SupportStates.waiting_for_message)
 
-        await message.answer(
-            "<b>💬 Обратная связь</b>\n\n"
-            "Мы всегда рады услышать ваше мнение! Ваши отзывы помогают нам становиться лучше.\n\n"
-            "<b>📝 Напишите, что вы думаете о боте:</b>\n"
-            "• Что вам нравится?\n"
-            "• Что можно улучшить?\n"
-            "• Есть ли пожелания?\n\n"
-            "Любые идеи и предложения — всё важно! 🙏",
-            parse_mode=ParseMode.HTML,
+        await render_user_screen(
+            message,
+            text=(
+                "<b>💬 Обратная связь</b>\n\n"
+                "Мы всегда рады услышать ваше мнение! Ваши отзывы помогают нам становиться лучше.\n\n"
+                "<b>📝 Напишите, что вы думаете о боте:</b>\n"
+                "• Что вам нравится?\n"
+                "• Что можно улучшить?\n"
+                "• Есть ли пожелания?\n\n"
+                "Любые идеи и предложения — всё важно! 🙏"
+            ),
+            edit=edit,
+            add_main_menu=True,
         )
 
         logger.info(f"✅ Feedback started for user_id={user_id}")
-
     async def handle_message(self, message: Message, state: FSMContext, text: str) -> None:
         user_id = message.from_user.id
         content = text.strip()
@@ -430,7 +445,6 @@ class SupportFeature(BaseFeature):
             f"{esc_draft}\n\n"
             f"━━━━━━━━━━━━━━━━━━━━━\n"
             f"· <b>✅ Отправить</b> — как есть\n"
-            f"· <b>Reply на это сообщение</b> — с вашими правками\n"
             f"· <b>Reply на тикет выше</b> — полностью свой текст"
         )
 
@@ -907,7 +921,7 @@ class SupportFeature(BaseFeature):
             f"По вашему обращению <b>#{html.escape(str(ticket['ticket_number']))}</b> получен ответ:\n\n"
             f"<i>{admin_response}</i>\n\n"
             f"━━━━━━━━━━━━━━━━━━━━━\n"
-            f"Если у вас остались вопросы, создайте новое обращение через команду /support"
+            f"Если у вас остались вопросы, создайте новое обращение через /menu → поддержку"
         )
 
     async def _send_support_reply_to_user(self, user_id: int, text: str) -> bool:
