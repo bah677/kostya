@@ -480,6 +480,19 @@ class AgentsClient:
                 request_kind=request_kind,
                 request_id=request_id,
             )
+            if not reply_text:
+                ctd = getattr(usage, "completion_tokens_details", None) if usage else None
+                reasoning = getattr(ctd, "reasoning_tokens", None) if ctd else None
+                finish = getattr(choice, "finish_reason", None) if choice else None
+                logger.warning(
+                    "DeepSeek complete empty content kind=%s user=%s "
+                    "completion=%s reasoning=%s finish=%s max_hint=check_max_tokens",
+                    request_kind,
+                    user_id,
+                    getattr(usage, "completion_tokens", None) if usage else None,
+                    reasoning,
+                    finish,
+                )
             return reply_text or None
         except asyncio.TimeoutError:
             logger.warning("DeepSeek complete timeout kind=%s user=%s", request_kind, user_id)

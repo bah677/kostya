@@ -230,13 +230,15 @@ async def generate_support_ticket_draft(
         user_content += (
             "\n\nНапиши только текст ответа пользователю — без преамбулы и без подписи."
         )
+        # deepseek-v4-flash тратит бюджет на reasoning_tokens; при max_tokens=900
+        # content часто пустой (finish_reason=length), черновик ТП не появляется.
         text = await agents.complete(
             system_prompt=_SUPPORT_DRAFT_SYSTEM,
             user_content=user_content,
             user_id=int(user_id),
             request_kind=_REQUEST_KIND,
             temperature=0.3,
-            max_tokens=900,
+            max_tokens=4000,
         )
         return (text or "").strip()
 
