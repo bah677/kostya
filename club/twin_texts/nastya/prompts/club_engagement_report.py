@@ -96,11 +96,11 @@ def build_engagement_runtime_context() -> str:
         )
     lines.append(
         f"Дайджест в группу клуба: "
-        f"{'включён' if config.club_digest_group_active else 'выключен (часто при рассылках в личку)'}"
+        f"{'включён (можно параллельно с личкой)' if config.club_digest_group_active else 'выключен'}"
     )
-    if config.club_outreach_dm_active and config.wish_board_active:
+    if config.club_outreach_dm_active:
         lines.append(
-            "При включённых рассылках в личку дайджест в топик группы отключён (не дублировать)."
+            "Цитаты из Писания в топик группы выключены — уходят только в личку."
         )
     lines.append(f"Доска добрых дел: {'включена' if config.wish_board_active else 'выключена'}")
     return "\n".join(lines)

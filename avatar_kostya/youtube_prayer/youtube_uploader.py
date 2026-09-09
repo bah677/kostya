@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
@@ -23,6 +24,17 @@ _SCOPES = [
     "https://www.googleapis.com/auth/youtube",
 ]
 _UPLOAD_MARKER = "youtube_upload.json"
+_OAUTH_ALERT_MARKER = "oauth_alert_sent.json"
+_OAUTH_ALERT_COOLDOWN_SEC = 6 * 3600
+
+_OAUTH_REISSUE_HINT = (
+    "cd /home/appuser/dev/kostya/avatar_kostya && "
+    ".venv/bin/python scripts/youtube_oauth_setup.py"
+)
+
+
+class YoutubeOAuthError(RuntimeError):
+    """OAuth-токен YouTube протух / отозван — нужен перевыпуск."""
 
 
 @dataclass(frozen=True)
@@ -78,26 +90,135 @@ def premiere_hours_msk() -> List[int]:
     return parse_premiere_hours(_cfg("YT_PRAYER_YOUTUBE_PREMIERE_HOURS_MSK", "9,15,21"))
 
 
+def is_youtube_oauth_error(exc: BaseException) -> bool:
+    text = f"{type(exc).__name__}: {exc}".lower()
+    needles = (
+        "invalid_grant",
+        "token has been expired or revoked",
+        "refresherror",
+        "youtubeoautherror",
+        "токен недействителен",
+        "нет токена",
+    )
+    return any(n in text for n in needles)
+
+
+def format_oauth_reissue_html(detail: str = "") -> str:
+    detail_line = f"\n<code>{_esc_html(detail[:500])}</code>\n" if detail else "\n"
+    return (
+        "🚨 <b>YouTube OAuth: токен протух / отозван</b>\n"
+        "Автозагрузка на канал остановлена — нужен перевыпуск токена."
+        f"{detail_line}\n"
+        "<b>На сервере:</b>\n"
+        f"<code>{_esc_html(_OAUTH_REISSUE_HINT)}</code>\n\n"
+        "После OK: <code>/yt_prayer force</code>"
+    )
+
+
+def _esc_html(s: str) -> str:
+    return (
+        (s or "")
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+    )
+
+
+def _oauth_alert_marker_path() -> Path:
+    return token_path().parent / _OAUTH_ALERT_MARKER
+
+
+def _oauth_alert_allowed() -> bool:
+    path = _oauth_alert_marker_path()
+    if not path.is_file():
+        return True
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        sent_at = float(data.get("sent_at") or 0)
+        return (time.time() - sent_at) >= _OAUTH_ALERT_COOLDOWN_SEC
+    except Exception:
+        return True
+
+
+def _mark_oauth_alert_sent(detail: str) -> None:
+    path = _oauth_alert_marker_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "sent_at": time.time(),
+                "sent_at_iso": datetime.now().astimezone().isoformat(),
+                "detail": (detail or "")[:500],
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+
+async def notify_youtube_oauth_problem(
+    bot: Any,
+    *,
+    chat_id: int,
+    topic_id: int = 0,
+    detail: str = "",
+    force: bool = False,
+) -> bool:
+    """Алерт в админский топик YouTube. Не чаще раза в 6ч (если не force)."""
+    if not chat_id:
+        return False
+    if not force and not _oauth_alert_allowed():
+        logger.info("YouTube OAuth alert suppressed (cooldown)")
+        return False
+    text = format_oauth_reissue_html(detail)
+    kwargs = {"message_thread_id": int(topic_id)} if topic_id else {}
+    try:
+        await bot.send_message(chat_id, text, parse_mode="HTML", **kwargs)
+        _mark_oauth_alert_sent(detail)
+        return True
+    except Exception as e:
+        logger.error("YouTube OAuth admin alert failed: %s", e)
+        return False
+
+
 def _load_credentials():
     from google.auth.transport.requests import Request
     from google.oauth2.credentials import Credentials
 
     tok = token_path()
     if not tok.is_file():
-        raise RuntimeError(
-            f"YouTube OAuth: нет токена {tok}. "
-            f"Запустите: cd avatar_kostya && python3 scripts/youtube_oauth_setup.py"
+        raise YoutubeOAuthError(
+            f"нет токена {tok}. Запустите: {_OAUTH_REISSUE_HINT}"
+        )
+    if not client_secrets_path().is_file():
+        # токен может жить без файла secret, но перевыпуск без него невозможен
+        logger.warning(
+            "YouTube client secret отсутствует: %s", client_secrets_path()
         )
     creds = Credentials.from_authorized_user_file(str(tok), _SCOPES)
-    if creds.expired and creds.refresh_token:
-        creds.refresh(Request())
-        tok.write_text(creds.to_json(), encoding="utf-8")
+    try:
+        if creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+            tok.write_text(creds.to_json(), encoding="utf-8")
+    except Exception as e:
+        if is_youtube_oauth_error(e):
+            raise YoutubeOAuthError(
+                f"refresh failed: {e}. Перевыпуск: {_OAUTH_REISSUE_HINT}"
+            ) from e
+        raise
     if not creds.valid:
-        raise RuntimeError(
-            f"YouTube OAuth: токен недействителен ({tok}). "
-            f"Перезапустите scripts/youtube_oauth_setup.py"
+        raise YoutubeOAuthError(
+            f"токен недействителен ({tok}). Перевыпуск: {_OAUTH_REISSUE_HINT}"
         )
     return creds
+
+
+def probe_youtube_oauth(*, require_upload_enabled: bool = True) -> None:
+    """Проверка токена до тяжёлого рендера. Бросает YoutubeOAuthError."""
+    if require_upload_enabled and not youtube_upload_enabled():
+        return
+    _load_credentials()
 
 
 def _youtube_service():

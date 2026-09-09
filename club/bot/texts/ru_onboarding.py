@@ -13,7 +13,7 @@ ONBOARDING_START_MESSAGES: tuple[str, ...] = (
 )
 
 # После медиа/сообщений: приветствие с датой подписки и кнопкой в группу.
-ONBOARDING_SEND_LICENSE_WELCOME = False
+ONBOARDING_SEND_LICENSE_WELCOME = True
 
 # После медиа/сообщений: текст для пользователя без активной подписки.
 ONBOARDING_SEND_NO_LICENSE_WELCOME = False

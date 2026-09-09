@@ -66,7 +66,7 @@ class ClubDigestFeature(BaseFeature):
     async def initialize(self) -> None:
         await super().initialize()
         if not config.club_digest_group_active:
-            logger.info("[%s] Выключено (group digest off / outreach DM)", self.name)
+            logger.info("[%s] Выключено (CLUB_DIGEST_ENABLED off)", self.name)
             return
         if not (config.DEEPSEEK_API_KEY or "").strip():
             logger.warning("[%s] Нет DEEPSEEK_API_KEY — планировщик не запущен", self.name)

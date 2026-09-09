@@ -24,7 +24,13 @@ from youtube_prayer.deliver import (
     deliver_pipeline_stopped,
     deliver_topic_pack,
 )
-from youtube_prayer.youtube_uploader import upload_premiere_if_enabled
+from youtube_prayer.youtube_uploader import (
+    is_youtube_oauth_error,
+    notify_youtube_oauth_problem,
+    probe_youtube_oauth,
+    upload_premiere_if_enabled,
+    YoutubeOAuthError,
+)
 from youtube_prayer.metadata import generate_video_metadata
 from youtube_prayer.render import render_horizontal, format_prayer_theme_label
 from youtube_prayer.stock_broll import build_broll_montage
@@ -313,6 +319,13 @@ async def _run_lang_pack(
         except Exception as e:
             logger.exception("yt_prayer YouTube upload failed trend=%r: %s", topic.trend, e)
             await notify(f"⚠️ YouTube upload failed [{label} {i}]: {e}")
+            if is_youtube_oauth_error(e):
+                await notify_youtube_oauth_problem(
+                    bot,
+                    chat_id=chat_id,
+                    topic_id=topic_id,
+                    detail=str(e),
+                )
 
         theme_names.append(topic.trend)
         logger.info("yt_prayer %s item %s done trend=%r", lang, i, topic.trend)
@@ -366,6 +379,29 @@ async def run_daily_youtube_prayer_pipeline(
             pass
 
     await _notify(f"🎬 YouTube-молитвы: старт {day} (force={force})")
+
+    try:
+        probe_youtube_oauth(require_upload_enabled=True)
+    except YoutubeOAuthError as e:
+        logger.error("yt_prayer OAuth preflight failed: %s", e)
+        await notify_youtube_oauth_problem(
+            bot,
+            chat_id=chat_id,
+            topic_id=topic_id,
+            detail=str(e),
+            force=True,
+        )
+        await deliver_pipeline_stopped(
+            bot,
+            chat_id=chat_id,
+            topic_id=topic_id,
+            text=(
+                "⛔ Пайплайн YouTube-молитв не запущен: OAuth токен недействителен.\n"
+                "См. алерт выше — нужен перевыпуск."
+            ),
+        )
+        await _notify(f"⛔ OAuth: {e}")
+        return PipelineResult(day=day, ok=False, error=str(e))
 
     async def _complete(system: str, user: str) -> Optional[str]:
         text, _ = await deepseek_complete(system, user, temperature=0.3, max_tokens=1200)

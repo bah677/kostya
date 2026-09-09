@@ -21,10 +21,16 @@ from youtube_prayer.stock_broll import build_broll_montage
 from youtube_prayer.topic_history import append_used_trends, load_recent_trends
 from youtube_prayer.trends import fetch_google_trends, select_prayer_topics
 from youtube_prayer.work_cleanup import cleanup_item_media_after_youtube_upload
+from youtube_prayer.youtube_uploader import (
+    YoutubeOAuthError,
+    is_youtube_oauth_error,
+    notify_youtube_oauth_problem,
+    probe_youtube_oauth,
+)
 from youtube_shorts.compose import ShortComposeIncompleteError, compose_short_prayer_for_topic
 from youtube_shorts.deliver import deliver_short_pack
 from youtube_shorts.metadata import generate_short_metadata, theme_overlay_label
-from youtube_shorts.uploader import upload_short_premiere_if_enabled
+from youtube_shorts.uploader import shorts_upload_enabled, upload_short_premiere_if_enabled
 
 logger = logging.getLogger(__name__)
 _MSK = ZoneInfo("Europe/Moscow")
@@ -84,6 +90,21 @@ async def run_daily_youtube_shorts_pipeline(
             pass
 
     await _notify(f"📱 YouTube Shorts: старт {day} (×{count}, force={force})")
+
+    if shorts_upload_enabled():
+        try:
+            probe_youtube_oauth(require_upload_enabled=False)
+        except YoutubeOAuthError as e:
+            logger.error("yt_shorts OAuth preflight failed: %s", e)
+            await notify_youtube_oauth_problem(
+                bot,
+                chat_id=chat_id,
+                topic_id=topic_id,
+                detail=str(e),
+                force=True,
+            )
+            await _notify(f"⛔ OAuth: {e}")
+            return ShortsPipelineResult(day=day, ok=False, error=str(e))
 
     async def _complete(system: str, user: str) -> Optional[str]:
         text, _ = await deepseek_complete(system, user, temperature=0.35, max_tokens=1200)
@@ -280,4 +301,11 @@ async def run_daily_youtube_shorts_pipeline(
     except Exception as e:
         logger.exception("yt_shorts pipeline failed: %s", e)
         await _notify(f"⛔ Shorts ошибка: {e}")
+        if is_youtube_oauth_error(e):
+            await notify_youtube_oauth_problem(
+                bot,
+                chat_id=chat_id,
+                topic_id=topic_id,
+                detail=str(e),
+            )
         return ShortsPipelineResult(day=day, ok=False, error=str(e))

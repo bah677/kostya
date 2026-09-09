@@ -167,8 +167,9 @@ def _sec_to_ass_time(sec: float) -> str:
     return f"{h}:{m:02d}:{s:02d}.{cs:02d}"
 
 
-def _wrap_line(text: str, max_chars: int = 28) -> List[str]:
-    """Разбить текст субтитра на 1–2 строки."""
+def _wrap_line(text: str, max_chars: int = 28, *, max_lines: int = 2) -> List[str]:
+    """Разбить текст субтитра на 1–max_lines строк."""
+    max_lines = max(1, min(4, int(max_lines)))
     words = " ".join((text or "").split()).split()
     lines: List[str] = []
     cur: List[str] = []
@@ -179,14 +180,42 @@ def _wrap_line(text: str, max_chars: int = 28) -> List[str]:
             lines.append(" ".join(cur))
             cur = [w]
             n = len(w)
-            if len(lines) >= 2:
+            if len(lines) >= max_lines:
                 break
         else:
             cur.append(w)
             n += add
-    if cur and len(lines) < 2:
+    if cur and len(lines) < max_lines:
         lines.append(" ".join(cur))
-    return lines[:2]
+    # хвостовые слова, не влезшие в лимит строк — в последнюю с «…»
+    used = sum(len(ln.split()) for ln in lines)
+    if used < len(words) and lines:
+        last = lines[-1].rstrip("…")
+        if len(last) + 1 > max_chars:
+            cut = last[: max(1, max_chars - 1)].rsplit(" ", 1)[0].strip()
+            last = cut or last[: max(1, max_chars - 1)]
+        lines[-1] = last.rstrip(".,") + "…"
+    return lines[:max_lines]
+
+
+def _theme_wrap_chars(*, play_w: int, fontsize: int, margin_lr: int) -> int:
+    """Сколько символов влезает в строку названия при данном кегле (эвристика)."""
+    usable = max(200, play_w - 2 * margin_lr - 32)
+    # Noto Serif Display, кириллица ≈ 0.55–0.62 em
+    return max(10, int(usable / max(24, fontsize) / 0.58))
+
+
+def _fit_theme_lines(
+    text: str,
+    *,
+    play_w: int,
+    fontsize: int,
+    margin_lr: int,
+    max_lines: int = 3,
+) -> List[str]:
+    """Перенос названия так, чтобы строки не вылезали за кадр."""
+    wrap = _theme_wrap_chars(play_w=play_w, fontsize=fontsize, margin_lr=margin_lr)
+    return _wrap_line(text, max_chars=wrap, max_lines=max_lines)
 
 
 def _ass_line_break(lines: Sequence[str]) -> str:
@@ -247,17 +276,16 @@ def _write_video_ass(
     - Caption — кинетическая строка молитвы крупно снизу
     """
     if vertical:
-        theme_size, theme_margin_v = 58, 92
-        theme_wrap = 16
+        # Чуть крупнее + запас сверху, чтобы 2–3 строки названия не обрезались UI Shorts.
+        theme_size, theme_margin_v = 72, 110
         cap_size, cap_margin_v, wrap_chars = 68, 260, 22
         hook_size, wrap_hook = 72, 18
-        margin_lr = 56
+        margin_lr = 64
     else:
-        theme_size, theme_margin_v = 42, 48
-        theme_wrap = 22
+        theme_size, theme_margin_v = 54, 60
         cap_size, cap_margin_v, wrap_chars = 58, 72, 36
         hook_size, wrap_hook = 78, 28
-        margin_lr = 64
+        margin_lr = 72
 
     header = f"""[Script Info]
 ScriptType: v4.00+
@@ -268,7 +296,7 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Theme,{_FONT_THEME},{theme_size},{_COL_THEME},&H000000FF,{_COL_OUTLINE},{_COL_SHADOW},1,0,0,0,100,100,1.2,0,1,3.2,1.4,8,{margin_lr},{margin_lr},{theme_margin_v},1
+Style: Theme,{_FONT_THEME},{theme_size},{_COL_THEME},&H000000FF,{_COL_OUTLINE},{_COL_SHADOW},1,0,0,0,100,100,1.2,0,1,3.6,1.6,8,{margin_lr},{margin_lr},{theme_margin_v},1
 Style: Caption,{_FONT_CAPTION},{cap_size},{_COL_CAPTION},&H000000FF,{_COL_OUTLINE},{_COL_SHADOW},0,0,0,0,100,100,0.8,0,1,3.2,1.4,2,{margin_lr},{margin_lr},{cap_margin_v},1
 Style: Hook,{_FONT_THEME},{hook_size},{_COL_THEME},&H000000FF,{_COL_OUTLINE},{_COL_SHADOW},0,0,0,0,100,100,1.0,0,1,4.0,2.0,5,{margin_lr},{margin_lr},0,1
 
@@ -289,7 +317,14 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             )
     theme = (theme_label or "").strip()
     if theme:
-        wrapped_theme = _ass_line_break(_wrap_line(theme, max_chars=theme_wrap))
+        theme_lines = _fit_theme_lines(
+            theme,
+            play_w=play_w,
+            fontsize=theme_size,
+            margin_lr=margin_lr,
+            max_lines=3,
+        )
+        wrapped_theme = _ass_line_break(theme_lines)
         if wrapped_theme:
             # тема появляется после hook, чтобы не конкурировать
             theme_start = h_sec if hook else 0.0

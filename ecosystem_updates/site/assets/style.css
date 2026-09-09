@@ -1,0 +1,134 @@
+:root {
+  --bg: #f7f3ea;
+  --ink: #1c1914;
+  --muted: #5c564c;
+  --accent: #1f5c4a;
+  --line: #d9d0bf;
+  --card: #fffdf8;
+  --max: 42rem;
+  --font: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+  --sans: "Avenir Next", "Segoe UI", system-ui, sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  color: var(--ink);
+  background:
+    radial-gradient(1200px 500px at 10% -10%, #e8efe8 0%, transparent 55%),
+    radial-gradient(900px 400px at 100% 0%, #efe6d4 0%, transparent 50%),
+    var(--bg);
+  font-family: var(--font);
+  line-height: 1.55;
+  font-size: 1.05rem;
+}
+
+.site-header,
+main,
+.site-footer {
+  width: min(100% - 2rem, var(--max));
+  margin-inline: auto;
+}
+
+.site-header {
+  padding: 2.5rem 0 1rem;
+}
+
+.brand {
+  font-family: var(--sans);
+  font-weight: 700;
+  font-size: 1.35rem;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+  text-decoration: none;
+}
+
+.tagline {
+  margin: 0.35rem 0 0;
+  color: var(--muted);
+  font-family: var(--sans);
+  font-size: 0.92rem;
+}
+
+.lead {
+  color: var(--muted);
+  font-family: var(--sans);
+  font-size: 0.98rem;
+}
+
+.day,
+.index {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  padding: 1.4rem 1.35rem 1.5rem;
+  margin: 1.2rem 0;
+}
+
+.day.latest {
+  border-left: 4px solid var(--accent);
+}
+
+h1, h2, h3 {
+  font-family: var(--sans);
+  letter-spacing: -0.02em;
+  line-height: 1.25;
+  margin: 0 0 0.85rem;
+}
+
+h1 { font-size: 1.7rem; }
+h2 { font-size: 1.25rem; margin-top: 1.4rem; }
+h3 { font-size: 1.05rem; margin-top: 1.1rem; color: var(--accent); }
+
+ul {
+  margin: 0.4rem 0 0.8rem;
+  padding-left: 1.2rem;
+}
+
+li { margin: 0.35rem 0; }
+
+p { margin: 0.55rem 0; }
+
+a { color: var(--accent); }
+
+.nav {
+  font-family: var(--sans);
+  font-size: 0.92rem;
+  margin: 0 0 0.5rem;
+}
+
+.days {
+  list-style: none;
+  padding: 0;
+  margin: 1rem 0 0;
+}
+
+.days li {
+  display: grid;
+  gap: 0.2rem;
+  padding: 0.85rem 0;
+  border-top: 1px solid var(--line);
+}
+
+.days time {
+  font-family: var(--sans);
+  font-weight: 650;
+}
+
+.blurb {
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+
+.site-footer {
+  padding: 1.5rem 0 2.5rem;
+  color: var(--muted);
+  font-family: var(--sans);
+  font-size: 0.82rem;
+}
+
+@media (max-width: 520px) {
+  body { font-size: 1rem; }
+  .day, .index { padding: 1.1rem 1rem 1.2rem; }
+}

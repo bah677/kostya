@@ -345,14 +345,12 @@ class Config:
 
     @property
     def club_digest_group_active(self) -> bool:
-        """Публикация дайджеста в топик группы (выкл. при outreach DM)."""
-        if self.club_outreach_dm_active:
-            return False
+        """Публикация дайджеста в топик группы (можно параллельно с DM)."""
         return bool(self.CLUB_DIGEST_ENABLED)
 
     @property
     def club_scripture_group_active(self) -> bool:
-        """Публикация цитат в топик группы (выкл. при outreach DM)."""
+        """Публикация цитат в топик группы (выкл. при outreach DM — цитаты только в личку)."""
         if self.club_outreach_dm_active:
             return False
         return bool(self.CLUB_SCRIPTURE_PULSE_ENABLED)

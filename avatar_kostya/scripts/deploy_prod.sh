@@ -45,6 +45,18 @@ else
   echo "==> SKIP_RESTART=1"
 fi
 
+if [[ "${SKIP_ECOSYSTEM_UPDATES:-0}" != "1" ]]; then
+  echo ""
+  echo "==> [updates] Публикация updates.mironbot.ru..."
+  if [[ "$(id -u)" -eq 0 ]]; then
+    sudo -u "${RUN_USER}" bash "${KOSTYA_ROOT}/ecosystem_updates/scripts/publish.sh" || \
+      echo "WARNING: publish ecosystem_updates failed"
+  else
+    bash "${KOSTYA_ROOT}/ecosystem_updates/scripts/publish.sh" || \
+      echo "WARNING: publish ecosystem_updates failed"
+  fi
+fi
+
 if [[ "${SKIP_GIT_PUSH}" != "1" ]]; then
   echo ""
   echo "==> [git] Обновление GitHub монорепозитория kostya..."

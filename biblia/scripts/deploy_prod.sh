@@ -238,10 +238,17 @@ echo "Готово."
 echo "  Архив кода: $CODE_ARCHIVE"
 echo "  Дамп БД:    $DB_ARCHIVE"
 
+KOSTYA_ROOT="$(cd "${SRC}/.." && pwd)"
+if [[ "${SKIP_ECOSYSTEM_UPDATES:-0}" != "1" ]]; then
+  echo ""
+  echo "==> [updates] Публикация updates.mironbot.ru..."
+  sudo -u "${APP_USER}" bash "${KOSTYA_ROOT}/ecosystem_updates/scripts/publish.sh" || \
+    echo "WARNING: publish ecosystem_updates failed (сайт мог не обновиться)"
+fi
+
 if [[ "${SKIP_GIT_PUSH}" != "1" ]]; then
   echo ""
   echo "==> [git] Обновление GitHub монорепозитория kostya..."
-  KOSTYA_ROOT="$(cd "${SRC}/.." && pwd)"
   sudo -u "${APP_USER}" env KOSTYA_ROOT="${KOSTYA_ROOT}" GIT_REMOTE_URL="${GIT_REMOTE_URL:-git@github.com:bah677/kostya.git}" \
     bash "${KOSTYA_ROOT}/scripts/git_push_deploy.sh"
 fi
