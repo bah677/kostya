@@ -210,6 +210,10 @@ class Config:
     #: Макс. проактивных сообщений за один проход планировщика.
     MEMBER_PROACTIVE_MAX_PER_RUN: int = 15
 
+    #: Подарочная волна: партии + встречающие.
+    GIFT_WAVE_ENABLED: bool = True
+    GIFT_WAVE_LICENSE_DAYS: int = 30
+
     #: Топик админ-группы «Расписание» (`message_thread_id`): вечерний дайджест и правки.
     CLUB_SCHEDULE_ADMIN_TOPIC_ID: int = 5655
     #: Ежедневная публикация расписания в топик (20:00 МСК по умолчанию).
@@ -706,6 +710,10 @@ def load_config() -> Config:
         ),
         LEGACY_103_REACTIVATION_MINUTE=_safe_int_env(
             "LEGACY_103_REACTIVATION_MINUTE", 0, min_v=0, max_v=59
+        ),
+        GIFT_WAVE_ENABLED=_env_bool("GIFT_WAVE_ENABLED", True),
+        GIFT_WAVE_LICENSE_DAYS=_safe_int_env(
+            "GIFT_WAVE_LICENSE_DAYS", 30, min_v=1, max_v=365
         ),
         CLUB_DIGEST_ENABLED=_env_bool("CLUB_DIGEST_ENABLED", False),
         CLUB_DIGEST_HOUR=_safe_int_env("CLUB_DIGEST_HOUR", 10, min_v=0, max_v=23),

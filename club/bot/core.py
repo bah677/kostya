@@ -23,6 +23,7 @@ from bot.features.followup import FollowupFeature
 from bot.features.legacy_103_reactivation import Legacy103ReactivationFeature
 from bot.features.legal_consent import LegalConsentFeature
 from bot.features.gift_activation import GiftActivationFeature
+from bot.features.gift_wave import GiftWaveFeature
 from bot.features.mailing import MailingFeature
 from bot.features.media_id_helper import MediaIdHelperFeature
 from bot.features.member_gift_extension import MemberGiftExtensionFeature
@@ -165,6 +166,12 @@ class TelegramBot(TelegramBotApp):
             feature_manager=self.feature_manager,
         )
 
+        gift_wave_feature = GiftWaveFeature(
+            user_storage=self.user_storage,
+            bot=self.bot,
+            feature_manager=self.feature_manager,
+        )
+
         auto_react_feature = AutoReactFeature(bot=self.bot)
 
         subscription_info_feature = SubscriptionInfoFeature(
@@ -261,6 +268,7 @@ class TelegramBot(TelegramBotApp):
             club_outreach_dm_feature,
             club_topic_assist_feature,
             gift_activation_feature,
+            gift_wave_feature,
             subscription_info_feature,
             mailing_feature,
             media_id_helper_feature,

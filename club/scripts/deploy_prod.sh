@@ -278,6 +278,8 @@ deploy_target() {
       --exclude='exports/' \
       --exclude='scripts/send_angel_announcement.py' \
       --exclude='scripts/send_outreach_dm_announcement.py' \
+      --exclude='scripts/invite_club_greeters.py' \
+      --exclude='scripts/generate_welcome_questions.py' \
       --exclude='scripts/send_angel_pool_replay_notifications.py' \
       --exclude='scripts/reopen_wish_to_pool.py' \
       "${CLUB_DEV_ROOT}/" "${CURRENT_PROD_ROOT}/"

@@ -477,11 +477,14 @@ class LicensesMixin:
         days: int,
         *,
         admin_telegram_id: int,
+        origin: str = "gift",
+        wave_id: Optional[int] = None,
     ) -> Optional[Dict[str, Any]]:
         """Выдать или продлить лицензию админом (без оплаты)."""
         if days < 1:
             return None
         now = datetime.now()
+        origin = (origin or "gift").strip() or "gift"
         try:
             prev_expires: Optional[datetime] = None
             was_extension = False
@@ -514,31 +517,40 @@ class LicensesMixin:
                         SET expires_at = $1,
                             status = 'active',
                             license_type = 'admin_grant',
+                            origin = $3,
+                            wave_id = COALESCE($4, wave_id),
                             updated_at = NOW()
                         WHERE user_id = $2
                         """,
                         new_expiry,
                         user_id,
+                        origin,
+                        wave_id,
                     )
                     logger.info(
-                        "✅ Admin gift: license updated uid=%s until %s",
+                        "✅ Admin gift: license updated uid=%s until %s origin=%s",
                         user_id,
                         new_expiry,
+                        origin,
                     )
                 else:
                     await conn.execute(
                         """
                         INSERT INTO license
-                            (user_id, license_type, expires_at, payment_id, status)
-                        VALUES ($1, 'admin_grant', $2, NULL, 'active')
+                            (user_id, license_type, expires_at, payment_id, status,
+                             origin, wave_id)
+                        VALUES ($1, 'admin_grant', $2, NULL, 'active', $3, $4)
                         """,
                         user_id,
                         new_expiry,
+                        origin,
+                        wave_id,
                     )
                     logger.info(
-                        "✅ Admin gift: new license uid=%s until %s",
+                        "✅ Admin gift: new license uid=%s until %s origin=%s",
                         user_id,
                         new_expiry,
+                        origin,
                     )
 
             await self.append_license_history(
@@ -546,7 +558,12 @@ class LicensesMixin:
                 previous_expires_at=prev_expires,
                 new_expires_at=new_expiry,
                 source="admin_grant",
-                meta={"days_added": days, "admin_telegram_id": admin_telegram_id},
+                meta={
+                    "days_added": days,
+                    "admin_telegram_id": admin_telegram_id,
+                    "origin": origin,
+                    "wave_id": wave_id,
+                },
             )
             return {
                 "user_id": user_id,
@@ -554,6 +571,8 @@ class LicensesMixin:
                 "new_expires_at": new_expiry,
                 "was_extension": was_extension,
                 "days": days,
+                "origin": origin,
+                "wave_id": wave_id,
             }
         except Exception as e:
             logger.error(

@@ -204,7 +204,7 @@ class ClubGroupFeature(BaseFeature):
         await callback.answer()
 
     async def _on_club_group_member_activity(self, message: Message) -> None:
-        """Трекинг активности участников в группе для member-агента."""
+        """Трекинг активности + первое сообщение новичка / ответ встречающего."""
         user = message.from_user
         if not user or user.is_bot:
             return
@@ -214,6 +214,107 @@ class ClubGroupFeature(BaseFeature):
             self._touch_group_activity_safe(user.id),
             name=f"club_group_activity_{user.id}",
         )
+        asyncio.create_task(
+            self._wave_greeter_on_group_message(message),
+            name=f"club_wave_greeter_{user.id}",
+        )
+
+    async def _wave_greeter_on_group_message(self, message: Message) -> None:
+        try:
+            from datetime import datetime
+            from zoneinfo import ZoneInfo
+
+            from bot.services.club_greeter_service import assign_greeter_for_newcomer
+
+            MSK = ZoneInfo("Europe/Moscow")
+            user = message.from_user
+            if not user:
+                return
+            text = (message.text or message.caption or "").strip()
+            mid = int(message.message_id)
+            thread_id = getattr(message, "message_thread_id", None)
+
+            # Ответ встречающего на сообщение новичка
+            reply = message.reply_to_message
+            if reply and reply.from_user and not reply.from_user.is_bot:
+                newcomer_id = int(reply.from_user.id)
+                assignment = await self.user_storage.find_pending_assignment_for_reply(
+                    greeter_id=user.id, newcomer_id=newcomer_id
+                )
+                if assignment:
+                    await self.user_storage.mark_greeter_replied(int(assignment["id"]))
+                    try:
+                        await self.user_storage.log_interaction(
+                            user_id=newcomer_id,
+                            event_category="gift_wave",
+                            event_type="greeter_replied",
+                            data={
+                                "greeter_id": user.id,
+                                "assignment_id": int(assignment["id"]),
+                            },
+                            source="club_greeter",
+                            outcome="success",
+                        )
+                        await self.user_storage.log_interaction(
+                            user_id=newcomer_id,
+                            event_category="gift_wave",
+                            event_type="newcomer_got_reply",
+                            data={
+                                "by_greeter": True,
+                                "greeter_id": user.id,
+                            },
+                            source="club_greeter",
+                            outcome="success",
+                        )
+                    except Exception:
+                        pass
+
+            # Волна: зафиксировать первое сообщение участника волны
+            wave_id = await self.user_storage.mark_wave_member_spoke(
+                user.id,
+                first_msg_at=datetime.now(MSK),
+                first_msg_id=mid,
+            )
+            if wave_id is not None:
+                try:
+                    await self.user_storage.log_interaction(
+                        user_id=user.id,
+                        event_category="gift_wave",
+                        event_type="newcomer_first_msg",
+                        data={"wave_id": wave_id, "len": len(text)},
+                        source="gift_wave",
+                        outcome="success",
+                    )
+                except Exception:
+                    pass
+
+            # Встречающий — всем новичкам: первое сообщение в клубной группе
+            prior = await self.user_storage.count_user_club_group_messages(
+                user.id, before_message_id=mid
+            )
+            if prior > 0:
+                return
+            open_asg = await self.user_storage.latest_open_assignment_for_newcomer(
+                user.id
+            )
+            if open_asg:
+                return
+            # уже был завершённый цикл встречи — не назначаем снова
+            if await self.user_storage.newcomer_had_greeter_before(user.id):
+                return
+            name = user.full_name or (user.username or f"id{user.id}")
+            await assign_greeter_for_newcomer(
+                user_storage=self.user_storage,
+                bot=self.bot,
+                newcomer_id=user.id,
+                newcomer_name=name,
+                about_text=text,
+                message_id=mid,
+                thread_id=int(thread_id) if thread_id else None,
+                attempt=1,
+            )
+        except Exception as e:
+            logger.debug("[%s] wave greeter msg: %s", self.name, e)
 
     async def _touch_group_activity_safe(self, user_id: int) -> None:
         try:
@@ -276,6 +377,19 @@ class ClubGroupFeature(BaseFeature):
                 forum = bool(getattr(event.chat, "is_forum", False))
                 tid = int(getattr(config, "WELCOME_TOPIC_ID", 0) or 0)
                 try:
+                    wave_ids = await self.user_storage.mark_wave_member_joined(uid)
+                    for wid in wave_ids:
+                        try:
+                            await self.user_storage.log_interaction(
+                                user_id=uid,
+                                event_category="gift_wave",
+                                event_type="wave_member_joined",
+                                data={"wave_id": wid},
+                                source="gift_wave",
+                                outcome="success",
+                            )
+                        except Exception:
+                            pass
                     await send_club_member_welcome(
                         self.bot,
                         event.chat.id,

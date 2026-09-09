@@ -11,6 +11,7 @@ from aiogram.enums import ParseMode
 
 from bot.logging.club_join_debug import log_event
 from bot.texts import ru_club_welcome as welcome_txt
+from bot.texts import ru_gift_wave as wave_txt
 
 if TYPE_CHECKING:
     from aiogram import Bot
@@ -33,6 +34,14 @@ def _dedup_should_skip(chat_id: int, user_id: int) -> bool:
         return True
     _dedup_ts[key] = now
     return False
+
+
+def welcome_question_for_user(user_id: int, *, offset: int = 0) -> str:
+    pool = wave_txt.WELCOME_QUESTION_POOL
+    if not pool:
+        return welcome_txt.WELCOME_BODY_SUFFIX.strip()
+    idx = (int(user_id) + int(offset)) % len(pool)
+    return pool[idx]
 
 
 async def send_club_member_welcome(
@@ -80,9 +89,10 @@ async def send_club_member_welcome(
         name = html_mod.escape(user.full_name or f"Пользователь {user.id}")
         mention = f'<a href="tg://user?id={user.id}">{name}</a>'
 
+    question = welcome_question_for_user(user.id)
     welcome_text = (
-        f"{welcome_txt.WELCOME_BODY_PREFIX}"
-        f"{mention}{welcome_txt.WELCOME_BODY_SUFFIX}"
+        f"{wave_txt.WELCOME_BODY_PREFIX}"
+        f"{wave_txt.WELCOME_BODY_TEMPLATE.format(mention=mention, question=question)}"
     )
 
     kwargs: dict = {
