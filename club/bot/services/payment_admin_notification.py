@@ -29,7 +29,9 @@ def _normalize_dt_for_compare(dt: Optional[datetime]) -> Optional[datetime]:
 
 
 def is_promo_week_tariff_type(tariff_type: Optional[str]) -> bool:
-    return (tariff_type or "").strip().lower().startswith("promo_test1week")
+    return (tariff_type or "").strip().lower().startswith(
+        ("promo_test1week", "promo_test2weeks")
+    )
 
 
 def is_base_tariff_type(tariff_type: Optional[str]) -> bool:

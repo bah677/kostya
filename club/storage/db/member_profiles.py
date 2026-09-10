@@ -443,3 +443,54 @@ class MemberProfilesMixin:
                 )
         except Exception as e:
             logger.error("touch_member_group_activity uid=%s: %s", user_id, e)
+
+    async def refresh_group_msgs_30d_for_active(
+        self, *, club_group_id: int
+    ) -> int:
+        """Пересчёт group_msgs_30d для всех с активной лицензией (раз в сутки)."""
+        if not club_group_id:
+            return 0
+        try:
+            async with self.get_connection() as conn:
+                await conn.execute(
+                    """
+                    INSERT INTO member_profiles (user_id, group_msgs_30d, group_msgs_30d_at)
+                    SELECT l.user_id, 0, NOW()
+                    FROM license l
+                    WHERE l.status = 'active' AND l.expires_at > NOW()
+                    ON CONFLICT (user_id) DO NOTHING
+                    """
+                )
+                rows = await conn.fetch(
+                    """
+                    WITH active AS (
+                        SELECT DISTINCT user_id
+                        FROM license
+                        WHERE status = 'active' AND expires_at > NOW()
+                    ),
+                    counts AS (
+                        SELECT m.user_id, COUNT(*)::int AS cnt
+                        FROM messages m
+                        JOIN active a ON a.user_id = m.user_id
+                        WHERE m.chat_id = $1
+                          AND m.role = 'user'
+                          AND m.deleted_at IS NULL
+                          AND COALESCE(TRIM(m.content), '') <> ''
+                          AND m.created_at > NOW() - INTERVAL '30 days'
+                        GROUP BY m.user_id
+                    )
+                    UPDATE member_profiles mp
+                    SET group_msgs_30d = COALESCE(c.cnt, 0),
+                        group_msgs_30d_at = NOW(),
+                        updated_at = NOW()
+                    FROM active a
+                    LEFT JOIN counts c ON c.user_id = a.user_id
+                    WHERE mp.user_id = a.user_id
+                    RETURNING mp.user_id
+                    """,
+                    int(club_group_id),
+                )
+                return len(rows)
+        except Exception as e:
+            logger.error("refresh_group_msgs_30d_for_active: %s", e, exc_info=True)
+            return 0

@@ -67,22 +67,54 @@ async def generate_renewal_outreach_html(
     first_name: Optional[str],
     reminder: Dict[str, Any],
     license_expires_at: Optional[datetime],
+    profile: Optional[Dict[str, Any]] = None,
+    branch: Optional[str] = None,
 ) -> str:
     """AI-сообщение о продлении; при ошибке — шаблон REMINDER_CONFIG."""
     fallback = sub_txt.personalize_html(reminder["text"], first_name)
+    if branch == "silent":
+        fallback = sub_txt.personalize_html(
+            (
+                "{имя}, привет.\n\n"
+                "До окончания доступа осталось немного — дата в контексте.\n\n"
+                "Загляни в группу: там сейчас живой разговор. Ссылка — в контексте.\n\n"
+                "Если захочешь остаться в клубе: /payment"
+            ),
+            first_name,
+        )
     if not config.MEMBER_RENEWAL_AI_ENABLED:
         return fallback
 
     days_before = int(reminder.get("days_before") or 0)
-    profile = await user_storage.get_member_profile(user_id)
+    if profile is None:
+        profile = await user_storage.get_member_profile(user_id)
     profile_addon = build_member_profile_prompt_addon(profile)
     schedule_addon = await fetch_schedule_for_prompt(user_storage)
+
+    anchors_block = ""
+    if branch in ("silent", "peeking", None):
+        try:
+            from bot.services.club_group_anchors import (
+                fetch_recent_group_anchors,
+                format_anchors_for_hint,
+            )
+
+            anchors = await fetch_recent_group_anchors(
+                user_storage.pool,
+                club_group_id=int(config.CLUB_GROUP_ID or 0),
+                exclude_topic_id=int(config.CLUB_DIGEST_TOPIC_ID or 0),
+            )
+            anchors_block = format_anchors_for_hint(anchors)
+        except Exception as e:
+            logger.warning("renewal anchors uid=%s: %s", user_id, e)
 
     retrieved, golden_block = "", ""
     rag_query = (
         f"продление подписки клуб участник темы ценность "
         f"осталось {days_before} дней"
     )
+    if branch == "silent":
+        rag_query = "жизнь группы общение эфир тема приглашение в чат"
     if rag_stack is not None:
         try:
             retrieved, golden_block, _, _ = await retrieve_for_user_message(
@@ -107,10 +139,15 @@ async def generate_renewal_outreach_html(
             exp_str = exp.astimezone(MSK).strftime("%d.%m.%Y")
 
     user_block = (
+        f"Ветка (жизнь в группе): {branch or '—'}\n"
         f"Дней до конца оплаченного периода: {days_before}\n"
         f"Дата окончания (МСК): {exp_str or '—'}\n"
         f"Имя: {first_name or 'участник'}\n\n"
         f"{profile_addon}\n\n{schedule_addon}\n\n"
+    )
+    if anchors_block:
+        user_block += f"{anchors_block}\n\n"
+    user_block += (
         f"ЭТАЛОН (тон и структура, не копировать дословно):\n"
         f"{fallback}\n\n"
     )
@@ -118,9 +155,13 @@ async def generate_renewal_outreach_html(
         user_block += f"Фрагменты материалов клуба:\n{retrieved[:8000]}\n"
 
     verification_context = "\n\n".join(
-        p for p in (profile_addon, schedule_addon, retrieved, fallback) if p
+        p
+        for p in (profile_addon, schedule_addon, retrieved, fallback, anchors_block)
+        if p
     )
-    allowed_links = extract_allowed_links_from_context(retrieved, golden_block)
+    allowed_links = list(
+        extract_allowed_links_from_context(retrieved, golden_block, anchors_block)
+    )
 
     async def _generate(extra: str = "") -> Optional[str]:
         sys = prepend_datetime_context(RENEWAL_COMPOSE_SYSTEM + (extra or ""))

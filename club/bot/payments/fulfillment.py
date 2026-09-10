@@ -546,6 +546,12 @@ class PaidOrderFulfillment:
 
         new_expiry = base_date + timedelta(days=duration_days)
 
+        tariff_type = str(order.get("tariff_type") or order.get("type") or "")
+        lic_origin = "payment"
+        tt = tariff_type.lower()
+        if tt.startswith("promo_test1week") or tt.startswith("promo_test2weeks"):
+            lic_origin = "trial"
+
         await self.user_storage.create_or_extend_license(
             user_id=buyer_id,
             order_id=order["id"],
@@ -553,6 +559,7 @@ class PaidOrderFulfillment:
             audit_source="subscription_payment",
             audit_payment_id=int(payment["id"]),
             audit_order_id=int(order["id"]),
+            origin=lic_origin,
         )
 
         await self.user_storage.consume_user_promo_campaign(

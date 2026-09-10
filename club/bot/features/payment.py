@@ -44,10 +44,11 @@ CALLBACK_NASTYA_DISABLE_RECURRING = "payment_nastya_disable_recurring"
 OFFER_PDF_MIN_INTERVAL_SEC = 30
 OFFER_PDF_MAX_PER_HOUR = 5
 
-# Deep link: https://t.me/<bot>?start=promo_week — меню промо на 1 неделю (как кнопка из «Польза»).
+# Deep link: https://t.me/<bot>?start=promo_week — меню промо (2 недели / бывш. 1 неделя).
 START_PARAM_PROMO_WEEK = "promo_week"
-# Суффикс payment_start_promo_* для той же ветки тарифов, что benefit1/benefit2.
-_PROMO_WEEK_PAYMENT_SUFFIX = "promo_test1week_benefit1"
+# Суффикс payment_start_promo_* — новое имя тарифа; старые promo_test1week* тоже резолвятся.
+_PROMO_WEEK_PAYMENT_SUFFIX = "promo_test2weeks_benefit1"
+_PROMO_WEEK_PAYMENT_SUFFIX_LEGACY = "promo_test1week_benefit1"
 
 
 def resolve_promo_tariff_type_from_payment_start_suffix(promo_full: str) -> str:
@@ -72,18 +73,24 @@ def resolve_promo_tariff_type_from_start_param(param: str) -> Optional[str]:
     """
     Параметр ``/start`` → тип тарифа в БД.
 
-    ``promo_week`` — короткая маркетинговая ссылка (то же, что кнопка промо в benefit).
-    ``promo_week_<tag>`` — то же меню + тег (см. ``promo_week_channel_tag``) для разных ссылок по каналам.
-    ``promo_test1week_benefit1`` — явный вариант с тем же разбором, что у inline-кнопки.
-    ``promo_test1week`` — тип тарифа как есть (без отрезания суффикса).
+    ``promo_week`` / ``promo_week_<tag>`` — меню пробного доступа (14 дней).
+    Старые ``promo_test1week*`` остаются рабочими; новые — ``promo_test2weeks*``.
     """
     if param == START_PARAM_PROMO_WEEK or promo_week_channel_tag(param) is not None:
-        return resolve_promo_tariff_type_from_payment_start_suffix(_PROMO_WEEK_PAYMENT_SUFFIX)
-    if param == _PROMO_WEEK_PAYMENT_SUFFIX or param in (
+        return resolve_promo_tariff_type_from_payment_start_suffix(
+            _PROMO_WEEK_PAYMENT_SUFFIX
+        )
+    if param in (
+        _PROMO_WEEK_PAYMENT_SUFFIX,
+        _PROMO_WEEK_PAYMENT_SUFFIX_LEGACY,
+        "promo_test2weeks_benefit2",
+        "promo_test2weeks_benefit3",
         "promo_test1week_benefit2",
         "promo_test1week_benefit3",
     ):
         return resolve_promo_tariff_type_from_payment_start_suffix(param)
+    if param == "promo_test2weeks" or param.startswith("promo_test2weeks_"):
+        return param
     if param == "promo_test1week" or param.startswith("promo_test1week_"):
         return param
     return None
@@ -91,15 +98,29 @@ def resolve_promo_tariff_type_from_start_param(param: str) -> Optional[str]:
 
 def promo_start_tariff_type_candidates(primary: str) -> list[str]:
     """
-    По БД может лежать ``promo_test1week`` или ``promo_test1week_benefit`` —
-    пробуем оба порядке (сначала вычисленный из deeplink тип).
+    По БД может лежать ``promo_test2weeks`` или старый ``promo_test1week`` —
+    пробуем оба (и benefit-варианты).
     """
     alts = {
-        "promo_test1week": ["promo_test1week_benefit"],
-        "promo_test1week_benefit": ["promo_test1week"],
+        "promo_test2weeks": [
+            "promo_test1week",
+            "promo_test2weeks_benefit",
+            "promo_test1week_benefit",
+        ],
+        "promo_test1week": [
+            "promo_test2weeks",
+            "promo_test1week_benefit",
+            "promo_test2weeks_benefit",
+        ],
+        "promo_test2weeks_benefit": ["promo_test2weeks", "promo_test1week"],
+        "promo_test1week_benefit": ["promo_test1week", "promo_test2weeks"],
     }
     out = [primary]
     out.extend(alts.get(primary, []))
+    # benefit1/2/3 хвосты → базовый type
+    for base in ("promo_test2weeks", "promo_test1week"):
+        if primary.startswith(base + "_"):
+            out.append(base)
     return list(dict.fromkeys(out))
 
 

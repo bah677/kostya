@@ -106,6 +106,20 @@ def build_member_profile_prompt_addon(profile: Optional[Dict[str, Any]]) -> str:
     if last_grp:
         lines.append(f"Активность в группе: {_fmt_dt_msk(last_grp)}")
 
+    origin = profile.get("_renewal_origin") or profile.get("license_origin")
+    if origin:
+        from bot.services.renewal_branch import origin_label
+
+        lines.append(f"Как вошёл: {origin_label(str(origin))}")
+
+    msgs_30d = profile.get("group_msgs_30d")
+    if msgs_30d is not None or profile.get("_renewal_branch"):
+        from bot.services.renewal_branch import branch_label, group_life_branch
+
+        n = int(msgs_30d or 0)
+        br = str(profile.get("_renewal_branch") or group_life_branch(n))
+        lines.append(f"Жизнь в группе: {branch_label(br)} (сообщений за 30 дней: {n})")
+
     if stage == "started":
         lines.append(
             "Задача сейчас: коротко поздравить (если уместно), показать что есть в клубе "

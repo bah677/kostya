@@ -143,7 +143,9 @@ class SubscriptionReminderFeature(BaseFeature):
             PRIVATE_INLINE_CALLBACK_ONLY,
         )
 
-    def _keyboard_reminder(self, kind: str) -> Optional[InlineKeyboardMarkup]:
+    def _keyboard_reminder(self, kind: Optional[str]) -> Optional[InlineKeyboardMarkup]:
+        if not kind:
+            return with_main_menu([])
         rows: Optional[List[List[InlineKeyboardButton]]] = None
         if kind == "payment_extend":
             rows = [[payment_cta_button(sub_txt.BTN_PAYMENT_EXTEND)]]
@@ -181,12 +183,19 @@ class SubscriptionReminderFeature(BaseFeature):
                 )
             rows.append([payment_cta_button(sub_txt.BTN_RETURN_CLUB)])
         if not rows:
-            return None
+            return with_main_menu([])
         return with_main_menu(rows)
 
     async def _process_all(self):
         today_msk = today_moscow()
         logger.info("📅 subscription_reminder: дата МСК %s", today_msk)
+        try:
+            n = await self.user_storage.refresh_group_msgs_30d_for_active(
+                club_group_id=int(config.CLUB_GROUP_ID or 0)
+            )
+            logger.info("subscription_reminder: group_msgs_30d refreshed=%s", n)
+        except Exception as e:
+            logger.warning("subscription_reminder: group_msgs_30d refresh: %s", e)
         steps = (
             ("reminders", self._process_reminders),
             ("bonus_extensions", self._process_bonus_extensions),
@@ -211,6 +220,8 @@ class SubscriptionReminderFeature(BaseFeature):
         first_name: Optional[str],
         reminder: Dict[str, Any],
         license_expires_at: Any,
+        profile: Optional[Dict[str, Any]] = None,
+        branch: Optional[str] = None,
     ) -> str:
         days_before = int(reminder["days_before"])
         if config.MEMBER_RENEWAL_AI_ENABLED and self._llm_client:
@@ -227,6 +238,8 @@ class SubscriptionReminderFeature(BaseFeature):
                     first_name=first_name,
                     reminder=reminder,
                     license_expires_at=license_expires_at,
+                    profile=profile,
+                    branch=branch,
                 )
                 await self.user_storage.set_member_renewal_state(
                     uid, f"reminder_{days_before}d"
@@ -271,13 +284,36 @@ class SubscriptionReminderFeature(BaseFeature):
                 )
         return sub_txt.personalize_html(block["text"], first_name)
 
+    async def _first_week_blocks_renewal(self, user_id: int) -> bool:
+        """ПРО-5: пока first week без done_at/ended_at — не слать деньги."""
+        try:
+            fw = await self.user_storage.get_club_first_week(user_id)
+        except Exception:
+            return False
+        if not fw:
+            return False
+        return fw.get("done_at") is None and fw.get("ended_at") is None
+
     async def _process_reminders(self, today_msk: date):
-        ordered = sorted(
-            self.REMINDER_CONFIG,
-            key=lambda x: (-x["days_before"], x["order"]),
+        from bot.services.renewal_branch import (
+            enrich_profile_for_renewal,
+            group_life_branch,
+            normalize_license_origin,
+            reminder_keyboard_for_branch,
         )
-        for reminder in ordered:
-            days_before = reminder["days_before"]
+
+        by_origin = getattr(sub_txt, "REMINDER_BY_ORIGIN", None) or {
+            "payment": self.REMINDER_CONFIG
+        }
+        # Плоский список слотов: (origin, reminder)
+        slots: List[tuple] = []
+        for origin_key, reminders in by_origin.items():
+            for rem in reminders:
+                slots.append((origin_key, rem))
+        slots.sort(key=lambda x: (-int(x[1]["days_before"]), int(x[1]["order"]), x[0]))
+
+        for origin_key, reminder in slots:
+            days_before = int(reminder["days_before"])
             target_date = today_msk + timedelta(days=days_before)
             slug = outreach_slug_reminder(reminder)
 
@@ -288,6 +324,13 @@ class SubscriptionReminderFeature(BaseFeature):
             for lic in licenses:
                 uid = lic["user_id"]
                 try:
+                    lic_origin = normalize_license_origin(
+                        lic.get("origin"),
+                        license_type=lic.get("license_type"),
+                    )
+                    if lic_origin != origin_key:
+                        continue
+
                     from bot.utils.admin_outreach_skip import (
                         should_skip_subscription_outreach_slug,
                     )
@@ -301,6 +344,26 @@ class SubscriptionReminderFeature(BaseFeature):
                         and await self.user_storage.is_telegram_admin_id(uid)
                     ):
                         continue
+
+                    if await self._first_week_blocks_renewal(uid):
+                        try:
+                            await self.user_storage.log_interaction(
+                                user_id=uid,
+                                event_category="renewal",
+                                event_type="renewal_deferred",
+                                data={
+                                    "slug": slug,
+                                    "days_before": days_before,
+                                    "origin": lic_origin,
+                                    "reason": "first_week_open",
+                                },
+                                source="subscription_reminder",
+                                outcome="success",
+                            )
+                        except Exception:
+                            pass
+                        continue
+
                     first_name = lic.get("first_name")
                     claimed = await self.user_storage.try_claim_subscription_outreach(
                         uid, slug, today_msk
@@ -308,22 +371,70 @@ class SubscriptionReminderFeature(BaseFeature):
                     if not claimed:
                         continue
 
+                    profile = await self.user_storage.get_member_profile(uid)
+                    msgs = int((profile or {}).get("group_msgs_30d") or 0)
+                    branch = group_life_branch(msgs)
+                    profile_enriched = enrich_profile_for_renewal(
+                        profile, origin=lic_origin, msgs_30d=msgs
+                    )
+
+                    try:
+                        await self.user_storage.log_interaction(
+                            user_id=uid,
+                            event_category="renewal",
+                            event_type="renewal_branch_chosen",
+                            data={
+                                "branch": branch,
+                                "origin": lic_origin,
+                                "group_msgs_30d": msgs,
+                                "days_before": days_before,
+                                "slug": slug,
+                            },
+                            source="subscription_reminder",
+                            outcome="success",
+                        )
+                    except Exception:
+                        pass
+
                     body = await self._reminder_body(
                         uid=uid,
                         first_name=first_name,
                         reminder=reminder,
                         license_expires_at=lic.get("expires_at"),
+                        profile=profile_enriched,
+                        branch=branch,
                     )
 
-                    kb = self._keyboard_reminder(reminder["keyboard"])
+                    kb_kind = reminder_keyboard_for_branch(branch)
+                    if branch != "silent" and reminder.get("keyboard") == "affiliate_and_extend":
+                        kb_kind = "affiliate_and_extend"
+                    kb = self._keyboard_reminder(kb_kind)
                     ok = await self._send_html(uid, body, kb)
                     if ok:
                         logger.info(
-                            "📨 Reminder slug=%s days_before=%s user=%s",
+                            "📨 Reminder slug=%s days_before=%s origin=%s branch=%s user=%s",
                             slug,
                             days_before,
+                            lic_origin,
+                            branch,
                             uid,
                         )
+                        try:
+                            await self.user_storage.log_interaction(
+                                user_id=uid,
+                                event_category="renewal",
+                                event_type="renewal_sent",
+                                data={
+                                    "slug": slug,
+                                    "branch": branch,
+                                    "origin": lic_origin,
+                                    "days_before": days_before,
+                                },
+                                source="subscription_reminder",
+                                outcome="success",
+                            )
+                        except Exception:
+                            pass
                     await asyncio.sleep(0.5)
                 except Exception as e:
                     logger.error(
@@ -551,6 +662,17 @@ class SubscriptionReminderFeature(BaseFeature):
                             uid,
                             anchor,
                         )
+                        try:
+                            await self.user_storage.log_interaction(
+                                user_id=uid,
+                                event_category="renewal",
+                                event_type="churn_sent",
+                                data={"slug": slug, "days_after_exit": days_after},
+                                source="subscription_reminder",
+                                outcome="success",
+                            )
+                        except Exception:
+                            pass
                     await asyncio.sleep(0.5)
                 except Exception as e:
                     logger.error(

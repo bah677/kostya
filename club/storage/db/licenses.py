@@ -314,6 +314,7 @@ class LicensesMixin:
         audit_source: str = "subscription_payment",
         audit_payment_id: Optional[int] = None,
         audit_order_id: Optional[int] = None,
+        origin: Optional[str] = None,
     ) -> bool:
         """Создаёт или обновляет лицензию пользователя.
 
@@ -321,6 +322,7 @@ class LicensesMixin:
         """
         try:
             prev_expires: Optional[datetime] = None
+            origin_norm = (origin or "").strip() or None
             async with self.get_connection() as conn:
                 row_prev = await conn.fetchrow(
                     "SELECT expires_at FROM license WHERE user_id = $1",
@@ -334,33 +336,53 @@ class LicensesMixin:
                     user_id,
                 )
                 if existing:
-                    await conn.execute(
-                        """
-                        UPDATE license
-                        SET expires_at = $1,
-                            status = 'active',
-                            license_type = $2,
-                            payment_id = $3,
-                            updated_at = NOW()
-                        WHERE user_id = $4
-                        """,
-                        expires_at,
-                        license_type,
-                        order_id,
-                        user_id,
-                    )
+                    if origin_norm:
+                        await conn.execute(
+                            """
+                            UPDATE license
+                            SET expires_at = $1,
+                                status = 'active',
+                                license_type = $2,
+                                payment_id = $3,
+                                origin = $5,
+                                updated_at = NOW()
+                            WHERE user_id = $4
+                            """,
+                            expires_at,
+                            license_type,
+                            order_id,
+                            user_id,
+                            origin_norm,
+                        )
+                    else:
+                        await conn.execute(
+                            """
+                            UPDATE license
+                            SET expires_at = $1,
+                                status = 'active',
+                                license_type = $2,
+                                payment_id = $3,
+                                updated_at = NOW()
+                            WHERE user_id = $4
+                            """,
+                            expires_at,
+                            license_type,
+                            order_id,
+                            user_id,
+                        )
                     logger.info(f"✅ License updated for user {user_id} until {expires_at}")
                 else:
                     await conn.execute(
                         """
                         INSERT INTO license
-                        (user_id, license_type, expires_at, payment_id, status)
-                        VALUES ($1, $2, $3, $4, 'active')
+                        (user_id, license_type, expires_at, payment_id, status, origin)
+                        VALUES ($1, $2, $3, $4, 'active', COALESCE($5, 'payment'))
                         """,
                         user_id,
                         license_type,
                         expires_at,
                         order_id,
+                        origin_norm,
                     )
                     logger.info(f"✅ New license created for user {user_id} until {expires_at}")
 
@@ -371,7 +393,7 @@ class LicensesMixin:
                 source=audit_source,
                 order_id=audit_order_id if audit_order_id is not None else order_id,
                 payment_id=audit_payment_id,
-                meta={"license_type": license_type},
+                meta={"license_type": license_type, "origin": origin_norm},
             )
             return True
         except Exception as e:
@@ -664,7 +686,7 @@ class LicensesMixin:
             async with self.get_connection() as conn:
                 rows = await conn.fetch(
                     """
-                    SELECT l.user_id, l.expires_at, u.first_name
+                    SELECT l.user_id, l.expires_at, l.origin, l.license_type, u.first_name
                     FROM license l
                     JOIN users u ON l.user_id = u.user_id
                     WHERE l.status = 'active'
