@@ -127,6 +127,7 @@ class AgentsClient:
 
     def __init__(self, user_storage, *, system_prompt_override: Optional[str] = None):
         self.user_storage = user_storage
+        self.last_chat_finish_reason: Optional[str] = None
 
         self.client = AsyncOpenAI(
             api_key=os.getenv("DEEPSEEK_API_KEY"),
@@ -150,8 +151,18 @@ class AgentsClient:
     # Сколько последних сообщений из DM подаём агенту в контекст.
     HISTORY_LIMIT = 20
 
-    async def run(self, user_message: str, user_id: int) -> Optional[str]:
-        """Запрос к DeepSeek с историей; ответ логируется middleware'ами."""
+    async def run(
+        self,
+        user_message: str,
+        user_id: int,
+        *,
+        thinking: Optional[ThinkingMode] = None,
+    ) -> Optional[str]:
+        """Запрос к DeepSeek с историей; ответ логируется middleware'ами.
+
+        thinking: None — поведение API по умолчанию; ``disabled`` — без reasoning
+        (когда thinking съел весь max_tokens и content пустой).
+        """
         try:
             history = await self.user_storage.get_private_chat_history(
                 user_id, limit=self.HISTORY_LIMIT
@@ -170,7 +181,8 @@ class AgentsClient:
                 messages.append({"role": "user", "content": user_message})
 
             logger.info(
-                "📨 DeepSeek request for user %s: %s messages (history_rows=%s, dup_user_skipped=%s)",
+                "📨 DeepSeek request for user %s: %s messages (history_rows=%s, "
+                "dup_user_skipped=%s thinking=%s)",
                 user_id,
                 len(messages),
                 len(history),
@@ -180,16 +192,21 @@ class AgentsClient:
                     and _strip_for_history_match(history[-1]["content"])
                     == _strip_for_history_match(user_message)
                 ),
+                thinking or "default",
             )
+
+            create_kwargs = {
+                "model": self.CHAT_MODEL,
+                "messages": messages,
+                "temperature": 0.7,
+                "max_tokens": 2048,
+            }
+            if thinking:
+                create_kwargs["extra_body"] = {"thinking": {"type": thinking}}
 
             async def _once():
                 return await asyncio.wait_for(
-                    self.client.chat.completions.create(
-                        model=self.CHAT_MODEL,
-                        messages=messages,
-                        temperature=0.7,
-                        max_tokens=2048,
-                    ),
+                    self.client.chat.completions.create(**create_kwargs),
                     timeout=_DEEPSEEK_CHAT_WAIT_SEC,
                 )
 
@@ -200,12 +217,14 @@ class AgentsClient:
             usage = getattr(response, "usage", None)
             request_id = str(uuid.uuid4())
             choice = response.choices[0] if response.choices else None
+            finish_reason = getattr(choice, "finish_reason", None)
+            self.last_chat_finish_reason = finish_reason
             reply_text = _message_text(choice.message if choice else None)
             if not reply_text:
                 logger.warning(
                     "DeepSeek chat empty content user=%s finish=%s",
                     user_id,
-                    getattr(choice, "finish_reason", None),
+                    finish_reason,
                 )
 
             await self.user_storage.log_llm_completion_usage(

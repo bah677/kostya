@@ -2,7 +2,7 @@
 import asyncio
 import logging
 import time
-from collections import deque
+from collections import Counter, deque
 from typing import Deque, Optional, Tuple
 
 from aiogram import Dispatcher
@@ -24,6 +24,13 @@ from config import config
 logger = logging.getLogger(__name__)
 
 _RETRY_DELAYS = (2.0, 6.0, 15.0)
+# 1–2: DeepSeek как есть; 3: без thinking; 4: OpenAI
+_RETRY_STEPS = (
+    {"thinking": None, "prefer_openai": False},
+    {"thinking": None, "prefer_openai": False},
+    {"thinking": "disabled", "prefer_openai": False},
+    {"thinking": None, "prefer_openai": True},
+)
 _SOFT_FAIL_TEXT = (
     "Мне нужно немного больше времени, чтобы ответить.\n"
     "Я вернусь к вашему сообщению — не нужно писать заново."
@@ -31,10 +38,15 @@ _SOFT_FAIL_TEXT = (
 
 # sliding window: (monotonic_ts, ok:bool)
 _GEN_ATTEMPTS: Deque[Tuple[float, bool]] = deque(maxlen=500)
+# recent fail reasons in the same window: (monotonic_ts, reason)
+_GEN_FAIL_REASONS: Deque[Tuple[float, str]] = deque(maxlen=200)
 
 
-def _record_gen_attempt(ok: bool) -> None:
-    _GEN_ATTEMPTS.append((time.monotonic(), bool(ok)))
+def _record_gen_attempt(ok: bool, *, reason: str = "") -> None:
+    now = time.monotonic()
+    _GEN_ATTEMPTS.append((now, bool(ok)))
+    if not ok and reason:
+        _GEN_FAIL_REASONS.append((now, reason.strip()[:160]))
 
 
 def _gen_error_rate_5m() -> Tuple[float, int, int]:
@@ -45,6 +57,43 @@ def _gen_error_rate_5m() -> Tuple[float, int, int]:
     fails = sum(1 for _, ok in window if not ok)
     total = len(window)
     return fails / total, fails, total
+
+
+def _short_fail_reason(err: Optional[BaseException], *, finish: Optional[str] = None) -> str:
+    if err is None and not finish:
+        return "неизвестно"
+    msg = (str(err) if err else "").strip()
+    low = msg.lower()
+    fin = (finish or "").strip().lower()
+    if "empty_response" in low or not msg and fin:
+        if fin == "length" or "finish=length" in low:
+            return "DeepSeek: пустой ответ (finish=length — лимит токенов/reasoning)"
+        if fin:
+            return f"DeepSeek: пустой ответ (finish={finish})"
+        return "DeepSeek: пустой ответ"
+    if "timeout" in low or isinstance(err, asyncio.TimeoutError):
+        return "таймаут DeepSeek/OpenAI"
+    if "429" in low or "rate limit" in low:
+        return "лимит запросов API (429)"
+    if "402" in low or "insufficient" in low or "balance" in low:
+        return "баланс/оплата API"
+    if "503" in low or "502" in low or "500" in low or "overloaded" in low:
+        return "API временно недоступен (5xx)"
+    if "connect" in low or "connection" in low:
+        return "сеть/соединение с API"
+    name = type(err).__name__ if err else "Error"
+    brief = msg.replace("\n", " ")[:100] if msg else name
+    return f"{name}: {brief}" if msg else name
+
+
+def _top_fail_reasons_5m(*, limit: int = 3) -> str:
+    now = time.monotonic()
+    reasons = [r for ts, r in _GEN_FAIL_REASONS if now - ts <= 300.0]
+    if not reasons:
+        return ""
+    counts = Counter(reasons).most_common(limit)
+    parts = [f"{reason} ×{n}" if n > 1 else reason for reason, n in counts]
+    return "; ".join(parts)
 
 
 class MessagingFeature(BaseFeature):
@@ -125,13 +174,32 @@ class MessagingFeature(BaseFeature):
     async def _get_agent_response_with_retries(
         self, user_id: int, question: str
     ) -> Optional[str]:
-        """3 попытки: 2с / 6с / 15с+OpenAI fallback."""
+        """До 4 попыток: DS → DS → DS без thinking → OpenAI."""
         last_err: Optional[BaseException] = None
-        for attempt, delay in enumerate(_RETRY_DELAYS, start=1):
+        empty_count = 0
+        for attempt, step in enumerate(_RETRY_STEPS, start=1):
+            # Без thinking — только после двух пустых ответов; иначе на 3-м шаге
+            # при непустых сбоях (таймаут и т.п.) сразу OpenAI.
+            use_no_thinking = bool(step.get("thinking") == "disabled")
+            use_openai = bool(step.get("prefer_openai"))
+            if use_no_thinking and empty_count < 2:
+                use_openai = True
+                use_no_thinking = False
             try:
-                if attempt == 3:
+                if use_openai:
                     text = await self._get_agent_response(
                         user_id, question, prefer_openai=True
+                    )
+                elif use_no_thinking:
+                    logger.info(
+                        "agent retry uid=%s attempt=%s DeepSeek thinking=disabled "
+                        "(after %s empty)",
+                        user_id,
+                        attempt,
+                        empty_count,
+                    )
+                    text = await self._get_agent_response(
+                        user_id, question, thinking="disabled"
                     )
                 else:
                     text = await self._get_agent_response(user_id, question)
@@ -139,17 +207,28 @@ class MessagingFeature(BaseFeature):
                     _record_gen_attempt(True)
                     await self._maybe_clear_mass_failure()
                     return text
-                _record_gen_attempt(False)
-                last_err = RuntimeError("empty_response")
+                empty_count += 1
+                finish = getattr(self.agents_client, "last_chat_finish_reason", None)
+                last_err = RuntimeError(f"empty_response finish={finish}")
+                _record_gen_attempt(
+                    False,
+                    reason=_short_fail_reason(last_err, finish=finish),
+                )
             except Exception as e:
                 last_err = e
-                _record_gen_attempt(False)
+                finish = getattr(self.agents_client, "last_chat_finish_reason", None)
+                _record_gen_attempt(
+                    False,
+                    reason=_short_fail_reason(e, finish=finish),
+                )
                 logger.error(
                     "❌ Agent attempt %s failed user %s: %s", attempt, user_id, e
                 )
             await self._maybe_trip_mass_failure()
-            if attempt < len(_RETRY_DELAYS):
-                await asyncio.sleep(delay)
+            if use_openai:
+                break
+            delay_idx = min(attempt - 1, len(_RETRY_DELAYS) - 1)
+            await asyncio.sleep(_RETRY_DELAYS[delay_idx])
         logger.error(
             "agent all retries failed user=%s err=%s", user_id, last_err
         )
@@ -168,6 +247,8 @@ class MessagingFeature(BaseFeature):
             await self.user_storage.pause_all_pending_replies()
         except Exception:
             pass
+        why = _top_fail_reasons_5m()
+        why_line = f"\nПричина: {why}." if why else ""
         tg = self.bot.bot if self.bot else None
         if tg:
             tid = int(getattr(config, "TECH_ALERT_TOPIC_ID", 0) or 0) or None
@@ -178,6 +259,7 @@ class MessagingFeature(BaseFeature):
                         f"🚨 <b>Массовый сбой генерации</b>\n"
                         f"За 5 мин ошибок: {fails}/{total} ({rate:.0%}).\n"
                         f"Nudge/pending приостановлены."
+                        f"{why_line}"
                     ),
                     message_thread_id=tid,
                 )
@@ -217,6 +299,7 @@ class MessagingFeature(BaseFeature):
         question: str,
         *,
         prefer_openai: bool = False,
+        thinking: Optional[str] = None,
     ) -> Optional[str]:
         try:
             if not self.agents_client:
@@ -226,6 +309,12 @@ class MessagingFeature(BaseFeature):
                 return await self.agents_client.run_openai_fallback(
                     user_message=question,
                     user_id=user_id,
+                )
+            if thinking:
+                return await self.agents_client.run(
+                    user_message=question,
+                    user_id=user_id,
+                    thinking=thinking,  # type: ignore[arg-type]
                 )
             return await self.agents_client.run(
                 user_message=question,
