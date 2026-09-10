@@ -286,25 +286,7 @@ class LegalConsentFeature(BaseFeature):
 
     async def _mark_user_inactive(self, user_id: int) -> None:
         try:
-            async with self.user_storage.get_connection() as conn:
-                try:
-                    await conn.execute(
-                        """
-                        UPDATE users
-                        SET is_active = FALSE, updated_at = NOW()
-                        WHERE user_id = $1 AND is_active = TRUE
-                        """,
-                        user_id,
-                    )
-                except Exception:
-                    await conn.execute(
-                        """
-                        UPDATE users
-                        SET is_active = FALSE
-                        WHERE user_id = $1 AND is_active = TRUE
-                        """,
-                        user_id,
-                    )
+            await self.user_storage.deactivate_user(user_id)
         except Exception as e:
             logger.warning("[%s] failed to mark user %s inactive: %s", self.name, user_id, e)
 

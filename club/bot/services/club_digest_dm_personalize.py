@@ -42,7 +42,7 @@ async def personalize_digest_for_user(
         f"Общий дайджест вчерашнего дня в клубе:\n{base_digest_html}\n\n"
         f"Недавняя переписка с ботом:\n{_format_dm_history(dm_history)}"
     )
-    raw, _ = await logged_deepseek_chat(
+    raw, usage = await logged_deepseek_chat(
         user_storage,
         user_id=user_id,
         request_kind=CLUB_DIGEST_PERSONALIZE,
@@ -50,10 +50,20 @@ async def personalize_digest_for_user(
         system=DIGEST_PERSONALIZE_SYSTEM,
         user=user_block,
         temperature=0.55,
-        max_tokens=900,
+        max_tokens=1200,
+        # v4 flash thinking иначе съедает budget → текст обрывается mid-sentence
+        thinking="disabled",
         timeout_sec=90.0,
     )
     if not raw:
+        return None
+    finish = (usage or {}).get("finish_reason")
+    if finish == "length":
+        logger.warning(
+            "digest personalize truncated uid=%s len=%s — skip send",
+            user_id,
+            len(raw),
+        )
         return None
     safe = sanitize_telegram_html(raw.strip())
     return safe if len(safe) >= 40 else None

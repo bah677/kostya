@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow,noarchive">
+<title>Личка клубного бота</title>
+<link rel="stylesheet" href="static/style.css">
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <header class="side-head">
+      <div class="title">Личка бота</div>
+      <div class="bot-switch" id="bot-switch" role="tablist" aria-label="Бот">
+        <button type="button" class="bot-btn on" data-bot="club">Клуб</button>
+        <button type="button" class="bot-btn" data-bot="biblia">БиблияБот</button>
+      </div>
+      <div class="sub" id="bot-sub">клуб · reports</div>
+      <input id="search" type="search" placeholder="Поиск по полям users…" autocomplete="off">
+      <div class="chips" id="chips"></div>
+      <label class="sort-row">Сортировка
+        <select id="sort">
+          <option value="last_activity">активность</option>
+          <option value="last_dm">последняя личка</option>
+          <option value="created_at">регистрация</option>
+          <option value="expires_at">окончание подписки</option>
+          <option value="name">имя</option>
+        </select>
+      </label>
+      <div class="meta" id="list-meta"></div>
+    </header>
+    <div class="user-list" id="user-list"></div>
+  </aside>
+
+  <main class="chat">
+    <header class="chat-head" id="chat-head">
+      <div class="empty-hint">Выбери человека слева</div>
+    </header>
+    <div class="chat-body" id="chat-body">
+      <div class="bubbles" id="bubbles">
+        <div class="load-older" id="load-older" hidden>↑ ещё старше</div>
+      </div>
+    </div>
+  </main>
+</div>
+<script src="static/app.js"></script>
+</body>
+</html>

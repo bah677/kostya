@@ -173,7 +173,7 @@ async def personalize_scripture_for_user(
         f"Стих (HTML):\n{batch.quote_html}\n\n"
         f"Переписка с ботом:\n{_format_dm_history(dm_history)}"
     )
-    raw, _ = await logged_deepseek_chat(
+    raw, usage = await logged_deepseek_chat(
         user_storage,
         user_id=user_id,
         request_kind=CLUB_SCRIPTURE_PERSONALIZE,
@@ -181,10 +181,18 @@ async def personalize_scripture_for_user(
         system=SCRIPTURE_PERSONALIZE_SYSTEM,
         user=user_block,
         temperature=0.55,
-        max_tokens=700,
+        max_tokens=900,
+        thinking="disabled",
         timeout_sec=90.0,
     )
     if not raw:
+        return None
+    if (usage or {}).get("finish_reason") == "length":
+        logger.warning(
+            "scripture personalize truncated uid=%s len=%s — skip send",
+            user_id,
+            len(raw),
+        )
         return None
     safe = sanitize_telegram_html(raw.strip())
     if "<blockquote" not in safe.lower():

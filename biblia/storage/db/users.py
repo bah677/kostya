@@ -119,7 +119,8 @@ class UsersMixin:
                         language_code = EXCLUDED.language_code,
                         is_premium = EXCLUDED.is_premium,
                         last_activity = EXCLUDED.last_activity,
-                        is_active = TRUE
+                        is_active = TRUE,
+                        bot_blocked_at = NULL
                     """,
                     user_data["user_id"],
                     user_data.get("username"),
@@ -321,7 +322,9 @@ class UsersMixin:
                 await conn.execute(
                     """
                     UPDATE users
-                    SET is_active = FALSE, updated_at = NOW()
+                    SET is_active = FALSE,
+                        updated_at = NOW(),
+                        bot_blocked_at = COALESCE(bot_blocked_at, NOW())
                     WHERE user_id = $1
                     """,
                     user_id,

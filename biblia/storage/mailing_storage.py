@@ -298,7 +298,11 @@ class MailingStorage:
                 else:
                     await conn.execute(
                         """
-                        UPDATE users SET is_active = false WHERE user_id = $1
+                        UPDATE users
+                        SET is_active = false,
+                            updated_at = NOW(),
+                            bot_blocked_at = COALESCE(bot_blocked_at, NOW())
+                        WHERE user_id = $1
                         """,
                         user_id,
                     )
@@ -510,7 +514,10 @@ class MailingStorage:
             async with self.db.get_connection() as conn:
                 await conn.execute(
                     """
-                    UPDATE users SET is_active = FALSE
+                    UPDATE users
+                    SET is_active = FALSE,
+                        updated_at = NOW(),
+                        bot_blocked_at = COALESCE(bot_blocked_at, NOW())
                     WHERE user_id = $1 AND is_active = TRUE
                     """,
                     user_id,

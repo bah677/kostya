@@ -27,13 +27,18 @@ async def logged_deepseek_chat(
     timeout_sec: float = 240.0,
     temperature: float = 0.35,
     max_tokens: Optional[int] = None,
+    thinking: Optional[str] = None,
     metadata: Optional[Dict[str, Any]] = None,
 ) -> Tuple[Optional[str], Optional[Dict[str, Any]]]:
     """
     DeepSeek chat/completions с логированием usage.
 
+    thinking: None — default API; ``disabled`` — без reasoning (иначе v4 часто
+    съедает весь max_tokens и content обрывается mid-sentence).
+
     Returns:
         (content_text | None, usage_dict | None)
+        usage_dict дополнительно может содержать ``finish_reason``.
     """
     payload: Dict[str, Any] = {
         "model": model,
@@ -45,6 +50,8 @@ async def logged_deepseek_chat(
     }
     if max_tokens is not None:
         payload["max_tokens"] = max_tokens
+    if thinking:
+        payload["thinking"] = {"type": thinking}
 
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -63,7 +70,9 @@ async def logged_deepseek_chat(
     if not choices:
         return None, None
 
-    content = (choices[0].get("message") or {}).get("content") or None
+    choice0 = choices[0] or {}
+    content = (choice0.get("message") or {}).get("content") or None
+    finish_reason = choice0.get("finish_reason")
     usage_raw = data.get("usage")
 
     if user_storage and usage_raw:
@@ -76,7 +85,11 @@ async def logged_deepseek_chat(
                 usage=usage_raw,
                 request_kind=request_kind,
                 request_id=request_id,
-                metadata=metadata,
+                metadata={
+                    **(metadata or {}),
+                    **({"finish_reason": finish_reason} if finish_reason else {}),
+                    **({"thinking": thinking} if thinking else {}),
+                },
             )
             pt, ct, tt, *_ = extract_token_counts_and_extras(usage_raw)
             await user_storage.log_interaction(
@@ -91,6 +104,8 @@ async def logged_deepseek_chat(
                     "prompt_tokens": pt,
                     "completion_tokens": ct,
                     "total_tokens": tt,
+                    "finish_reason": finish_reason,
+                    "thinking": thinking,
                 },
                 source="deepseek",
                 outcome="success",
@@ -98,6 +113,16 @@ async def logged_deepseek_chat(
         except Exception as e:
             logger.warning("logged_deepseek_chat log failed: %s", e)
 
-    usage_dict = usage_raw if isinstance(usage_raw, dict) else None
+    usage_dict = dict(usage_raw) if isinstance(usage_raw, dict) else {}
+    if finish_reason:
+        usage_dict["finish_reason"] = finish_reason
     text = (content or "").strip() or None
-    return text, usage_dict
+    if finish_reason == "length":
+        logger.warning(
+            "logged_deepseek_chat %s uid=%s finish=length content_len=%s thinking=%s",
+            request_kind,
+            user_id,
+            len(text or ""),
+            thinking,
+        )
+    return text, usage_dict or None

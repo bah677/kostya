@@ -1206,20 +1206,8 @@ class FollowupFeature(BaseFeature):
     async def _mark_user_inactive(self, user_id: int) -> None:
         """Помечает пользователя как неактивного (заблокировал бота)"""
         try:
-            async with self.user_storage.get_connection() as conn:
-                try:
-                    await conn.execute("""
-                        UPDATE users 
-                        SET is_active = FALSE, 
-                            updated_at = NOW()
-                        WHERE user_id = $1 AND is_active = TRUE
-                    """, user_id)
-                except Exception:
-                    await conn.execute("""
-                        UPDATE users 
-                        SET is_active = FALSE
-                        WHERE user_id = $1 AND is_active = TRUE
-                    """, user_id)
+            ok = await self.user_storage.deactivate_user(user_id)
+            if ok:
                 logger.info(f"🚫 User {user_id} marked as inactive (blocked bot)")
         except Exception as e:
             logger.error(f"❌ Failed to mark user {user_id} as inactive: {e}")
