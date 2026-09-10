@@ -19,6 +19,10 @@ from bot.admin_guard import is_telegram_admin
 from bot.features.base import BaseFeature
 from bot.services.club_daily_digest import build_club_daily_digest
 from bot.services.club_digest_dm_personalize import personalize_digest_for_user
+from bot.services.club_digest_eligibility import (
+    DIGEST_DM_MIN_HUMAN_MESSAGES,
+    decide_digest_dm_eligibility,
+)
 from bot.services.club_engagement_policy import decide_club_outreach
 from bot.services.club_outreach_pilot import refresh_pilot_cohort, resolve_outreach_recipients
 from bot.services.club_scripture_dm import (
@@ -147,11 +151,40 @@ class ClubOutreachDmFeature(BaseFeature):
             logger.info("[%s] digest batch skipped: %s", self.name, result.skip_reason)
             return
 
+        if int(result.message_count or 0) < DIGEST_DM_MIN_HUMAN_MESSAGES:
+            logger.info(
+                "[%s] digest DM skipped: too_few_messages=%s (need %s)",
+                self.name,
+                result.message_count,
+                DIGEST_DM_MIN_HUMAN_MESSAGES,
+            )
+            return
+
         recipients = await resolve_outreach_recipients(self.user_storage)
         sent = skipped = failed = 0
         today = date.today()
+        anchors = list(result.message_anchors or ())
+        anchors_block = ""
+        if anchors:
+            items = "\n".join(
+                f'• <a href="{a}">к разговору</a>' for a in anchors[:3]
+            )
+            anchors_block = f"\n\n{items}"
 
         for uid in recipients:
+            profile = await self.user_storage.get_member_profile(uid)
+            outreach_state = await self.user_storage.get_outreach_state(uid)
+            fw = await self.user_storage.get_club_first_week(uid)
+            elig = decide_digest_dm_eligibility(
+                user_id=uid,
+                profile=profile,
+                outreach_state=outreach_state,
+                first_week=fw,
+            )
+            if not elig.allow:
+                skipped += 1
+                continue
+
             decision = await decide_club_outreach(
                 self.user_storage, uid, kind="digest", api_key=api_key
             )
@@ -175,6 +208,8 @@ class ClubOutreachDmFeature(BaseFeature):
             )
             if not html:
                 html = result.html
+            if anchors_block and "t.me/c/" not in (html or ""):
+                html = f"{html}{anchors_block}"
 
             ok = await self._send_dm(uid, html)
             if ok:
@@ -184,6 +219,20 @@ class ClubOutreachDmFeature(BaseFeature):
                 await self.user_storage.log_member_profile_event(
                     uid, "club_digest_dm_sent", meta={"pilot": config.CLUB_OUTREACH_DM_PILOT_ONLY}
                 )
+                try:
+                    await self.user_storage.log_interaction(
+                        user_id=uid,
+                        event_category="first_week",
+                        event_type="digest_sent",
+                        data={
+                            "topics_count": len(anchors) or None,
+                            "message_count": result.message_count,
+                        },
+                        source="club_outreach_dm",
+                        outcome="success",
+                    )
+                except Exception:
+                    pass
             else:
                 failed += 1
             await asyncio.sleep(0.35)

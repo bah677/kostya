@@ -93,6 +93,22 @@ class MemberProfilesMixin:
         except Exception as e:
             logger.warning("log_member_profile_event uid=%s: %s", user_id, e)
 
+    async def set_member_onboarding_stage(self, user_id: int, stage: str) -> None:
+        await self.ensure_member_profile(user_id)
+        try:
+            async with self.get_connection() as conn:
+                await conn.execute(
+                    """
+                    UPDATE member_profiles
+                    SET onboarding_stage = $2, updated_at = NOW()
+                    WHERE user_id = $1
+                    """,
+                    user_id,
+                    (stage or "started").strip()[:32],
+                )
+        except Exception as e:
+            logger.error("set_member_onboarding_stage uid=%s: %s", user_id, e)
+
     async def on_member_subscription_started(
         self,
         user_id: int,
@@ -350,7 +366,7 @@ class MemberProfilesMixin:
         return True
 
     async def list_proactive_candidates(self, *, limit: int = 60) -> List[Dict[str, Any]]:
-        """Участники с активной лицензией для проактива (приоритет — давно без DM)."""
+        """Участники с активной лицензией; открытая первая неделя — в начале очереди."""
         try:
             async with self.get_connection() as conn:
                 rows = await conn.fetch(
@@ -365,14 +381,27 @@ class MemberProfilesMixin:
                         )::int AS days_to_expiry,
                         mp.last_dm_at,
                         mp.onboarding_stage,
-                        mp.proactive_ignored_streak
+                        mp.proactive_ignored_streak,
+                        cfw.step AS fw_step,
+                        cfw.msgs_group AS fw_msgs_group,
+                        cfw.started_at AS fw_started_at,
+                        cfw.done_at AS fw_done_at,
+                        cfw.ended_at AS fw_ended_at,
+                        cfw.origin AS fw_origin,
+                        cfw.step4_variant AS fw_step4_variant,
+                        (cfw.user_id IS NOT NULL
+                         AND cfw.ended_at IS NULL) AS first_week_open
                     FROM license l
                     JOIN users u ON u.user_id = l.user_id
                     LEFT JOIN member_profiles mp ON mp.user_id = l.user_id
+                    LEFT JOIN club_first_week cfw
+                      ON cfw.user_id = l.user_id
+                     AND cfw.ended_at IS NULL
                     WHERE l.status = 'active'
                       AND l.expires_at > NOW()
                       AND COALESCE(u.is_active, TRUE)
                     ORDER BY
+                        (cfw.user_id IS NOT NULL AND cfw.ended_at IS NULL) DESC,
                         mp.last_dm_at NULLS FIRST,
                         l.expires_at ASC
                     LIMIT $1

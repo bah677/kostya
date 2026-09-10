@@ -82,6 +82,8 @@ class ClubDigestBuildResult:
     participant_count: int
     skipped: bool
     skip_reason: str = ""
+    #: До 3 deep-link на сообщения группы (для шагов первой недели / DM).
+    message_anchors: tuple = ()
 
 
 def _mention(user_id: int, username: Optional[str], first_name: Optional[str]) -> str:
@@ -309,9 +311,44 @@ async def build_club_daily_digest(
 
     title = digest_title_line(report_date=report_date)
     full = f"{title}\n\n{html_body}"
+    anchors: list[str] = []
+    try:
+        from bot.services.club_greeter_service import club_message_deep_link
+
+        scored = sorted(
+            (
+                r
+                for r in rows
+                if int(r.get("telegram_message_id") or 0) > 0
+                and str(r.get("content") or "").strip()
+            ),
+            key=lambda r: len(str(r.get("content") or "")),
+            reverse=True,
+        )
+        for r in scored[:3]:
+            mid = int(r["telegram_message_id"])
+            thr = r.get("metadata") or {}
+            if isinstance(thr, str):
+                thr = {}
+            thread_id = None
+            try:
+                thread_id = int((thr or {}).get("message_thread_id") or 0) or None
+            except Exception:
+                thread_id = None
+            anchors.append(
+                club_message_deep_link(
+                    chat_id=int(club_group_id),
+                    message_id=mid,
+                    thread_id=thread_id,
+                )
+            )
+    except Exception as e:
+        logger.warning("digest anchors: %s", e)
+
     return ClubDigestBuildResult(
         html=full,
         message_count=len(rows),
         participant_count=n_authors,
         skipped=False,
+        message_anchors=tuple(anchors),
     )

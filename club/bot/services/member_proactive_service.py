@@ -217,16 +217,102 @@ async def run_proactive_batch(
     max_users: int,
 ) -> int:
     """Обрабатывает до max_users кандидатов. Возвращает число отправленных."""
+    from bot.services.club_first_week_steps import resolve_due_step
+
+    await user_storage.close_expired_first_weeks()
+    await user_storage.close_first_weeks_without_access()
+
     candidates = await user_storage.list_proactive_candidates(
         limit=max_users * 3,
     )
     sent = 0
     slug = proactive_slug_for_today(datetime.now(MSK))
 
+    anchors_cache: Optional[list] = None
+    topic_cache: Optional[str] = None
+
+    async def _anchors() -> list:
+        nonlocal anchors_cache
+        if anchors_cache is None:
+            from bot.services.club_group_anchors import fetch_recent_group_anchors
+
+            anchors_cache = await fetch_recent_group_anchors(
+                user_storage.pool,
+                club_group_id=int(config.CLUB_GROUP_ID or 0),
+                exclude_topic_id=int(config.CLUB_DIGEST_TOPIC_ID or 0),
+            )
+        return anchors_cache
+
+    async def _topic() -> str:
+        nonlocal topic_cache
+        if topic_cache is None:
+            from bot.services.club_group_anchors import fetch_recent_group_topic_snippet
+
+            topic_cache = await fetch_recent_group_topic_snippet(
+                user_storage.pool,
+                club_group_id=int(config.CLUB_GROUP_ID or 0),
+                exclude_topic_id=int(config.CLUB_DIGEST_TOPIC_ID or 0),
+            )
+        return topic_cache or ""
+
     for row in candidates:
         if sent >= max_users:
             break
         uid = int(row["user_id"])
+
+        first_week_open = bool(row.get("first_week_open"))
+        fw = None
+        if first_week_open:
+            fw = {
+                "user_id": uid,
+                "step": row.get("fw_step") or 0,
+                "msgs_group": row.get("fw_msgs_group") or 0,
+                "started_at": row.get("fw_started_at"),
+                "done_at": row.get("fw_done_at"),
+                "ended_at": row.get("fw_ended_at"),
+                "step4_variant": row.get("fw_step4_variant"),
+            }
+
+        due = resolve_due_step(fw) if fw and fw.get("started_at") else None
+        if due and due.skip_reason:
+            await user_storage.mark_first_week_step(uid, due.step)
+            try:
+                await user_storage.log_interaction(
+                    user_id=uid,
+                    event_category="first_week",
+                    event_type="week1_step_skipped",
+                    data={"step": due.step, "reason": due.skip_reason},
+                    source="first_week",
+                    outcome="success",
+                )
+            except Exception:
+                pass
+            if due.step >= 6:
+                await user_storage.end_club_first_week(uid, reason="completed_steps")
+            continue
+
+        if due and due.channel == "dm" and due.composer_hint:
+            hint = due.composer_hint
+            if due.step in (2, 3, 5):
+                from bot.services.club_group_anchors import format_anchors_for_hint
+
+                hint = f"{hint}\n\n{format_anchors_for_hint(await _anchors())}"
+            if due.step == 5:
+                topic = await _topic()
+                if topic:
+                    hint = f"{hint}\n\nТема обсуждения в группе:\n{topic}"
+            plan = {
+                "should_send": True,
+                "goal": "first_week",
+                "reason": f"first_week_step_{due.step}",
+                "composer_hint": hint,
+            }
+        elif first_week_open and due is None:
+            # неделя открыта, шаг ещё не созрел — не зовём обычный planner
+            continue
+        else:
+            plan = None
+
         if (
             await user_storage.get_proactive_sent_count_today(uid, today=today_msk_date)
             >= config.CLUB_OUTREACH_DAILY_LIMIT
@@ -252,14 +338,15 @@ async def run_proactive_batch(
             except (TypeError, ValueError):
                 days_left = None
 
-        plan = await plan_proactive_for_user(
-            llm_client,
-            user_storage,
-            uid,
-            profile=profile,
-            schedule_addon=schedule_addon,
-            days_to_expiry=days_left,
-        )
+        if plan is None:
+            plan = await plan_proactive_for_user(
+                llm_client,
+                user_storage,
+                uid,
+                profile=profile,
+                schedule_addon=schedule_addon,
+                days_to_expiry=days_left,
+            )
         if not plan.get("should_send"):
             logger.info(
                 "proactive skip uid=%s reason=%s",
@@ -296,6 +383,34 @@ async def run_proactive_batch(
                 reason=str(plan.get("reason") or ""),
             )
             await user_storage.increment_proactive_sent_today(uid)
+            if due and due.channel == "dm":
+                await user_storage.mark_first_week_step(uid, due.step)
+                try:
+                    await user_storage.log_interaction(
+                        user_id=uid,
+                        event_category="first_week",
+                        event_type="week1_step_sent",
+                        data={"step": due.step, "channel": "dm"},
+                        source="first_week",
+                        outcome="success",
+                    )
+                except Exception:
+                    pass
+                if due.step == 3:
+                    try:
+                        await user_storage.touch_outreach_dm_sent(uid, kind="digest")
+                        await user_storage.log_interaction(
+                            user_id=uid,
+                            event_category="first_week",
+                            event_type="digest_sent",
+                            data={"via": "first_week_step3"},
+                            source="first_week",
+                            outcome="success",
+                        )
+                    except Exception:
+                        pass
+                if due.step >= 6:
+                    await user_storage.end_club_first_week(uid, reason="step6_sent")
             sent += 1
             logger.info(
                 "proactive sent uid=%s goal=%s",

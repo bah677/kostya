@@ -14,6 +14,7 @@ from storage.db.dialog_topics import DialogTopicsMixin
 from storage.db.followup import FollowupMixin
 from storage.db.gifts import GiftsMixin
 from storage.db.gift_wave import GiftWaveMixin
+from storage.db.club_first_week import ClubFirstWeekMixin
 from storage.db.legacy_reactivation import LegacyReactivationMixin
 from storage.db.licenses import LicensesMixin
 from storage.db.media_archive import MediaArchiveMixin
@@ -55,6 +56,7 @@ class Database(
     MemberOutreachMixin,
     ClubScheduleMixin,
     GiftWaveMixin,
+    ClubFirstWeekMixin,
     PromoCampaignsMixin,
     LegacyReactivationMixin,
     AttributionMixin,

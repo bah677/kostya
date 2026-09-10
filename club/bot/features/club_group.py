@@ -288,6 +288,45 @@ class ClubGroupFeature(BaseFeature):
                 except Exception:
                     pass
 
+            # Первая неделя: счётчик сообщений в группе
+            fw = await self.user_storage.bump_first_week_group_msg(user.id)
+            if fw:
+                try:
+                    hours_since = None
+                    started = fw.get("started_at")
+                    if isinstance(started, datetime):
+                        st = started if started.tzinfo else started.replace(tzinfo=MSK)
+                        hours_since = round(
+                            (datetime.now(MSK) - st.astimezone(MSK)).total_seconds()
+                            / 3600.0,
+                            2,
+                        )
+                    await self.user_storage.log_interaction(
+                        user_id=user.id,
+                        event_category="first_week",
+                        event_type="week1_group_msg",
+                        data={
+                            "ordinal": int(fw.get("msgs_group") or 0),
+                            "hours_since_start": hours_since,
+                        },
+                        source="first_week",
+                        outcome="success",
+                    )
+                    if fw.get("done_at") and int(fw.get("msgs_group") or 0) >= 3:
+                        await self.user_storage.log_interaction(
+                            user_id=user.id,
+                            event_category="first_week",
+                            event_type="week1_done",
+                            data={
+                                "msgs_group": int(fw["msgs_group"]),
+                                "hours_since_start": hours_since,
+                            },
+                            source="first_week",
+                            outcome="success",
+                        )
+                except Exception:
+                    pass
+
             # Встречающий — всем новичкам: первое сообщение в клубной группе
             prior = await self.user_storage.count_user_club_group_messages(
                 user.id, before_message_id=mid
@@ -386,6 +425,51 @@ class ClubGroupFeature(BaseFeature):
                                 event_type="wave_member_joined",
                                 data={"wave_id": wid},
                                 source="gift_wave",
+                                outcome="success",
+                            )
+                        except Exception:
+                            pass
+                    # Первая неделя: профиль + постановка (от входа в группу)
+                    try:
+                        await self.user_storage.ensure_member_profile(uid)
+                        await self.user_storage.set_member_onboarding_stage(
+                            uid, "started"
+                        )
+                    except Exception:
+                        pass
+                    origin = "payment"
+                    deadline_at = None
+                    try:
+                        lic = await self.user_storage.get_user_active_license(uid)
+                        if lic:
+                            origin = str(lic.get("origin") or "payment")
+                            if origin == "payment" and str(
+                                lic.get("license_type") or ""
+                            ) == "admin_grant":
+                                origin = "gift"
+                            deadline_at = lic.get("expires_at")
+                    except Exception:
+                        pass
+                    started = await self.user_storage.start_club_first_week(
+                        uid, origin=origin, deadline_at=deadline_at
+                    )
+                    if started:
+                        await self.user_storage.assign_step4_variant(uid)
+                        try:
+                            await self.user_storage.log_interaction(
+                                user_id=uid,
+                                event_category="first_week",
+                                event_type="week1_started",
+                                data={"origin": origin},
+                                source="first_week",
+                                outcome="success",
+                            )
+                            await self.user_storage.log_interaction(
+                                user_id=uid,
+                                event_category="first_week",
+                                event_type="week1_step_sent",
+                                data={"step": 1, "channel": "group"},
+                                source="first_week",
                                 outcome="success",
                             )
                         except Exception:

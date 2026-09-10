@@ -282,6 +282,7 @@ deploy_target() {
       --exclude='scripts/generate_welcome_questions.py' \
       --exclude='scripts/send_angel_pool_replay_notifications.py' \
       --exclude='scripts/reopen_wish_to_pool.py' \
+      --exclude='scripts/backfill_club_first_week.py' \
       "${CLUB_DEV_ROOT}/" "${CURRENT_PROD_ROOT}/"
     apply_twin_texts_if_needed
     sync_aboutclub_files
