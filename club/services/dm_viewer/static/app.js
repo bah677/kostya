@@ -12,14 +12,31 @@
   ];
   const TAGS_BIBLIA = [
     ["all", "все"],
-    ["active", "активная"],
-    ["expired", "просрочка"],
-    ["no_license", "без подписки"],
+    ["alive", "активен"],
     ["blocked", "заблокировал бота"],
     ["has_dm", "есть личка"],
-    ["onboarding", "без онбординга"],
+    ["donor", "жертвовал"],
+    ["no_donor", "без пожертвований"],
+    ["mail_off", "отписан от рассылок"],
     ["banned", "бан"],
   ];
+
+  const SORT_CLUB = [
+    ["last_activity", "активность"],
+    ["last_dm", "последняя личка"],
+    ["created_at", "регистрация"],
+    ["expires_at", "окончание подписки"],
+    ["name", "имя"],
+  ];
+  const SORT_BIBLIA = [
+    ["last_activity", "активность"],
+    ["last_dm", "последняя личка"],
+    ["created_at", "регистрация"],
+    ["name", "имя"],
+  ];
+
+  const TG_HTML_RE =
+    /<\/?(?:b|strong|i|em|u|ins|s|strike|del|code|pre|a|blockquote)\b/i;
 
   const state = {
     bot: "club",
@@ -40,6 +57,7 @@
   };
 
   const el = {
+    app: document.getElementById("app"),
     chips: document.getElementById("chips"),
     search: document.getElementById("search"),
     sort: document.getElementById("sort"),
@@ -53,8 +71,36 @@
     botSub: document.getElementById("bot-sub"),
   };
 
+  function isMobile() {
+    return window.matchMedia("(max-width: 820px)").matches;
+  }
+
+  function showChatPanel(on) {
+    el.app.classList.toggle("show-chat", Boolean(on));
+  }
+
+  function goBackToList() {
+    showChatPanel(false);
+    state.selected = null;
+    renderUsers(false);
+    renderHead(null);
+  }
+
+  function requestBackToList() {
+    if (isMobile() && history.state && history.state.dmChat) {
+      history.back();
+      return;
+    }
+    goBackToList();
+  }
+
+
   function tagsForBot() {
     return state.bot === "biblia" ? TAGS_BIBLIA : TAGS_CLUB;
+  }
+
+  function sortsForBot() {
+    return state.bot === "biblia" ? SORT_BIBLIA : SORT_CLUB;
   }
 
   function botLabel() {
@@ -83,6 +129,23 @@
       .replace(/</g, "&lt;")
       .replace(/>/g, "&gt;")
       .replace(/"/g, "&quot;");
+  }
+
+  /** Telegram HTML → безопасный HTML для пузыря. */
+  function formatBubbleHtml(raw) {
+    const text = String(raw ?? "");
+    if (!TG_HTML_RE.test(text)) {
+      return esc(text);
+    }
+    let out = text.replace(/<br\s*\/?>/gi, "\n");
+    // убрать неразрешённые теги (оставить содержимое)
+    out = out.replace(/<\/?(?!\/?(?:b|strong|i|em|u|ins|s|strike|del|code|pre|a|blockquote)\b)[^>]*>/gi, "");
+    // <a> без href — выкинуть обёртку
+    out = out.replace(/<a\s+(?![^>]*\bhref\s*=)[^>]*>([\s\S]*?)<\/a>/gi, "$1");
+    // экранировать «голый» текст вне тегов нельзя просто — доверяем Telegram-подмножеству после чистки
+    // но экранируем &lt; уже есть; незакрытые < как текст:
+    out = out.replace(/\n/g, "<br>");
+    return out;
   }
 
   function initials(name) {
@@ -124,6 +187,10 @@
     if (t === "has_dm") return "личка";
     if (t === "onboarding") return "онбординг";
     if (t === "greeter") return "встречающий";
+    if (t === "alive") return "активен";
+    if (t === "donor") return "донор";
+    if (t === "no_donor") return "без доната";
+    if (t === "mail_off") return "без рассылки";
     if (t.startsWith("origin:")) return t.slice(7);
     if (t.startsWith("touch:")) return t.slice(6);
     return t;
@@ -136,6 +203,16 @@
     el.botSub.textContent =
       state.bot === "biblia" ? "библия · reports" : "клуб · reports";
     document.title = `Личка · ${botLabel()}`;
+
+    const sorts = sortsForBot();
+    const allowed = new Set(sorts.map(([id]) => id));
+    if (!allowed.has(state.sort)) state.sort = "last_activity";
+    el.sort.innerHTML = sorts
+      .map(
+        ([id, label]) =>
+          `<option value="${id}"${state.sort === id ? " selected" : ""}>${label}</option>`
+      )
+      .join("");
   }
 
   function renderChips() {
@@ -209,23 +286,43 @@
 
   function renderHead(u) {
     if (!u) {
-      el.head.innerHTML = `<div class="empty-hint">Выбери человека слева</div>`;
+      el.head.innerHTML = `<div class="empty-hint">Выбери человека${isMobile() ? "" : " слева"}</div>`;
       return;
     }
     const uname = u.username ? `@${u.username}` : "";
-    const lic =
-      u.license_status === "active"
-        ? `подписка до ${fmtDT(u.license_expires_at)}`
-        : u.license_status === "expired"
-          ? `просрочена ${fmtDT(u.license_expires_at)}`
-          : "без подписки";
-    const blocked = u.bot_blocked_at
-      ? ` · блок бота с ${fmtDT(u.bot_blocked_at)}`
-      : u.is_active === false
-        ? " · бот недоступен (is_active=false)"
-        : "";
-    el.head.innerHTML = `<div class="name">${esc(u.display_name)} ${esc(uname)}</div>
-      <div class="info">${esc(botLabel())} · id ${u.user_id} · ${esc(lic)}${esc(blocked)} · сообщений в личке: ${u.dm_count}</div>`;
+    let status;
+    if (state.bot === "biblia") {
+      const parts = [];
+      if (u.bot_blocked_at) parts.push(`блок бота с ${fmtDT(u.bot_blocked_at)}`);
+      else if (u.is_active === false) parts.push("неактивен");
+      else parts.push("активен");
+      if (u.is_donor) parts.push("жертвовал");
+      else parts.push("без донатов");
+      if (u.mailing_consent === false) parts.push("без рассылок");
+      status = parts.join(" · ");
+    } else {
+      const lic =
+        u.license_status === "active"
+          ? `подписка до ${fmtDT(u.license_expires_at)}`
+          : u.license_status === "expired"
+            ? `просрочена ${fmtDT(u.license_expires_at)}`
+            : "без подписки";
+      const blocked = u.bot_blocked_at
+        ? ` · блок бота с ${fmtDT(u.bot_blocked_at)}`
+        : u.is_active === false
+          ? " · бот недоступен"
+          : "";
+      status = lic + blocked;
+    }
+    el.head.innerHTML = `<div class="chat-head-row">
+      <button type="button" class="back-btn" id="back-btn" aria-label="Назад">‹</button>
+      <div class="chat-head-text">
+        <div class="name">${esc(u.display_name)} ${esc(uname)}</div>
+        <div class="info">${esc(botLabel())} · id ${u.user_id} · ${esc(status)} · сообщений в личке: ${u.dm_count}</div>
+      </div>
+    </div>`;
+    const back = document.getElementById("back-btn");
+    if (back) back.addEventListener("click", requestBackToList);
   }
 
   function renderMessages(keepScroll) {
@@ -240,8 +337,11 @@
         parts.push(`<div class="day">${esc(day)}</div>`);
         lastDay = day;
       }
+      const isHtml = TG_HTML_RE.test(String(m.content || ""));
+      const body = formatBubbleHtml(m.content);
+      const klass = isHtml ? "bubble tg-html" : "bubble";
       parts.push(
-        `<div class="row ${m.sender}"><div class="bubble">${esc(m.content)}<span class="time">${esc(fmtTime(m.created_at))}</span></div></div>`
+        `<div class="row ${m.sender}"><div class="${klass}">${body}<span class="time">${esc(fmtTime(m.created_at))}</span></div></div>`
       );
     }
 
@@ -314,6 +414,10 @@
     state.messages = [];
     state.hasMoreMsg = false;
     state.nextBeforeId = null;
+    showChatPanel(true);
+    if (isMobile()) {
+      history.pushState({ dmChat: true, userId }, "");
+    }
     await loadMessages(false);
   }
 
@@ -325,6 +429,8 @@
     state.hasMoreMsg = false;
     state.nextBeforeId = null;
     state.tag = "all";
+    state.sort = "last_activity";
+    showChatPanel(false);
     syncBotUi();
     renderChips();
     renderHead(null);
@@ -384,6 +490,18 @@
   });
 
   el.loadOlder.addEventListener("click", () => loadMessages(true));
+
+  window.addEventListener("popstate", () => {
+    if (el.app.classList.contains("show-chat")) goBackToList();
+  });
+
+  window.addEventListener("resize", () => {
+    if (!isMobile()) {
+      // десктоп: оба панели видны
+      showChatPanel(false);
+      el.app.classList.remove("show-chat");
+    }
+  });
 
   loadUsers(true);
 })();

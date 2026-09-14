@@ -207,9 +207,17 @@ class MessagingFeature(BaseFeature):
                     _record_gen_attempt(True)
                     await self._maybe_clear_mass_failure()
                     return text
-                empty_count += 1
+                # None/"" — смотрим last_chat_error: таймаут ≠ пустой content
+                err_kind = getattr(self.agents_client, "last_chat_error", None)
                 finish = getattr(self.agents_client, "last_chat_finish_reason", None)
-                last_err = RuntimeError(f"empty_response finish={finish}")
+                if err_kind == "timeout":
+                    last_err = asyncio.TimeoutError("DeepSeek timeout")
+                elif err_kind == "api_error":
+                    last_err = RuntimeError("DeepSeek API error")
+                else:
+                    # empty content или неизвестно → считаем пустым для thinking=disabled
+                    empty_count += 1
+                    last_err = RuntimeError(f"empty_response finish={finish}")
                 _record_gen_attempt(
                     False,
                     reason=_short_fail_reason(last_err, finish=finish),

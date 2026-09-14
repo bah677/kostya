@@ -2,14 +2,15 @@
 <html lang="ru">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="robots" content="noindex,nofollow,noarchive">
-<title>Личка клубного бота</title>
+<meta name="theme-color" content="#0e1621">
+<title>Личка бота</title>
 <link rel="stylesheet" href="static/style.css">
 </head>
 <body>
-<div class="app">
-  <aside class="sidebar">
+<div class="app" id="app">
+  <aside class="sidebar" id="sidebar">
     <header class="side-head">
       <div class="title">Личка бота</div>
       <div class="bot-switch" id="bot-switch" role="tablist" aria-label="Бот">
@@ -17,23 +18,17 @@
         <button type="button" class="bot-btn" data-bot="biblia">БиблияБот</button>
       </div>
       <div class="sub" id="bot-sub">клуб · reports</div>
-      <input id="search" type="search" placeholder="Поиск по полям users…" autocomplete="off">
+      <input id="search" type="search" placeholder="Поиск по полям users…" autocomplete="off" enterkeyhint="search">
       <div class="chips" id="chips"></div>
       <label class="sort-row">Сортировка
-        <select id="sort">
-          <option value="last_activity">активность</option>
-          <option value="last_dm">последняя личка</option>
-          <option value="created_at">регистрация</option>
-          <option value="expires_at">окончание подписки</option>
-          <option value="name">имя</option>
-        </select>
+        <select id="sort"></select>
       </label>
       <div class="meta" id="list-meta"></div>
     </header>
     <div class="user-list" id="user-list"></div>
   </aside>
 
-  <main class="chat">
+  <main class="chat" id="chat">
     <header class="chat-head" id="chat-head">
       <div class="empty-hint">Выбери человека слева</div>
     </header>

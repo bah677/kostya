@@ -155,6 +155,11 @@ FilterTag = Literal[
     "has_dm",
     "onboarding",
     "greeter",
+    # biblia
+    "alive",
+    "donor",
+    "no_donor",
+    "mail_off",
 ]
 
 SortKey = Literal[
@@ -186,6 +191,8 @@ class UserRow(BaseModel):
     onboarding_stage: Optional[str] = None
     last_dm_at: Optional[datetime] = None
     dm_count: int = 0
+    is_donor: bool = False
+    mailing_consent: Optional[bool] = None
     display_name: str = ""
     tags: List[str] = Field(default_factory=list)
 
@@ -240,14 +247,24 @@ def _license_status(row: asyncpg.Record) -> str:
     return "expired"
 
 
-def _tags_for(row: asyncpg.Record, lic: str) -> List[str]:
+def _tags_for(row: asyncpg.Record, lic: str, bot: BotKey = "club") -> List[str]:
     tags: List[str] = []
-    if lic == "active":
-        tags.append("active")
-    elif lic == "expired":
-        tags.append("expired")
+    if bot == "club":
+        if lic == "active":
+            tags.append("active")
+        elif lic == "expired":
+            tags.append("expired")
+        else:
+            tags.append("no_license")
     else:
-        tags.append("no_license")
+        if row.get("is_active") and row.get("bot_blocked_at") is None:
+            tags.append("alive")
+        if row.get("is_donor"):
+            tags.append("donor")
+        elif row.get("is_donor") is False:
+            tags.append("no_donor")
+        if row.get("mailing_consent") is False:
+            tags.append("mail_off")
     if row.get("is_banned"):
         tags.append("banned")
     if row.get("bot_blocked_at") is not None or row.get("is_active") is False:
@@ -268,7 +285,7 @@ def _tags_for(row: asyncpg.Record, lic: str) -> List[str]:
     return tags
 
 
-def _row_to_user(row: asyncpg.Record) -> UserRow:
+def _row_to_user(row: asyncpg.Record, bot: BotKey = "club") -> UserRow:
     lic = _license_status(row)
     return UserRow(
         user_id=int(row["user_id"]),
@@ -290,8 +307,10 @@ def _row_to_user(row: asyncpg.Record) -> UserRow:
         onboarding_stage=row.get("onboarding_stage"),
         last_dm_at=row.get("last_dm_at"),
         dm_count=int(row.get("dm_count") or 0),
+        is_donor=bool(row.get("is_donor")),
+        mailing_consent=row.get("mailing_consent"),
         display_name=_display_name(row),
-        tags=_tags_for(row, lic),
+        tags=_tags_for(row, lic, bot),
     )
 
 
@@ -344,6 +363,14 @@ def _select_cols(bot: BotKey, *, with_dm_join: bool) -> str:
         if bot == "club"
         else "false AS is_greeter"
     )
+    if bot == "biblia":
+        donor = """EXISTS(
+    SELECT 1 FROM donations d
+    WHERE d.user_id = u.user_id AND d.status = 'succeeded'
+  ) AS is_donor,
+  u.mailing_consent,"""
+    else:
+        donor = "false AS is_donor, NULL::boolean AS mailing_consent,"
     if with_dm_join:
         dm_cols = "dm.last_dm_at, COALESCE(dm.dm_count, 0)::int AS dm_count,"
     else:
@@ -373,6 +400,7 @@ SELECT
   END AS license_status_sql,
   {onboarding}
   {dm_cols}
+  {donor}
   {greeter}
 """
 
@@ -419,6 +447,26 @@ def _filter_sql(tag: FilterTag, bot: BotKey) -> str:
             "EXISTS (SELECT 1 FROM club_greeter g "
             "WHERE g.user_id = u.user_id AND g.active = true)"
         )
+    if tag == "alive":
+        return "u.is_active IS TRUE AND u.bot_blocked_at IS NULL"
+    if tag == "donor":
+        if bot != "biblia":
+            return "FALSE"
+        return (
+            "EXISTS (SELECT 1 FROM donations d "
+            "WHERE d.user_id = u.user_id AND d.status = 'succeeded')"
+        )
+    if tag == "no_donor":
+        if bot != "biblia":
+            return "FALSE"
+        return (
+            "NOT EXISTS (SELECT 1 FROM donations d "
+            "WHERE d.user_id = u.user_id AND d.status = 'succeeded')"
+        )
+    if tag == "mail_off":
+        if bot != "biblia":
+            return "FALSE"
+        return "COALESCE(u.mailing_consent, true) = false"
     return "TRUE"
 
 
@@ -631,6 +679,8 @@ def create_app(
           page.license_status_sql,
           page.onboarding_stage,
           page.is_greeter,
+          page.is_donor,
+          page.mailing_consent,
           COALESCE(dm.last_dm_at, page.last_dm_at) AS last_dm_at,
           COALESCE(dm.dm_count, page.dm_count, 0)::int AS dm_count
         FROM page
@@ -665,7 +715,7 @@ def create_app(
             total=int(total or 0),
             offset=offset,
             limit=limit,
-            users=[_row_to_user(r) for r in rows],
+            users=[_row_to_user(r, bot) for r in rows],
         )
 
     @app.get("/api/users/{user_id}", response_model=UserRow)
@@ -700,6 +750,8 @@ def create_app(
           one.license_status_sql,
           one.onboarding_stage,
           one.is_greeter,
+          one.is_donor,
+          one.mailing_consent,
           dm.last_dm_at,
           COALESCE(dm.dm_count, 0)::int AS dm_count
         FROM one
@@ -716,7 +768,7 @@ def create_app(
             row = await conn.fetchrow(sql, user_id)
         if not row:
             raise HTTPException(404, "user not found")
-        return _row_to_user(row)
+        return _row_to_user(row, bot)
 
     @app.get("/api/users/{user_id}/messages", response_model=MessagesResponse)
     async def get_messages(
