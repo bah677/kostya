@@ -230,6 +230,13 @@ HELP_CATALOG: Tuple[HelpEntry, ...] = (
         "tools",
     ),
     HelpEntry(
+        "/giftlink",
+        "Ссылка-подарок: <code>/giftlink ДНЕЙ [заметка]</code> "
+        "(для тех, кто ещё не запускал бота)",
+        "admin",
+        "tools",
+    ),
+    HelpEntry(
         "/clear_my_chat, /clear_dm",
         "Удалить свою переписку с ботом в личке (с подтверждением)",
         "admin",

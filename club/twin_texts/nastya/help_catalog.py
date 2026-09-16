@@ -89,6 +89,11 @@ HELP_CATALOG: Tuple[HelpEntry, ...] = (
         "admin",
     ),
     HelpEntry(
+        "/giftlink",
+        "Ссылка-подарок: /giftlink ДНЕЙ [заметка] (если человек ещё не в боте)",
+        "admin",
+    ),
+    HelpEntry(
         "/mailing_funnel",
         "Воронка внутренних рассылок (ID из mailing_campaigns): без аргументов — каталог; с ID — метрики",
         "admin",

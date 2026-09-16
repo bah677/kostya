@@ -31,6 +31,7 @@ from bot.admin_guard import (
 )
 from bot.features.base import BaseFeature, FeatureManager
 from bot.services.admin_gift_license import execute_admin_gift
+from bot.services.admin_gift_link import create_admin_gift_link
 from bot.services.mailing_campaign_funnel import (
     collect_mailing_funnel,
     format_campaign_catalog_html,
@@ -204,6 +205,8 @@ class AdminConsoleFeature(BaseFeature):
         dp.message.register(self._cmd_excluded_payment, admin_private, Command("excluded"))
         dp.message.register(self._cmd_gift, admin_chat, Command("gift"))
         dp.message.register(self._cmd_gift, admin_private, Command("gift"))
+        dp.message.register(self._cmd_giftlink, admin_chat, Command("giftlink"))
+        dp.message.register(self._cmd_giftlink, admin_private, Command("giftlink"))
         dp.message.register(self._cmd_mailing_funnel, admin_chat, Command("mailing_funnel"))
         dp.message.register(
             self._cmd_mailing_funnel, admin_private, Command("mailing_funnel")
@@ -1343,6 +1346,47 @@ class AdminConsoleFeature(BaseFeature):
             admin_user=message.from_user,
             target_user_id=int(target_uid),
             days=days,
+        )
+        await message.reply(reply, parse_mode=ParseMode.HTML)
+
+    async def _cmd_giftlink(
+        self, message: Message, command: CommandObject
+    ) -> None:
+        """Одноразовая ссылка: /giftlink ДНЕЙ [заметка]."""
+        if not await self._ensure_console_admin(message, allow_private=True):
+            return
+        if message.from_user is None or not self._bot:
+            return
+
+        raw = (command.args or "").strip()
+        if not raw:
+            link_days = int(getattr(config, "GIFT_LINK_VALIDITY_DAYS", 30) or 30)
+            await message.reply(
+                "🎁 <b>Ссылка на подарок</b>\n\n"
+                "Формат: <code>/giftlink ДНЕЙ [заметка]</code>\n\n"
+                "Пример: <code>/giftlink 3650 Avak86</code>\n\n"
+                f"Создаёт одноразовую ссылку (активна {link_days} дн.). "
+                "Получатель жмёт Start — доступ выдаётся сам. "
+                "USER_ID заранее не нужен.\n\n"
+                "Если человек уже в боте: <code>/gift USER_ID ДНЕЙ</code>.",
+                parse_mode=ParseMode.HTML,
+            )
+            return
+
+        parts = raw.split(maxsplit=1)
+        try:
+            days = int(parts[0])
+        except ValueError:
+            await message.reply("❌ Первым аргументом должно быть число дней.")
+            return
+        note = parts[1].strip() if len(parts) > 1 else None
+
+        reply = await create_admin_gift_link(
+            user_storage=self.user_storage,
+            bot=self._bot,
+            admin_user=message.from_user,
+            days=days,
+            note=note,
         )
         await message.reply(reply, parse_mode=ParseMode.HTML)
 

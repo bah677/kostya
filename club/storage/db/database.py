@@ -12,6 +12,7 @@ from storage.db.admins import AdminsMixin
 from storage.db.club_access import ClubAccessMixin
 from storage.db.dialog_topics import DialogTopicsMixin
 from storage.db.followup import FollowupMixin
+from storage.db.admin_gift_codes import AdminGiftCodesMixin
 from storage.db.gifts import GiftsMixin
 from storage.db.gift_wave import GiftWaveMixin
 from storage.db.club_first_week import ClubFirstWeekMixin
@@ -64,6 +65,7 @@ class Database(
     SubscriptionOutreachMixin,
     FollowupMixin,
     AdminResponsesMixin,
+    AdminGiftCodesMixin,
     GiftsMixin,
     MediaArchiveMixin,
     DialogTopicsMixin,
@@ -78,6 +80,7 @@ class Database(
       - MessagesMixin         — messages, token_usage, interaction_logs, conversation_history
       - SupportMixin          — support_tickets
       - PaymentsMixin         — payments
+      - AdminGiftCodesMixin   — admin_gift_codes (одноразовые /giftlink)
       - LicensesMixin         — license (включая бонусные продления)
       - OrdersMixin           — orders (включая подарочные)
       - TariffsMixin          — tariffs + tariff_prices

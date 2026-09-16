@@ -243,7 +243,19 @@ class OnboardingFeature(BaseFeature):
                 return
 
         if param:
-            if param.startswith("gift_"):
+            if param.startswith("agift_"):
+                from bot.services.admin_gift_link import activate_admin_gift_link
+
+                await activate_admin_gift_link(
+                    message=message,
+                    user_storage=self.user_storage,
+                    feature_manager=self.feature_manager,
+                    gift_code=param[6:],
+                    bot=self.bot,
+                    message_copier=getattr(self, "message_copier", None),
+                )
+
+            elif param.startswith("gift_"):
                 gift_code = param[5:]
                 gift_feature = self.feature_manager.get("gift_activation")
                 if gift_feature:

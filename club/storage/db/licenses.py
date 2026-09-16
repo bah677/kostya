@@ -501,6 +501,7 @@ class LicensesMixin:
         admin_telegram_id: int,
         origin: str = "gift",
         wave_id: Optional[int] = None,
+        meta_extra: Optional[Dict[str, Any]] = None,
     ) -> Optional[Dict[str, Any]]:
         """Выдать или продлить лицензию админом (без оплаты)."""
         if days < 1:
@@ -575,17 +576,20 @@ class LicensesMixin:
                         origin,
                     )
 
+            history_meta: Dict[str, Any] = {
+                "days_added": days,
+                "admin_telegram_id": admin_telegram_id,
+                "origin": origin,
+                "wave_id": wave_id,
+            }
+            if meta_extra:
+                history_meta.update(meta_extra)
             await self.append_license_history(
                 user_id=user_id,
                 previous_expires_at=prev_expires,
                 new_expires_at=new_expiry,
                 source="admin_grant",
-                meta={
-                    "days_added": days,
-                    "admin_telegram_id": admin_telegram_id,
-                    "origin": origin,
-                    "wave_id": wave_id,
-                },
+                meta=history_meta,
             )
             return {
                 "user_id": user_id,
