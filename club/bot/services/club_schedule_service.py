@@ -93,14 +93,44 @@ async def apply_extracted_events(
             group_message_link=group_message_link,
             raw_text=raw_text,
             confidence=confidence,
+            recurrence=getattr(ev, "recurrence", None) or "none",
+            recurrence_dow=getattr(ev, "recurrence_dow", None),
         )
         if eid:
             ids.append(eid)
+            rec = getattr(ev, "recurrence", "none") or "none"
+            rec_s = f" [{rec}]" if rec != "none" else ""
             lines.append(
-                f"{_fmt_dt_msk(ev.starts_at)} — {_type_label(ev.content_type)}: {ev.title}"
+                f"{_fmt_dt_msk(ev.starts_at)} — {_type_label(ev.content_type)}: "
+                f"{ev.title}{rec_s}"
+            )
+            await user_storage.log_interaction(
+                user_id=int(source_admin_id or 0) or 1,
+                event_category="schedule",
+                event_type="schedule_event_created",
+                data={
+                    "event_id": eid,
+                    "source": source,
+                    "confidence": confidence,
+                    "recurrence": rec,
+                },
+                source="schedule_extract",
+                outcome="success",
             )
 
     summary = "\n".join(lines) if lines else ""
+    # сразу разложить повторы на горизонт
+    if any(
+        (getattr(ev, "recurrence", "none") or "none") != "none"
+        for ev in events
+        if not (ev.action == "cancel" or ev.is_cancelled)
+    ):
+        try:
+            from bot.services.club_schedule_ops import expand_recurrence_templates
+
+            await expand_recurrence_templates(user_storage)
+        except Exception as e:
+            logger.warning("expand after apply: %s", e)
     return ScheduleApplyResult(
         applied=bool(lines),
         summary=summary,
@@ -122,6 +152,23 @@ def build_schedule_prompt_addon(events: List[Dict[str, Any]]) -> str:
     for ev in events:
         link = (ev.get("group_message_link") or "").strip()
         link_part = f" | ссылка: {link}" if link else ""
+        rec = (ev.get("recording_url") or "").strip()
+        if rec:
+            link_part += f" | запись: {rec}"
+        elif (ev.get("content_type") or "") in (
+            "air",
+            "qa",
+            "repentance",
+            "other",
+        ):
+            ends = ev.get("ends_at") or ev.get("starts_at")
+            if isinstance(ends, datetime):
+                end_a = ends if ends.tzinfo else ends.replace(tzinfo=MSK)
+                if end_a.astimezone(MSK) < datetime.now(MSK):
+                    link_part += (
+                        " | запись ещё готовится — скажи об этом прямо, "
+                        "без отсылки в поддержку"
+                    )
         lines.append(
             f"- {_fmt_dt_msk(ev.get('starts_at'))} — "
             f"{_type_label(ev.get('content_type', ''))}: "
@@ -151,10 +198,22 @@ async def fetch_schedule_allowed_links(user_storage, *, days: int = 7) -> List[s
 async def _fetch_schedule_events(user_storage, *, days: int = 7) -> List[Dict[str, Any]]:
     now = datetime.now(MSK)
     end = now + timedelta(days=days)
-    return await user_storage.list_club_schedule_events(
+    future = await user_storage.list_club_schedule_events(
         from_at=now - timedelta(hours=1),
         to_at=end,
+        limit=80,
     )
+    # прошлые эфиры с записью / без — для ответа «где запись»
+    past = await user_storage.list_club_schedule_events(
+        from_at=now - timedelta(days=10),
+        to_at=now,
+        content_types=["air", "qa", "repentance", "other"],
+        limit=30,
+    )
+    by_id: Dict[int, Dict[str, Any]] = {}
+    for ev in past + future:
+        by_id[int(ev["id"])] = ev
+    return sorted(by_id.values(), key=lambda e: e.get("starts_at") or now)
 
 
 async def format_schedule_topic_digest(

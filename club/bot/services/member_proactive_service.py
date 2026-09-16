@@ -274,6 +274,19 @@ async def run_proactive_batch(
             }
 
         due = resolve_due_step(fw) if fw and fw.get("started_at") else None
+        # ЭФ-2: шаг 4 = приглашение на эфир; не дублируем, если скоро будет эфир
+        if due and due.step == 4 and not due.skip_reason:
+            from storage.db.club_schedule import INVITEABLE_CONTENT_TYPES
+
+            now_msk = datetime.now(MSK)
+            upcoming = await user_storage.list_club_schedule_events(
+                from_at=now_msk,
+                to_at=now_msk + timedelta(days=14),
+                content_types=list(INVITEABLE_CONTENT_TYPES),
+                limit=1,
+            )
+            if upcoming:
+                due = None  # air_invite job закроет шаг 4
         if due and due.skip_reason:
             await user_storage.mark_first_week_step(uid, due.step)
             try:

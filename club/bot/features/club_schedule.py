@@ -54,8 +54,8 @@ class ClubScheduleFeature(BaseFeature):
         self._media_processor = processor
 
     async def initialize(self) -> None:
+        self._scheduler = AsyncIOScheduler(timezone="Europe/Moscow")
         if config.club_schedule_topic_active:
-            self._scheduler = AsyncIOScheduler(timezone="Europe/Moscow")
             self._scheduler.add_job(
                 self._post_evening_digest,
                 CronTrigger(
@@ -66,7 +66,6 @@ class ClubScheduleFeature(BaseFeature):
                 id="club_schedule_topic_digest",
                 replace_existing=True,
             )
-            self._scheduler.start()
             logger.info(
                 "[%s] topic digest: %s:%02d МСК topic=%s days=%s",
                 self.name,
@@ -75,8 +74,39 @@ class ClubScheduleFeature(BaseFeature):
                 config.CLUB_SCHEDULE_ADMIN_TOPIC_ID,
                 config.CLUB_SCHEDULE_TOPIC_DIGEST_DAYS,
             )
-        else:
-            logger.info("[%s] topic digest disabled or not configured", self.name)
+        self._scheduler.add_job(
+            self._job_expand_recurrence,
+            CronTrigger(hour=3, minute=15, timezone="Europe/Moscow"),
+            id="club_schedule_expand_recurrence",
+            replace_existing=True,
+        )
+        self._scheduler.add_job(
+            self._job_horizon_and_coherence,
+            CronTrigger(hour=11, minute=0, timezone="Europe/Moscow"),
+            id="club_schedule_horizon_watch",
+            replace_existing=True,
+        )
+        if getattr(config, "CLUB_AIR_INVITE_ENABLED", True):
+            self._scheduler.add_job(
+                self._job_air_invites,
+                CronTrigger(minute="*/20", timezone="Europe/Moscow"),
+                id="club_air_invite_tick",
+                replace_existing=True,
+            )
+            self._scheduler.add_job(
+                self._job_air_reminders,
+                CronTrigger(minute="*/10", timezone="Europe/Moscow"),
+                id="club_air_reminder_tick",
+                replace_existing=True,
+            )
+        self._scheduler.add_job(
+            self._job_recording_requests,
+            CronTrigger(minute="15,45", timezone="Europe/Moscow"),
+            id="club_air_recording_request",
+            replace_existing=True,
+        )
+        self._scheduler.start()
+        logger.info("[%s] scheduler started (ops+air)", self.name)
 
     async def teardown(self) -> None:
         if self._scheduler:
@@ -221,6 +251,49 @@ class ClubScheduleFeature(BaseFeature):
         return text
 
     async def _handle_topic_correction(self, message: Message) -> None:
+        # ЭФ-3: «запись <id> https://…»
+        raw_cmd = (message.text or message.caption or "").strip()
+        if raw_cmd.lower().startswith("запись"):
+            from bot.services.club_air_recording import (
+                apply_recording_url,
+                parse_recording_admin_command,
+                resolve_latest_event_without_recording,
+            )
+
+            parsed = parse_recording_admin_command(raw_cmd)
+            if parsed:
+                eid, url = parsed
+                if eid <= 0:
+                    eid = await resolve_latest_event_without_recording(
+                        self.user_storage
+                    ) or 0
+                if eid <= 0:
+                    await self.bot.send_message(
+                        chat_id=message.chat.id,
+                        message_thread_id=message.message_thread_id,
+                        text="Не нашёл эфир без записи. Укажите: запись ID https://…",
+                        reply_to_message_id=message.message_id,
+                    )
+                    return
+                updated = await apply_recording_url(
+                    self.user_storage, self.bot, event_id=eid, url=url
+                )
+                if updated:
+                    await self.bot.send_message(
+                        chat_id=message.chat.id,
+                        message_thread_id=message.message_thread_id,
+                        text=f"✅ Запись сохранена для эфира #{eid}, разослал.",
+                        reply_to_message_id=message.message_id,
+                    )
+                else:
+                    await self.bot.send_message(
+                        chat_id=message.chat.id,
+                        message_thread_id=message.message_thread_id,
+                        text=f"❌ Не удалось сохранить запись для #{eid}.",
+                        reply_to_message_id=message.message_id,
+                    )
+                return
+
         if not self._llm_client:
             await self.bot.send_message(
                 chat_id=message.chat.id,
@@ -288,6 +361,10 @@ class ClubScheduleFeature(BaseFeature):
             return
         try:
             body = await format_schedule_topic_digest(self.user_storage)
+            # пустое расписание — не спамим отчётом (ЭФ-1)
+            if "нет событий" in (body or "").lower() or "пока нет" in (body or "").lower():
+                logger.info("[%s] evening digest skipped: empty schedule", self.name)
+                return
             ok = await send_admin_html_message(
                 self.bot,
                 body,
@@ -297,3 +374,60 @@ class ClubScheduleFeature(BaseFeature):
             logger.info("[%s] evening digest sent ok=%s", self.name, ok)
         except Exception as e:
             logger.error("[%s] evening digest failed: %s", self.name, e, exc_info=True)
+
+    async def _job_expand_recurrence(self) -> None:
+        from bot.services.club_schedule_ops import expand_recurrence_templates
+
+        try:
+            n = await expand_recurrence_templates(self.user_storage)
+            logger.info("[%s] recurrence expand n=%s", self.name, n)
+        except Exception as e:
+            logger.error("[%s] recurrence expand: %s", self.name, e, exc_info=True)
+
+    async def _job_horizon_and_coherence(self) -> None:
+        from bot.services.club_schedule_ops import (
+            expand_recurrence_templates,
+            run_coherence_watch,
+            run_horizon_watch,
+        )
+
+        try:
+            await expand_recurrence_templates(self.user_storage)
+            await run_horizon_watch(self.user_storage, self.bot)
+            await run_coherence_watch(self.user_storage, self.bot)
+        except Exception as e:
+            logger.error("[%s] horizon/coherence: %s", self.name, e, exc_info=True)
+
+    async def _job_air_invites(self) -> None:
+        from bot.services.club_air_invite import run_air_invite_batch
+
+        try:
+            await run_air_invite_batch(
+                self.user_storage,
+                self.bot,
+                api_key=(config.DEEPSEEK_API_KEY or ""),
+            )
+        except Exception as e:
+            logger.error("[%s] air invites: %s", self.name, e, exc_info=True)
+
+    async def _job_air_reminders(self) -> None:
+        from bot.services.club_air_invite import run_air_reminder_batch
+
+        try:
+            await run_air_reminder_batch(
+                self.user_storage,
+                self.bot,
+                api_key=(config.DEEPSEEK_API_KEY or ""),
+            )
+        except Exception as e:
+            logger.error("[%s] air reminders: %s", self.name, e, exc_info=True)
+
+    async def _job_recording_requests(self) -> None:
+        from bot.services.club_air_recording import request_recordings_from_admins
+
+        try:
+            n = await request_recordings_from_admins(self.user_storage, self.bot)
+            if n:
+                logger.info("[%s] recording requests n=%s", self.name, n)
+        except Exception as e:
+            logger.error("[%s] recording requests: %s", self.name, e, exc_info=True)

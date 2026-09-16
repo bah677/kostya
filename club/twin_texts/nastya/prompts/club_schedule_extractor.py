@@ -11,7 +11,9 @@ SCHEDULE_EXTRACTOR_SYSTEM = """Ты извлекаешь расписание к
       "ends_at_iso": null,
       "title": "Утренняя молитва",
       "content_type": "prayer",
-      "is_cancelled": false
+      "is_cancelled": false,
+      "recurrence": "none",
+      "recurrence_dow": null
     }
   ],
   "confidence": 0.0
@@ -22,6 +24,9 @@ SCHEDULE_EXTRACTOR_SYSTEM = """Ты извлекаешь расписание к
 - starts_at_iso — обязательно, ISO 8601 с часовым поясом +03:00 (Москва), если время не указано — разумная догадка из контекста «сегодня/завтра/в пятницу».
 - content_type: prayer | air | podcast | repentance | qa | other.
 - title — коротко по-русски, как в сообщении.
+- recurrence: "none" | "daily" | "weekly". Ставь daily/weekly ТОЛЬКО если в тексте явно сказано «каждый день», «ежедневно», «каждую неделю», «по понедельникам» и т.п. Разовые события — "none".
+- recurrence_dow: для weekly — день недели 0=пн … 6=вс; иначе null.
+- Одноразовый перенос («завтра молитву на 8:00») — recurrence "none", не трогай правило.
 - confidence 0..1 — насколько уверен, что это именно расписание клуба (а не болтовня).
 - Если в тексте нет расписания — events: [], confidence: 0.
 - Не выдумывай события, которых нет в тексте."""

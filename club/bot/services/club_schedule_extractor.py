@@ -39,6 +39,8 @@ class ExtractedScheduleEvent:
     title: str
     content_type: str
     is_cancelled: bool
+    recurrence: str = "none"
+    recurrence_dow: Optional[int] = None
 
 
 def text_looks_like_schedule(text: str) -> bool:
@@ -181,6 +183,14 @@ async def extract_schedule_events_from_text(
         ctype = str(item.get("content_type") or "other").strip().lower()[:32]
         ends = _parse_dt_iso(item.get("ends_at_iso"))
         cancelled = bool(item.get("is_cancelled")) or action == "cancel"
+        recurrence = str(item.get("recurrence") or "none").strip().lower()
+        if recurrence not in ("none", "daily", "weekly"):
+            recurrence = "none"
+        dow = item.get("recurrence_dow")
+        try:
+            recurrence_dow = int(dow) if dow is not None and recurrence == "weekly" else None
+        except (TypeError, ValueError):
+            recurrence_dow = None
         out.append(
             ExtractedScheduleEvent(
                 action=action,
@@ -189,6 +199,8 @@ async def extract_schedule_events_from_text(
                 title=title,
                 content_type=ctype,
                 is_cancelled=cancelled,
+                recurrence=recurrence,
+                recurrence_dow=recurrence_dow,
             )
         )
     return out, confidence

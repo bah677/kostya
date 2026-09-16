@@ -248,6 +248,13 @@ class Config:
     CLUB_SCRIPTURE_PULSE_MINUTE_MAX: int = 15
     CLUB_SCRIPTURE_PULSE_MIN_MESSAGES: int = 1
 
+    #: Личные DM со стихом (ЭФ-4): раскат + holdout; слоты отдельно от group pulse.
+    CLUB_SCRIPTURE_DM_FULL_ROLLOUT: bool = True
+    CLUB_SCRIPTURE_DM_HOURS: str = "12,21"
+
+    #: ЭФ-2: личные приглашения на эфир (air/qa/repentance/other).
+    CLUB_AIR_INVITE_ENABLED: bool = True
+
     #: Рассылки дайджеста и цитат в личку (пилот / full rollout).
     CLUB_OUTREACH_DM_ENABLED: bool = False
     CLUB_OUTREACH_DM_PILOT_ONLY: bool = True
@@ -741,6 +748,11 @@ def load_config() -> Config:
         CLUB_SCRIPTURE_PULSE_MIN_MESSAGES=_safe_int_env(
             "CLUB_SCRIPTURE_PULSE_MIN_MESSAGES", 1, min_v=1, max_v=100
         ),
+        CLUB_SCRIPTURE_DM_FULL_ROLLOUT=_env_bool(
+            "CLUB_SCRIPTURE_DM_FULL_ROLLOUT", True
+        ),
+        CLUB_SCRIPTURE_DM_HOURS=os.getenv("CLUB_SCRIPTURE_DM_HOURS", "12,21"),
+        CLUB_AIR_INVITE_ENABLED=_env_bool("CLUB_AIR_INVITE_ENABLED", True),
         CLUB_OUTREACH_DM_ENABLED=_env_bool("CLUB_OUTREACH_DM_ENABLED", False),
         CLUB_OUTREACH_DM_PILOT_ONLY=_env_bool("CLUB_OUTREACH_DM_PILOT_ONLY", True),
         CLUB_OUTREACH_PILOT_SIZE=_safe_int_env(

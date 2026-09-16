@@ -56,9 +56,15 @@ async def decide_club_outreach(
     api_key: str = "",
 ) -> OutreachDecision:
     """
-    kind: digest | scripture
+    kind: digest | scripture | air_invite | air_reminder | air_recording
+    Приоритет касаний: renewal (отдельный пайплайн) > first_week >
+    air_invite/reminder > scripture/digest.
     """
-    if config.CLUB_OUTREACH_DM_PILOT_ONLY:
+    # ЭФ-4: стих дня — раскат на всех с holdout, не пилот
+    if kind == "scripture" and getattr(config, "CLUB_SCRIPTURE_DM_FULL_ROLLOUT", True):
+        if _scripture_holdout(user_id):
+            return OutreachDecision(False, "scripture_holdout")
+    elif config.CLUB_OUTREACH_DM_PILOT_ONLY and kind in ("digest", "scripture"):
         pilot_ids = await user_storage.list_pilot_outreach_user_ids()
         if user_id not in pilot_ids:
             return OutreachDecision(False, "not_in_pilot")
@@ -79,6 +85,26 @@ async def decide_club_outreach(
     if sent_today >= config.CLUB_OUTREACH_DAILY_LIMIT:
         return OutreachDecision(False, f"daily_limit_{sent_today}")
 
+    # приоритет: не слать стих/дайджест, если сегодня уже ушло приглашение на эфир
+    # или если человек в открытой первой неделе на шагах 2–3 (ещё не дошёл до эфира)
+    if kind in ("scripture", "digest"):
+        today = datetime.now(MSK).date()
+        if await user_storage.user_got_air_invite_today(user_id, day=today):
+            return OutreachDecision(False, "air_invite_priority")
+        fw = await user_storage.get_club_first_week(user_id)
+        if fw and not fw.get("ended_at"):
+            step = int(fw.get("step") or 0)
+            if step < 4:
+                return OutreachDecision(False, "first_week_priority")
+
+    if kind == "air_invite":
+        fw = await user_storage.get_club_first_week(user_id)
+        if fw and not fw.get("ended_at"):
+            step = int(fw.get("step") or 0)
+            # шаги 2–3 важнее эфира; шаг 4 = сам эфир
+            if step < 3:
+                return OutreachDecision(False, "first_week_before_air")
+
     recent = await user_storage.user_recent_private_messages(user_id, limit=15)
     user_blob = _recent_user_texts(recent)
     for line in user_blob.split("\n---\n"):
@@ -98,6 +124,10 @@ async def decide_club_outreach(
         )
         if not scripture_ok:
             return OutreachDecision(False, "adaptive_skip_scripture", scripture_this_slot=False)
+
+    # air_* — без LLM-политики (жёсткие правила ТЗ)
+    if kind.startswith("air_"):
+        return OutreachDecision(True, "air_allow")
 
     key = (api_key or config.DEEPSEEK_API_KEY or "").strip()
     if not key:
@@ -143,6 +173,13 @@ async def decide_club_outreach(
         if _explicit_refusal(raw):
             return OutreachDecision(False, "policy_text_refusal")
         return OutreachDecision(True, "policy_parse_fallback")
+
+
+def _scripture_holdout(user_id: int) -> bool:
+    """ЭФ-4: holdout = crc32(user_id) % 5 == 0 (~20%)."""
+    import zlib
+
+    return zlib.crc32(str(int(user_id)).encode("utf-8")) % 5 == 0
 
 
 def _adaptive_scripture_slot(

@@ -114,7 +114,12 @@ class ClubOutreachDmFeature(BaseFeature):
                 pass
         self._pulse_job_ids.clear()
 
-        hours = parse_pulse_hours(config.CLUB_SCRIPTURE_PULSE_HOURS)
+        hours = parse_pulse_hours(
+            getattr(config, "CLUB_SCRIPTURE_DM_HOURS", None)
+            or "12,21"
+        )
+        if not hours:
+            hours = parse_pulse_hours(config.CLUB_SCRIPTURE_PULSE_HOURS)
         minutes = pick_random_pulse_minutes(
             minute_min=config.CLUB_SCRIPTURE_PULSE_MINUTE_MIN,
             minute_max=config.CLUB_SCRIPTURE_PULSE_MINUTE_MAX,
@@ -265,6 +270,8 @@ class ClubOutreachDmFeature(BaseFeature):
             return
 
         recipients = await resolve_outreach_recipients(self.user_storage)
+        if getattr(config, "CLUB_SCRIPTURE_DM_FULL_ROLLOUT", True):
+            recipients = await self.user_storage.list_user_ids_with_active_license()
         sent = skipped = failed = 0
         today = date.today()
 
