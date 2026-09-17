@@ -218,6 +218,8 @@ class Config:
     GIFT_CAMPAIGN_ENABLED: bool = True
     GIFT_CAMPAIGN_TICKETS: int = 150
     GIFT_ALLOW_TRIAL_PAYERS: bool = False
+    #: Админы могут заполнять анкету (нужно для portion TEST). На проде розыгрыша — True ок.
+    GIFT_ALLOW_ADMIN_APPLY: bool = True
     #: guid промо «Возвращение: месяц −30%» (создаётся миграцией / админом).
     GIFT_RETURN_PROMO_GUID: str = "giftreturn30"
 
@@ -734,6 +736,7 @@ def load_config() -> Config:
             "GIFT_CAMPAIGN_TICKETS", 150, min_v=1, max_v=1000
         ),
         GIFT_ALLOW_TRIAL_PAYERS=_env_bool("GIFT_ALLOW_TRIAL_PAYERS", False),
+        GIFT_ALLOW_ADMIN_APPLY=_env_bool("GIFT_ALLOW_ADMIN_APPLY", True),
         GIFT_RETURN_PROMO_GUID=(
             os.getenv("GIFT_RETURN_PROMO_GUID") or "giftreturn30"
         ).strip().lower(),

@@ -86,7 +86,9 @@ async def check_gift_application_eligibility(
             )
 
     if await is_admin_or_super(user_storage, user_id):
-        return EligibilityResult(False, reason="admin", kind="admin")
+        # Для QA (portion TEST) админам можно пройти анкету.
+        if not bool(getattr(config, "GIFT_ALLOW_ADMIN_APPLY", True)):
+            return EligibilityResult(False, reason="admin", kind="admin")
 
     paid_n = await user_storage.get_user_successful_payments_count(user_id)
     allow_trial = bool(getattr(config, "GIFT_ALLOW_TRIAL_PAYERS", False))

@@ -147,7 +147,8 @@ class GiftApplicationFeature(BaseFeature):
         source = parse_gift_start_source(param)
         if not source:
             return False
-        await self.open_entry(message, state, source=source)
+        uid = message.from_user.id if message.from_user else message.chat.id
+        await self.open_entry(message, state, source=source, user_id=uid)
         return True
 
     async def open_entry(
@@ -157,19 +158,23 @@ class GiftApplicationFeature(BaseFeature):
         *,
         source: str = "other",
         edit: bool = False,
+        user_id: Optional[int] = None,
     ) -> None:
-        user_id = message.from_user.id if message.from_user else message.chat.id
+        # Сообщение рассылки от бота: from_user = бот. Берём chat.id / явный user_id.
+        uid = int(user_id) if user_id is not None else int(message.chat.id)
         left = await count_remaining_tickets(self.user_storage)
         if left <= 0:
             await self._reply(message, txt.T6_SOLD_OUT_HTML, edit=edit)
             return
 
-        elig = await check_gift_application_eligibility(self.user_storage, user_id)
+        elig = await check_gift_application_eligibility(self.user_storage, uid)
         if not elig.eligible:
-            await self._handle_ineligible(message, state, elig, source=source, edit=edit)
+            await self._handle_ineligible(
+                message, state, elig, source=source, edit=edit, user_id=uid
+            )
             return
 
-        existing = await self.user_storage.get_gift_application(user_id)
+        existing = await self.user_storage.get_gift_application(uid)
         if existing and existing.get("status") not in (
             "draft",
             "cancelled",
@@ -180,11 +185,11 @@ class GiftApplicationFeature(BaseFeature):
             return
 
         app = await self.user_storage.upsert_gift_application_start(
-            user_id, source=source, eligible=True
+            uid, source=source, eligible=True
         )
         try:
             await self.user_storage.log_interaction(
-                user_id=user_id,
+                user_id=uid,
                 event_category="gift_application",
                 event_type="gift_app_opened",
                 data={"source": source, "application_id": app.get("id")},
@@ -205,18 +210,25 @@ class GiftApplicationFeature(BaseFeature):
         )
 
     async def _handle_ineligible(
-        self, message: Message, state: FSMContext, elig, *, source: str, edit: bool
+        self,
+        message: Message,
+        state: FSMContext,
+        elig,
+        *,
+        source: str,
+        edit: bool,
+        user_id: Optional[int] = None,
     ) -> None:
-        user_id = message.from_user.id
+        uid = int(user_id) if user_id is not None else int(message.chat.id)
         await self.user_storage.upsert_gift_application_start(
-            user_id,
+            uid,
             source=source,
             eligible=False,
             ineligible_reason=elig.reason,
         )
         try:
             await self.user_storage.log_interaction(
-                user_id=user_id,
+                user_id=uid,
                 event_category="gift_application",
                 event_type="gift_app_ineligible",
                 data={"reason": elig.reason, "kind": elig.kind},
@@ -233,6 +245,14 @@ class GiftApplicationFeature(BaseFeature):
             await self._reply(message, txt.T15_HTML, edit=edit)
             return
         if elig.kind == "admin":
+            # Админы в кампанию не входят, но кнопку не оставляем «мёртвой».
+            await self._reply(
+                message,
+                "Ты в списке админов — в подарочную кампанию заявки не принимаем.\n"
+                "Чтобы проверить анкету как участник, временно сними себя из "
+                "<code>admins</code> или напиши разработчику.",
+                edit=edit,
+            )
             return
         if elig.kind == "active_license":
             until = "—"
@@ -245,7 +265,7 @@ class GiftApplicationFeature(BaseFeature):
             club = self.feature_manager.get("club_group") if self.feature_manager else None
             kb = None
             if club:
-                url, kind = await club.get_group_link_for_user(user_id)
+                url, kind = await club.get_group_link_for_user(uid)
                 if url and kind in ("post", "invite"):
                     label = (
                         "Открыть клуб"
@@ -263,7 +283,7 @@ class GiftApplicationFeature(BaseFeature):
             )
             return
         if elig.kind == "expired_access":
-            await self._offer_return_promo(message, user_id, edit=edit)
+            await self._offer_return_promo(message, uid, edit=edit)
             return
 
     async def _offer_return_promo(
@@ -299,26 +319,37 @@ class GiftApplicationFeature(BaseFeature):
 
     async def _cb_apply(self, callback: CallbackQuery, state: FSMContext) -> None:
         await callback.answer()
-        if not callback.message:
+        if not callback.message or not callback.from_user:
             return
-        await self.open_entry(callback.message, state, source="bot", edit=True)
+        await self.open_entry(
+            callback.message,
+            state,
+            source="bot",
+            edit=True,
+            user_id=callback.from_user.id,
+        )
 
     async def _cb_start_form(self, callback: CallbackQuery, state: FSMContext) -> None:
         await callback.answer()
         if not callback.message or not callback.from_user:
             return
-        await self._ask_q1(callback.message, state, callback.from_user.id, edit=True)
+        await self._ask_q1(
+            callback.message, state, callback.from_user.id, edit=True
+        )
 
     async def _cb_continue(self, callback: CallbackQuery, state: FSMContext) -> None:
         await callback.answer()
         if not callback.message or not callback.from_user:
             return
-        app = await self.user_storage.get_gift_application(callback.from_user.id)
+        uid = callback.from_user.id
+        app = await self.user_storage.get_gift_application(uid)
         if not app or app.get("status") != "draft":
-            await self.open_entry(callback.message, state, source="bot", edit=True)
+            await self.open_entry(
+                callback.message, state, source="bot", edit=True, user_id=uid
+            )
             return
         if not app.get("q1_about"):
-            await self._ask_q1(callback.message, state, callback.from_user.id, edit=True)
+            await self._ask_q1(callback.message, state, uid, edit=True)
         elif not app.get("q2_why"):
             await self._ask_q2(callback.message, state, edit=True)
         elif app.get("q3_ready") is None:
