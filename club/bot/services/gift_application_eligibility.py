@@ -71,6 +71,12 @@ async def check_gift_application_eligibility(
     campaign: str = CAMPAIGN_ID,
     allow_existing_draft: bool = True,
 ) -> EligibilityResult:
+    # Админы всегда проходят анкету (QA / portion TEST), без проверки лицензии и оплат.
+    if await is_admin_or_super(user_storage, user_id) and bool(
+        getattr(config, "GIFT_ALLOW_ADMIN_APPLY", True)
+    ):
+        return EligibilityResult(True, reason="admin_bypass")
+
     left = await count_remaining_tickets(user_storage, campaign=campaign)
     if left <= 0:
         return EligibilityResult(False, reason="sold_out", kind="sold_out")
@@ -84,11 +90,6 @@ async def check_gift_application_eligibility(
             return EligibilityResult(
                 False, reason="already_applied", kind="already_applied"
             )
-
-    if await is_admin_or_super(user_storage, user_id):
-        # Для QA (portion TEST) админам можно пройти анкету.
-        if not bool(getattr(config, "GIFT_ALLOW_ADMIN_APPLY", True)):
-            return EligibilityResult(False, reason="admin", kind="admin")
 
     paid_n = await user_storage.get_user_successful_payments_count(user_id)
     allow_trial = bool(getattr(config, "GIFT_ALLOW_TRIAL_PAYERS", False))

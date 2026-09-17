@@ -174,6 +174,10 @@ class GiftApplicationFeature(BaseFeature):
             )
             return
 
+        from bot.admin_guard import is_admin_or_super
+
+        is_admin = await is_admin_or_super(self.user_storage, uid)
+
         existing = await self.user_storage.get_gift_application(uid)
         if existing and existing.get("status") not in (
             "draft",
@@ -181,8 +185,34 @@ class GiftApplicationFeature(BaseFeature):
             "ineligible",
             "expired",
         ):
-            await self._reply(message, txt.T15_HTML, edit=edit)
-            return
+            if is_admin:
+                # Админ может пройти анкету снова (QA): сбрасываем в draft.
+                async with self.user_storage.get_connection() as conn:
+                    await conn.execute(
+                        """
+                        UPDATE gift_application
+                        SET status = 'draft',
+                            eligible = TRUE,
+                            ineligible_reason = NULL,
+                            verdict = NULL,
+                            verdict_reason = NULL,
+                            score = NULL,
+                            score_parts = NULL,
+                            q1_about = NULL,
+                            q2_why = NULL,
+                            q3_ready = NULL,
+                            rules_accepted = FALSE,
+                            submitted_at = NULL,
+                            wave_id = NULL,
+                            updated_at = NOW()
+                        WHERE campaign = $1 AND user_id = $2
+                        """,
+                        CAMPAIGN_ID,
+                        uid,
+                    )
+            else:
+                await self._reply(message, txt.T15_HTML, edit=edit)
+                return
 
         app = await self.user_storage.upsert_gift_application_start(
             uid, source=source, eligible=True
