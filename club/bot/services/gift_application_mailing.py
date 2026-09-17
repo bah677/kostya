@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import html
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Sequence, Set
 from zoneinfo import ZoneInfo
 
@@ -193,7 +193,8 @@ async def create_club_portion_draft(
 
     body = _t1_body()
     buttons = _t1_buttons()
-    scheduled_at = datetime.now(timezone.utc) + timedelta(days=7)
+    # mailing_campaigns.scheduled_at — timestamp WITHOUT time zone (как /new_mailing)
+    scheduled_at = datetime.utcnow() + timedelta(days=7)
     title = f"gift-2026-09 Т1 {used_cohort} {datetime.now(MSK).strftime('%m-%d %H:%M')}"
 
     mstore = MailingStorage(user_storage)

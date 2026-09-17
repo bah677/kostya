@@ -619,6 +619,9 @@ class GiftApplicationFeature(BaseFeature):
             return
         args = (command.args or "").strip().split()
         sub = (args[0].lower() if args else "status")
+        if sub in ("help", "?"):
+            await self._send_help(message)
+            return
         if sub in ("start",):
             await self.user_storage.get_or_create_gift_campaign_state()
             await self.user_storage.update_gift_campaign_state(started=True, stage=1)
@@ -705,7 +708,8 @@ class GiftApplicationFeature(BaseFeature):
             f"этап {st.get('stage')} из 3 · осталось билетов <b>{left}</b> из 150",
             f"mailing_paused={st.get('mailing_paused')} waves_paused={st.get('waves_paused')}",
             "",
-            "<b>Заявки</b>: " + ", ".join(f"{k}={v}" for k, v in sorted(stats.items())),
+            "<b>Заявки</b>: "
+            + (", ".join(f"{k}={v}" for k, v in sorted(stats.items())) or "пусто"),
             "<b>Очередь по источникам</b>: "
             + (", ".join(f"{k}={v}" for k, v in sorted(by_src.items())) or "пусто"),
             "",
@@ -718,12 +722,40 @@ class GiftApplicationFeature(BaseFeature):
                 )
         else:
             lines.append("  ещё не отправлялась")
-        lines.append("")
-        lines.append(
-            "Команды: start | pause | resume | portion [TEST|K1|K2|K3] [force] | "
-            "wave N | review | finish"
+        lines.extend(
+            [
+                "",
+                "Справка: <code>/gift_campaign help</code>",
+            ]
         )
         await message.answer("\n".join(lines), parse_mode=ParseMode.HTML)
+
+    async def _send_help(self, message: Message) -> None:
+        text = (
+            "<b>Подарочная волна — /gift_campaign</b>\n\n"
+            "<b>Когорты (portion)</b>\n"
+            "• <code>TEST</code> — только админы (проверка текста и кнопки)\n"
+            "• <code>K1</code> — писали в бот 2+ разных дня, активны за 60 дней, "
+            "зарегистрированы 30+ дней назад\n"
+            "• <code>K2</code> — 2+ дня в боте, но давно не писали "
+            "(активность старше 60 дней), рег. 30+\n"
+            "• <code>K3</code> — один день в боте или без сообщений, рег. 30+\n"
+            "В любую порцию всегда добавляются админы. Черновик — стандартная "
+            "<code>mailing_campaigns</code>, запуск кнопкой под превью.\n\n"
+            "<b>Команды</b>\n"
+            "• <code>/gift_campaign</code> — статус кампании\n"
+            "• <code>/gift_campaign help</code> — эта справка\n"
+            "• <code>/gift_campaign start</code> — отметить старт кампании (этап 1)\n"
+            "• <code>/gift_campaign pause</code> — пауза рассылки и волн\n"
+            "• <code>/gift_campaign resume</code> — снять паузу\n"
+            "• <code>/gift_campaign portion [TEST|K1|K2|K3] [force]</code> — "
+            "черновик Т1 в личку; <code>force</code> — игнорировать лимиты очереди\n"
+            "• <code>/gift_campaign wave N</code> — отбор и выдача билетов волны 1–6\n"
+            "• <code>/gift_campaign review</code> — очередь ручной проверки заявок\n"
+            "• <code>/gift_campaign finish</code> — закрыть очередь и разослать Т17\n"
+            "• <code>/gift_revoke USER_ID причина</code> — отозвать билет"
+        )
+        await message.answer(text, parse_mode=ParseMode.HTML)
 
     async def _send_review_queue(self, message: Message) -> None:
         rows = await self.user_storage.list_gift_applications_for_review(limit=10)
