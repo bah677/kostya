@@ -22,6 +22,7 @@ class PromoCampaignsMixin:
         discount_percent: float,
         created_by: Optional[int] = None,
         guid: Optional[str] = None,
+        tariff_ids: Optional[List[int]] = None,
     ) -> Optional[str]:
         campaign_guid = (guid or uuid.uuid4().hex).strip().lower()
         try:
@@ -29,14 +30,15 @@ class PromoCampaignsMixin:
                 await conn.execute(
                     """
                     INSERT INTO promo_campaigns
-                        (guid, name, description, discount_percent, created_by)
-                    VALUES ($1, $2, $3, $4, $5)
+                        (guid, name, description, discount_percent, created_by, tariff_ids)
+                    VALUES ($1, $2, $3, $4, $5, $6)
                     """,
                     campaign_guid,
                     name,
                     description,
                     Decimal(str(discount_percent)),
                     created_by,
+                    tariff_ids,
                 )
             logger.info("Promo campaign created guid=%s name=%r", campaign_guid, name)
             return campaign_guid
@@ -49,7 +51,8 @@ class PromoCampaignsMixin:
             async with self.get_connection() as conn:
                 row = await conn.fetchrow(
                     """
-                    SELECT guid, name, description, discount_percent, is_active, created_at, created_by
+                    SELECT guid, name, description, discount_percent, is_active,
+                           created_at, created_by, tariff_ids
                     FROM promo_campaigns
                     WHERE guid = $1
                     """,
@@ -64,7 +67,8 @@ class PromoCampaignsMixin:
         try:
             async with self.get_connection() as conn:
                 q = """
-                    SELECT guid, name, description, discount_percent, is_active, created_at, created_by
+                    SELECT guid, name, description, discount_percent, is_active,
+                           created_at, created_by, tariff_ids
                     FROM promo_campaigns
                 """
                 if active_only:
@@ -127,7 +131,8 @@ class PromoCampaignsMixin:
                         c.name,
                         c.description,
                         c.discount_percent,
-                        c.is_active
+                        c.is_active,
+                        c.tariff_ids
                     FROM user_promo_assignments a
                     JOIN promo_campaigns c ON c.guid = a.campaign_guid
                     WHERE a.user_id = $1
@@ -138,6 +143,7 @@ class PromoCampaignsMixin:
                 )
                 return dict(row) if row else None
         except Exception as e:
+            # tariff_ids может отсутствовать до миграции 035
             logger.error("Failed to get active promo for user %s: %s", user_id, e)
             return None
 

@@ -214,6 +214,13 @@ class Config:
     GIFT_WAVE_ENABLED: bool = True
     GIFT_WAVE_LICENSE_DAYS: int = 30
 
+    #: Анкета подарочной волны (gift-2026-09).
+    GIFT_CAMPAIGN_ENABLED: bool = True
+    GIFT_CAMPAIGN_TICKETS: int = 150
+    GIFT_ALLOW_TRIAL_PAYERS: bool = False
+    #: guid промо «Возвращение: месяц −30%» (создаётся миграцией / админом).
+    GIFT_RETURN_PROMO_GUID: str = "giftreturn30"
+
     #: Топик админ-группы «Расписание» (`message_thread_id`): вечерний дайджест и правки.
     CLUB_SCHEDULE_ADMIN_TOPIC_ID: int = 5655
     #: Ежедневная публикация расписания в топик (20:00 МСК по умолчанию).
@@ -722,6 +729,14 @@ def load_config() -> Config:
         GIFT_WAVE_LICENSE_DAYS=_safe_int_env(
             "GIFT_WAVE_LICENSE_DAYS", 30, min_v=1, max_v=365
         ),
+        GIFT_CAMPAIGN_ENABLED=_env_bool("GIFT_CAMPAIGN_ENABLED", True),
+        GIFT_CAMPAIGN_TICKETS=_safe_int_env(
+            "GIFT_CAMPAIGN_TICKETS", 150, min_v=1, max_v=1000
+        ),
+        GIFT_ALLOW_TRIAL_PAYERS=_env_bool("GIFT_ALLOW_TRIAL_PAYERS", False),
+        GIFT_RETURN_PROMO_GUID=(
+            os.getenv("GIFT_RETURN_PROMO_GUID") or "giftreturn30"
+        ).strip().lower(),
         CLUB_DIGEST_ENABLED=_env_bool("CLUB_DIGEST_ENABLED", False),
         CLUB_DIGEST_HOUR=_safe_int_env("CLUB_DIGEST_HOUR", 10, min_v=0, max_v=23),
         CLUB_DIGEST_MINUTE=_safe_int_env("CLUB_DIGEST_MINUTE", 0, min_v=0, max_v=59),

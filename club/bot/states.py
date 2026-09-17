@@ -53,3 +53,11 @@ class AngelPoolStates(StatesGroup):
 class LegalConsentStates(StatesGroup):
     """Ожидание согласия с юридическими документами."""
     waiting_accept = State()
+
+
+class GiftApplicationStates(StatesGroup):
+    """Анкета подарочной волны."""
+    waiting_q1 = State()
+    waiting_q2 = State()
+    waiting_q3 = State()
+    waiting_rules = State()

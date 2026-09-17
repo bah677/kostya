@@ -781,12 +781,11 @@ def register_admin_mailing_handlers(
         from config import config as _cfg
 
         super_id = int(getattr(_cfg, "SUPER_ADMIN_ID", 0) or 0)
-        if (
-            query.message.chat.type != ChatType.PRIVATE
-            or super_id <= 0
-            or query.from_user.id != super_id
-        ):
-            await query.answer("⛔ Только суперадмин", show_alert=True)
+        uid = query.from_user.id
+        is_super = super_id > 0 and uid == super_id
+        is_adm = await is_telegram_admin(user_storage, uid)
+        if query.message.chat.type != ChatType.PRIVATE or (not is_super and not is_adm):
+            await query.answer("⛔ Только админ", show_alert=True)
             return
         data = query.data or ""
         try:
@@ -820,6 +819,22 @@ def register_admin_mailing_handlers(
             return
         if str(camp.get("status") or "") == "planned":
             await mstore.update_campaign_status(cid, "cancelled")
+            try:
+                from bot.services.gift_application_mailing import (
+                    release_gift_mailing_reservation,
+                )
+
+                freed = await release_gift_mailing_reservation(
+                    user_storage, campaign_id=cid
+                )
+                if freed:
+                    logger.info(
+                        "mdraft cancel gift reservation campaign=%s freed=%s",
+                        cid,
+                        freed,
+                    )
+            except Exception as e:
+                logger.warning("mdraft cancel release gift: %s", e)
         await query.message.edit_reply_markup(reply_markup=None)
         await query.message.answer(
             f"❌ Кампания <code>{cid}</code> отменена.",

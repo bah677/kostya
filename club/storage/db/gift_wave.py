@@ -197,6 +197,71 @@ class GiftWaveMixin:
             logger.error("mark_wave_member_granted: %s", e)
             return False
 
+    async def activate_pending_gift_ticket(
+        self, user_id: int, *, joined_at: Optional[datetime] = None
+    ) -> Optional[Dict[str, Any]]:
+        """Билет granted → activated при входе (лицензию выдаёт вызывающий)."""
+        joined_at = joined_at or datetime.now(MSK)
+        try:
+            async with self.get_connection() as conn:
+                row = await conn.fetchrow(
+                    """
+                    UPDATE gift_wave_member gwm
+                    SET status = 'activated',
+                        activated_at = COALESCE(activated_at, $2),
+                        joined_at = COALESCE(joined_at, $2)
+                    FROM gift_wave gw
+                    WHERE gwm.wave_id = gw.id
+                      AND gwm.user_id = $1
+                      AND gwm.status = 'granted'
+                    RETURNING gwm.*, gw.gift_days, gw.campaign
+                    """,
+                    user_id,
+                    joined_at,
+                )
+                return dict(row) if row else None
+        except Exception as e:
+            logger.error("activate_pending_gift_ticket: %s", e, exc_info=True)
+            return None
+
+    async def expire_unactivated_gift_tickets(self, *, days: int = 7) -> List[Dict[str, Any]]:
+        try:
+            async with self.get_connection() as conn:
+                rows = await conn.fetch(
+                    """
+                    UPDATE gift_wave_member
+                    SET status = 'expired', expired_at = NOW()
+                    WHERE status = 'granted'
+                      AND granted_at IS NOT NULL
+                      AND granted_at <= NOW() - ($1 || ' days')::interval
+                    RETURNING *
+                    """,
+                    str(days),
+                )
+                return [dict(r) for r in rows]
+        except Exception as e:
+            logger.error("expire_unactivated_gift_tickets: %s", e, exc_info=True)
+            return []
+
+    async def get_pending_gift_ticket(self, user_id: int) -> Optional[Dict[str, Any]]:
+        try:
+            async with self.get_connection() as conn:
+                row = await conn.fetchrow(
+                    """
+                    SELECT gwm.*, gw.gift_days, gw.campaign, gw.title
+                    FROM gift_wave_member gwm
+                    JOIN gift_wave gw ON gw.id = gwm.wave_id
+                    WHERE gwm.user_id = $1 AND gwm.status = 'granted'
+                    ORDER BY gwm.granted_at DESC NULLS LAST
+                    LIMIT 1
+                    """,
+                    user_id,
+                )
+                return dict(row) if row else None
+        except Exception as e:
+            logger.error("get_pending_gift_ticket: %s", e)
+            return None
+
     async def touch_wave_last_batch(self, wave_id: int) -> None:
         try:
             async with self.get_connection() as conn:
@@ -214,14 +279,15 @@ class GiftWaveMixin:
     async def mark_wave_member_joined(
         self, user_id: int, *, joined_at: Optional[datetime] = None
     ) -> List[int]:
-        """Помечает joined во всех волнах, где был granted. Возвращает wave_ids."""
+        """Помечает activated во всех волнах, где был granted. Возвращает wave_ids."""
         joined_at = joined_at or datetime.now(MSK)
         try:
             async with self.get_connection() as conn:
                 rows = await conn.fetch(
                     """
                     UPDATE gift_wave_member
-                    SET status = 'joined',
+                    SET status = 'activated',
+                        activated_at = COALESCE(activated_at, $2),
                         joined_at = COALESCE(joined_at, $2)
                     WHERE user_id = $1
                       AND status = 'granted'
@@ -251,7 +317,7 @@ class GiftWaveMixin:
                         first_msg_at = COALESCE(first_msg_at, $2),
                         first_msg_id = COALESCE(first_msg_id, $3)
                     WHERE user_id = $1
-                      AND status IN ('joined', 'granted')
+                      AND status IN ('joined', 'granted', 'activated')
                       AND first_msg_at IS NULL
                     RETURNING wave_id
                     """,

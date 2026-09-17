@@ -253,13 +253,16 @@ async def grant_wave_batch(
     gift_days = int(wave.get("gift_days") or 30)
     club_group = feature_manager.get("club_group") if feature_manager else None
     granted = 0
+    defer_license = bool(wave.get("campaign")) or any(
+        m.get("application_id") for m in members
+    )
 
     try:
         await user_storage.log_interaction(
             user_id=0,
             event_category="gift_wave",
             event_type="wave_batch_granted",
-            data={"wave_id": wave_id, "size": len(members)},
+            data={"wave_id": wave_id, "size": len(members), "defer_license": defer_license},
             source="gift_wave",
             outcome="success",
         )
@@ -268,30 +271,37 @@ async def grant_wave_batch(
 
     for m in members:
         uid = int(m["user_id"])
-        result = await user_storage.grant_admin_gift_license(
-            uid,
-            gift_days,
-            admin_telegram_id=0,
-            origin="gift",
-            wave_id=wave_id,
-        )
-        if not result:
-            logger.error("wave grant failed uid=%s wave=%s", uid, wave_id)
-            continue
-        await user_storage.mark_wave_member_granted(wave_id, uid)
-        expires_str = result["new_expires_at"].strftime("%d.%m.%Y")
+        expires_str = ""
         days_phrase = russian_days_phrase(gift_days)
+
+        if not defer_license:
+            result = await user_storage.grant_admin_gift_license(
+                uid,
+                gift_days,
+                admin_telegram_id=0,
+                origin="gift",
+                wave_id=wave_id,
+            )
+            if not result:
+                logger.error("wave grant failed uid=%s wave=%s", uid, wave_id)
+                continue
+            expires_str = result["new_expires_at"].strftime("%d.%m.%Y")
+
+        await user_storage.mark_wave_member_granted(wave_id, uid)
 
         invite_ok = False
         if club_group:
             try:
-                invite_ok = await club_group.send_admin_gift_invite(
-                    uid, expires_str=expires_str
-                )
+                if defer_license:
+                    invite_ok = await club_group.send_gift_ticket_invite(uid)
+                else:
+                    invite_ok = await club_group.send_admin_gift_invite(
+                        uid, expires_str=expires_str
+                    )
             except Exception as e:
                 logger.error("wave invite uid=%s: %s", uid, e)
 
-        if not invite_ok:
+        if not invite_ok and not defer_license:
             try:
                 await bot.send_message(
                     uid,
@@ -305,6 +315,20 @@ async def grant_wave_batch(
                 )
             except Exception as e:
                 logger.error("wave DM uid=%s: %s", uid, e)
+        elif not invite_ok and defer_license:
+            try:
+                from bot.texts import ru_gift_application as ga_txt
+
+                user = await user_storage.get_user(uid)
+                name = (user or {}).get("first_name")
+                await bot.send_message(
+                    uid,
+                    ga_txt.T16_HTML.format(name_line=ga_txt.t16_name_line(name)),
+                    parse_mode=ParseMode.HTML,
+                    disable_web_page_preview=True,
+                )
+            except Exception as e:
+                logger.error("wave T16 fallback uid=%s: %s", uid, e)
 
         granted += 1
         try:
@@ -312,7 +336,7 @@ async def grant_wave_batch(
                 user_id=uid,
                 event_category="gift_wave",
                 event_type="wave_gift_granted",
-                data={"wave_id": wave_id},
+                data={"wave_id": wave_id, "defer_license": defer_license},
                 source="gift_wave",
                 outcome="success",
             )

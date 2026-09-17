@@ -18,6 +18,7 @@ from bot.logging.message_copier import MessageCopier
 from bot.logging.interaction_logger import InteractionLogger
 from bot.states import (
     AngelPoolStates,
+    GiftApplicationStates,
     LegalConsentStates,
     MemberGiftExtensionStates,
     SpeargunFundStates,
@@ -104,6 +105,15 @@ async def route_message_to_feature(
             sgf = feature_manager.get("speargun_fund")
             if sgf:
                 await sgf.handle_custom_amount(message, state, text)
+            return
+
+        elif current_state in (
+            GiftApplicationStates.waiting_q1.state,
+            GiftApplicationStates.waiting_q2.state,
+        ):
+            ga = feature_manager.get("gift_application")
+            if ga:
+                await ga.handle_message(message, state, text)
             return
 
         elif current_state == WishBoardStates.waiting_description.state:

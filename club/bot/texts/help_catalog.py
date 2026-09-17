@@ -160,6 +160,25 @@ HELP_CATALOG: Tuple[HelpEntry, ...] = (
         "mailings",
     ),
     HelpEntry("/code_id", "Получить file_id медиа для рассылок", "admin", "mailings"),
+    HelpEntry(
+        "/gift_campaign",
+        "Подарочная волна gift-2026-09. "
+        "<code>portion [TEST|K1|K2|K3]</code> — черновик в стандартных рассылках; "
+        "всегда + админы. Когорты: "
+        "<b>TEST</b> — только админы; "
+        "<b>K1</b> — писали в бот 2+ разных дня, активны за 60 дней, в клубе 30+ дней; "
+        "<b>K2</b> — 2+ дня в боте, но давно не писали (активность старше 60 дней), рег. 30+; "
+        "<b>K3</b> — один день / без сообщений, рег. 30+. "
+        "Ещё: status, wave N, review, finish",
+        "admin",
+        "mailings",
+    ),
+    HelpEntry(
+        "/gift_revoke",
+        "Отозвать подарочный билет: <code>/gift_revoke USER_ID причина</code>",
+        "admin",
+        "mailings",
+    ),
     # —— outreach ——
     HelpEntry(
         "/digest_test, /club_digest_test",

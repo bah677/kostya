@@ -255,23 +255,47 @@ class OnboardingFeature(BaseFeature):
                     message_copier=getattr(self, "message_copier", None),
                 )
 
-            elif param.startswith("gift_"):
-                gift_code = param[5:]
-                gift_feature = self.feature_manager.get("gift_activation")
-                if gift_feature:
-                    await gift_feature.activate_gift(message, gift_code)
-                else:
-                    logger.warning("GiftActivationFeature not found")
-
-            elif param.startswith("ref_"):
-                referrer_id = param[4:]
-                referral_feature = self.feature_manager.get("referral")
-                if referral_feature:
-                    await referral_feature.register_referral(
-                        message, referrer_id, is_new_user
+            else:
+                gift_app = None
+                try:
+                    gift_app = self.feature_manager.get("gift_application")
+                except KeyError:
+                    gift_app = None
+                if gift_app and await gift_app.try_open_from_start(
+                    message, state, param
+                ):
+                    if is_new_user:
+                        followup = self.feature_manager.get("followup")
+                        if followup:
+                            await followup.on_start(
+                                user_id, is_new_user=True, start_param=param
+                            )
+                    await state.clear()
+                    logger.info(
+                        "[%s] Gift application deep link user %s param=%r",
+                        self.name,
+                        user_id,
+                        param,
                     )
-                else:
-                    logger.warning("ReferralFeature not found")
+                    return
+
+                if param.startswith("gift_"):
+                    gift_code = param[5:]
+                    gift_feature = self.feature_manager.get("gift_activation")
+                    if gift_feature:
+                        await gift_feature.activate_gift(message, gift_code)
+                    else:
+                        logger.warning("GiftActivationFeature not found")
+
+                elif param.startswith("ref_"):
+                    referrer_id = param[4:]
+                    referral_feature = self.feature_manager.get("referral")
+                    if referral_feature:
+                        await referral_feature.register_referral(
+                            message, referrer_id, is_new_user
+                        )
+                    else:
+                        logger.warning("ReferralFeature not found")
 
         try:
             await self._send_onboarding_content(message, user_id)

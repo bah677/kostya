@@ -56,16 +56,34 @@ def apply_discount_amount(amount: float, discount_percent: float) -> int:
 def apply_promo_to_tariffs(
     tariffs: List[Dict[str, Any]], promo: Dict[str, Any]
 ) -> List[Dict[str, Any]]:
-    """Копия тарифов со скидкой: old_amount = базовая цена, amount = со скидкой."""
+    """Копия тарифов со скидкой: old_amount = базовая цена, amount = со скидкой.
+
+    Если у кампании задан tariff_ids — скидка только на эти тарифы,
+    остальные остаются по полной цене (без old_amount).
+    """
     pct = discount_percent_value(promo)
+    allowed = promo.get("tariff_ids")
+    allowed_set = None
+    if allowed is not None:
+        try:
+            allowed_set = {int(x) for x in allowed}
+        except Exception:
+            allowed_set = None
     out: List[Dict[str, Any]] = []
     for tariff in tariffs:
         t = copy.deepcopy(tariff)
+        tid = t.get("id")
+        apply = True
+        if allowed_set is not None:
+            try:
+                apply = int(tid) in allowed_set
+            except Exception:
+                apply = False
         new_prices = []
         for price in t.get("prices") or []:
             p = dict(price)
             base = float(p.get("amount") or 0)
-            if base > 0:
+            if apply and base > 0 and pct > 0:
                 p["old_amount"] = int(base) if base == int(base) else base
                 p["amount"] = apply_discount_amount(base, pct)
             new_prices.append(p)

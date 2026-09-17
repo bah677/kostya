@@ -342,12 +342,22 @@ class ClubGroupFeature(BaseFeature):
             if await self.user_storage.newcomer_had_greeter_before(user.id):
                 return
             name = user.full_name or (user.username or f"id{user.id}")
+            about_text = text
+            try:
+                from bot.texts import ru_gift_application as ga_txt
+
+                app = await self.user_storage.get_gift_application(user.id)
+                q1 = (app or {}).get("q1_about") if app else None
+                if q1 and str(q1).strip():
+                    about_text = ga_txt.clip_about(str(q1), limit=300)
+            except Exception:
+                pass
             await assign_greeter_for_newcomer(
                 user_storage=self.user_storage,
                 bot=self.bot,
                 newcomer_id=user.id,
                 newcomer_name=name,
-                about_text=text,
+                about_text=about_text,
                 message_id=mid,
                 thread_id=int(thread_id) if thread_id else None,
                 attempt=1,
@@ -416,6 +426,50 @@ class ClubGroupFeature(BaseFeature):
                 forum = bool(getattr(event.chat, "is_forum", False))
                 tid = int(getattr(config, "WELCOME_TOPIC_ID", 0) or 0)
                 try:
+                    pending = await self.user_storage.get_pending_gift_ticket(uid)
+                    if pending and not await self.user_storage.get_user_active_license(uid):
+                        gift_days = int(
+                            pending.get("gift_days")
+                            or getattr(config, "GIFT_WAVE_LICENSE_DAYS", 30)
+                            or 30
+                        )
+                        granted = await self.user_storage.grant_admin_gift_license(
+                            uid,
+                            gift_days,
+                            admin_telegram_id=0,
+                            origin="gift",
+                            wave_id=int(pending["wave_id"]),
+                        )
+                        if granted:
+                            try:
+                                hours = None
+                                gat = pending.get("granted_at")
+                                if gat is not None:
+                                    from zoneinfo import ZoneInfo
+
+                                    MSK = ZoneInfo("Europe/Moscow")
+                                    if gat.tzinfo is None:
+                                        gat = gat.replace(tzinfo=MSK)
+                                    hours = round(
+                                        (datetime.now(MSK) - gat.astimezone(MSK)).total_seconds()
+                                        / 3600.0,
+                                        2,
+                                    )
+                                await self.user_storage.log_interaction(
+                                    user_id=uid,
+                                    event_category="gift_application",
+                                    event_type="gift_ticket_activated",
+                                    data={
+                                        "wave_id": int(pending["wave_id"]),
+                                        "hours_since_grant": hours,
+                                        "application_id": pending.get("application_id"),
+                                    },
+                                    source="gift_application",
+                                    outcome="success",
+                                )
+                            except Exception:
+                                pass
+
                     wave_ids = await self.user_storage.mark_wave_member_joined(uid)
                     for wid in wave_ids:
                         try:
@@ -583,12 +637,15 @@ class ClubGroupFeature(BaseFeature):
         )
 
     async def user_needs_club_invite(self, user_id: int) -> bool:
-        """Есть лицензия, но человек ещё не в закрытой группе."""
+        """Есть лицензия или неактивированный билет волны, но человек ещё не в группе."""
         if config.CLUB_GROUP_ID == 0:
             return False
-        if not await self.user_storage.get_user_active_license(user_id):
+        if await self._still_in_supergroup_membership(user_id):
             return False
-        return not await self._still_in_supergroup_membership(user_id)
+        if await self.user_storage.get_user_active_license(user_id):
+            return True
+        ticket = await self.user_storage.get_pending_gift_ticket(user_id)
+        return bool(ticket)
 
     async def _nightly_auditor(self) -> None:
         while True:
@@ -769,6 +826,25 @@ class ClubGroupFeature(BaseFeature):
                 continue
 
             grace = config.CLUB_GROUP_EXPIRED_LICENSE_GRACE_DAYS
+            pending = await self.user_storage.get_pending_gift_ticket(uid)
+            if pending:
+                # Вход потеряли событием — активируем билет, не исключаем
+                if not await self.user_storage.get_user_active_license(uid):
+                    gift_days = int(
+                        pending.get("gift_days")
+                        or getattr(config, "GIFT_WAVE_LICENSE_DAYS", 30)
+                        or 30
+                    )
+                    await self.user_storage.grant_admin_gift_license(
+                        uid,
+                        gift_days,
+                        admin_telegram_id=0,
+                        origin="gift",
+                        wave_id=int(pending["wave_id"]),
+                    )
+                await self.user_storage.mark_wave_member_joined(uid)
+                continue
+
             if not await self.user_storage.club_nightly_audit_should_remove_member(
                 uid, grace_days=grace
             ):
@@ -891,6 +967,46 @@ class ClubGroupFeature(BaseFeature):
             return True
         except Exception as e:
             logger.error(f"❌ Admin gift invite message failed for user {user_id}: {e}")
+            return False
+
+    async def send_gift_ticket_invite(self, user_id: int) -> bool:
+        """Т16: билет волны без даты окончания — лицензия активируется при входе."""
+        from bot.texts import ru_gift_application as ga_txt
+
+        link = await self._create_fresh_invite_link(user_id)
+        if not link:
+            return False
+        user = await self.user_storage.get_user(user_id)
+        name = (user or {}).get("first_name")
+        message_text = ga_txt.T16_HTML.format(name_line=ga_txt.t16_name_line(name))
+        try:
+            keyboard = with_main_menu(
+                [
+                    [
+                        InlineKeyboardButton(
+                            text=ga_txt.BTN_JOIN_CLUB,
+                            url=link,
+                        )
+                    ]
+                ]
+            )
+            result = await self.bot.send_message(
+                chat_id=user_id,
+                text=message_text,
+                reply_markup=keyboard,
+                parse_mode=ParseMode.HTML,
+                disable_web_page_preview=True,
+            )
+            if self.message_copier:
+                await self.message_copier.save_outgoing(
+                    message=result,
+                    source="gift_ticket",
+                    subtype="club_invite",
+                )
+            logger.info("✅ Gift ticket invite sent to user %s", user_id)
+            return True
+        except Exception as e:
+            logger.error("❌ Gift ticket invite failed uid=%s: %s", user_id, e)
             return False
 
     async def send_wish_board_gift_invite(
@@ -1105,9 +1221,11 @@ class ClubGroupFeature(BaseFeature):
             if not (config.CLUB_POST_LINK or "").strip():
                 return "unconfigured"
             return "post"
-        if not await self.user_storage.get_user_active_license(user_id):
-            return "no_license"
-        return "invite"
+        if await self.user_storage.get_user_active_license(user_id):
+            return "invite"
+        if await self.user_storage.get_pending_gift_ticket(user_id):
+            return "invite"
+        return "no_license"
 
     async def get_group_link_for_user(self, user_id: int) -> Tuple[Optional[str], str]:
         """Ссылку на пост клуба или одноразовый инвайт.
