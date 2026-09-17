@@ -24,6 +24,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 
 from bot.admin_guard import is_telegram_admin
 from bot.features.base import BaseFeature
+from bot.filters import PRIVATE_INLINE_CALLBACK_ONLY
 from bot.services.gift_application_eligibility import (
     check_gift_application_eligibility,
     count_remaining_tickets,
@@ -70,33 +71,34 @@ class GiftApplicationFeature(BaseFeature):
         admin_private = private
         gid = config.resolved_admin_group_id()
         admin_chat = F.chat.id == gid if gid else F.chat.id == -1
+        cb_private = PRIVATE_INLINE_CALLBACK_ONLY
 
         dp.callback_query.register(
-            self._cb_apply, F.data == txt.CB_APPLY, private
+            self._cb_apply, F.data == txt.CB_APPLY, cb_private
         )
         dp.callback_query.register(
-            self._cb_start_form, F.data == txt.CB_START_FORM, private
+            self._cb_start_form, F.data == txt.CB_START_FORM, cb_private
         )
         dp.callback_query.register(
-            self._cb_continue, F.data == txt.CB_CONTINUE, private
+            self._cb_continue, F.data == txt.CB_CONTINUE, cb_private
         )
         dp.callback_query.register(
-            self._cb_cancel, F.data == txt.CB_CANCEL, private
+            self._cb_cancel, F.data == txt.CB_CANCEL, cb_private
         )
         dp.callback_query.register(
-            self._cb_ready_yes, F.data == txt.CB_READY_YES, private
+            self._cb_ready_yes, F.data == txt.CB_READY_YES, cb_private
         )
         dp.callback_query.register(
-            self._cb_ready_no, F.data == txt.CB_READY_NO, private
+            self._cb_ready_no, F.data == txt.CB_READY_NO, cb_private
         )
         dp.callback_query.register(
-            self._cb_rules, F.data == txt.CB_RULES, private
+            self._cb_rules, F.data == txt.CB_RULES, cb_private
         )
         dp.callback_query.register(
-            self._cb_review, F.data.startswith("gift_rev:"), private
+            self._cb_review, F.data.startswith("gift_rev:"), cb_private
         )
         dp.callback_query.register(
-            self._cb_return_promo, F.data == "gift_return_promo", private
+            self._cb_return_promo, F.data == "gift_return_promo", cb_private
         )
 
         dp.message.register(
