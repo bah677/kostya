@@ -980,8 +980,8 @@ class ClubGroupFeature(BaseFeature):
         name = (user or {}).get("first_name")
         message_text = ga_txt.T16_HTML.format(name_line=ga_txt.t16_name_line(name))
         try:
-            keyboard = with_main_menu(
-                [
+            keyboard = InlineKeyboardMarkup(
+                inline_keyboard=[
                     [
                         InlineKeyboardButton(
                             text=ga_txt.BTN_JOIN_CLUB,

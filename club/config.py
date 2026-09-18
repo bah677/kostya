@@ -222,6 +222,9 @@ class Config:
     GIFT_ALLOW_ADMIN_APPLY: bool = True
     #: guid промо «Возвращение: месяц −30%» (создаётся миграцией / админом).
     GIFT_RETURN_PROMO_GUID: str = "giftreturn30"
+    #: Топик админ-группы для алертов подарочной волны (`message_thread_id`).
+    #: Ссылка вида t.me/c/<chat>/8273/… → topic id = 8273.
+    GIFT_CAMPAIGN_ADMIN_TOPIC_ID: int = 8273
 
     #: Топик админ-группы «Расписание» (`message_thread_id`): вечерний дайджест и правки.
     CLUB_SCHEDULE_ADMIN_TOPIC_ID: int = 5655
@@ -740,6 +743,9 @@ def load_config() -> Config:
         GIFT_RETURN_PROMO_GUID=(
             os.getenv("GIFT_RETURN_PROMO_GUID") or "giftreturn30"
         ).strip().lower(),
+        GIFT_CAMPAIGN_ADMIN_TOPIC_ID=_safe_int_env(
+            "GIFT_CAMPAIGN_ADMIN_TOPIC_ID", 8273, min_v=0, max_v=10_000_000
+        ),
         CLUB_DIGEST_ENABLED=_env_bool("CLUB_DIGEST_ENABLED", False),
         CLUB_DIGEST_HOUR=_safe_int_env("CLUB_DIGEST_HOUR", 10, min_v=0, max_v=23),
         CLUB_DIGEST_MINUTE=_safe_int_env("CLUB_DIGEST_MINUTE", 0, min_v=0, max_v=59),

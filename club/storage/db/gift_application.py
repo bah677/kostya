@@ -395,6 +395,7 @@ class GiftApplicationMixin:
         started: bool = False,
         finished: bool = False,
         notes: Optional[str] = None,
+        alerts_json: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         sets = ["updated_at = NOW()"]
         args: List[Any] = [campaign]
@@ -422,6 +423,10 @@ class GiftApplicationMixin:
         if notes is not None:
             sets.append(f"notes = ${idx}")
             args.append(notes)
+            idx += 1
+        if alerts_json is not None:
+            sets.append(f"alerts_json = ${idx}::jsonb")
+            args.append(json.dumps(alerts_json, ensure_ascii=False))
             idx += 1
         async with self.get_connection() as conn:
             row = await conn.fetchrow(

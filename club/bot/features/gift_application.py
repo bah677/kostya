@@ -37,9 +37,9 @@ from bot.services.gift_application_select import (
     select_applications_for_wave,
 )
 from bot.services.gift_wave_service import grant_wave_batch
+from bot.services.gift_application_alerts import run_gift_campaign_alerts
 from bot.states import GiftApplicationStates
 from bot.texts import ru_gift_application as txt
-from bot.utils.user_ui import with_main_menu
 from config import config
 from storage.db.gift_application import CAMPAIGN_ID
 
@@ -229,8 +229,10 @@ class GiftApplicationFeature(BaseFeature):
         except Exception:
             pass
 
-        kb = with_main_menu(
-            [[InlineKeyboardButton(text=txt.BTN_APPLY_SHORT, callback_data=txt.CB_START_FORM)]]
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text=txt.BTN_APPLY_SHORT, callback_data=txt.CB_START_FORM)]
+            ]
         )
         await self._reply(
             message,
@@ -302,8 +304,10 @@ class GiftApplicationFeature(BaseFeature):
                         if kind == "post"
                         else txt.BTN_OPEN_CLUB
                     )
-                    kb = with_main_menu(
-                        [[InlineKeyboardButton(text=label, url=url)]]
+                    kb = InlineKeyboardMarkup(
+                        inline_keyboard=[
+                            [InlineKeyboardButton(text=label, url=url)]
+                        ]
                     )
             await self._reply(
                 message,
@@ -333,8 +337,8 @@ class GiftApplicationFeature(BaseFeature):
                 )
             except Exception as e:
                 logger.warning("return promo assign uid=%s: %s", user_id, e)
-        kb = with_main_menu(
-            [
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[
                 [
                     InlineKeyboardButton(
                         text=txt.BTN_RETURN_DISCOUNT,
@@ -395,8 +399,10 @@ class GiftApplicationFeature(BaseFeature):
         if app and app.get("status") == "draft":
             await self.user_storage.cancel_gift_application(int(app["id"]))
         await state.clear()
-        kb = with_main_menu(
-            [[InlineKeyboardButton(text=txt.BTN_APPLY_SHORT, callback_data=txt.CB_APPLY)]]
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text=txt.BTN_APPLY_SHORT, callback_data=txt.CB_APPLY)]
+            ]
         )
         await self._reply(callback.message, txt.T12_HTML, reply_markup=kb, edit=True)
 
@@ -816,7 +822,10 @@ class GiftApplicationFeature(BaseFeature):
             "• <code>/gift_campaign wave N</code> — отбор и выдача билетов волны 1–6\n"
             "• <code>/gift_campaign review</code> — очередь ручной проверки заявок\n"
             "• <code>/gift_campaign finish</code> — закрыть очередь и разослать Т17\n"
-            "• <code>/gift_revoke USER_ID причина</code> — отозвать билет"
+            "• <code>/gift_revoke USER_ID причина</code> — отозвать билет\n\n"
+            "<b>Алерты</b> (раз в час в топик подарочной волны):\n"
+            "1) пора порция Т1 · 2) заявок хватает · "
+            "3) пора отбор wave · 4) блокировки &gt;5%"
         )
         await message.answer(text, parse_mode=ParseMode.HTML)
 
@@ -971,6 +980,15 @@ class GiftApplicationFeature(BaseFeature):
                     )
                 except Exception:
                     pass
+
+            try:
+                alert_res = await run_gift_campaign_alerts(
+                    user_storage=self.user_storage, bot=self.bot
+                )
+                if alert_res.get("sent"):
+                    logger.info("[%s] gift alerts: %s", self.name, alert_res["sent"])
+            except Exception as ae:
+                logger.error("[%s] gift alerts: %s", self.name, ae, exc_info=True)
         except Exception as e:
             logger.error("[%s] hourly: %s", self.name, e, exc_info=True)
 

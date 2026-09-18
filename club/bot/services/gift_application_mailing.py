@@ -132,9 +132,9 @@ def _merge_with_admins(user_ids: Sequence[int], admin_ids: Sequence[int]) -> Lis
     return out
 
 
-def _t1_body() -> str:
-    # В массовой рассылке одно письмо на всех — без персонального имени.
-    return txt.T1_HTML.format(name_suffix="")
+def _t1_body(cohort: str) -> str:
+    # В массовой рассылке одно письмо на когорту — без персонального имени.
+    return txt.t1_html_for_cohort(cohort, name_suffix="")
 
 
 def _t1_buttons() -> List[Dict[str, str]]:
@@ -191,7 +191,7 @@ async def create_club_portion_draft(
     if not recipients:
         return {"ok": False, "reason": "no_recipients", "cohort": used_cohort}
 
-    body = _t1_body()
+    body = _t1_body(used_cohort)
     buttons = _t1_buttons()
     # mailing_campaigns.scheduled_at — timestamp WITHOUT time zone (как /new_mailing)
     scheduled_at = datetime.utcnow() + timedelta(days=7)
