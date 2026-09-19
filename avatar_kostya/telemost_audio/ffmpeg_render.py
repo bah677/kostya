@@ -240,7 +240,7 @@ def _render_full_voice_parts_sync(
     mp3 = out_dir / f"{stem}.mp3"
     if convert_path_to_mp3(audio_path, mp3):
         logger.info(
-            "full voice %s dur=%.0fs → mp3 document (%s bytes)",
+            "full voice %s dur=%.0fs → mp3 audio (%s bytes)",
             mp3.name,
             total,
             mp3.stat().st_size,
@@ -253,7 +253,7 @@ def _render_full_voice_parts_sync(
 
 def full_voice_delivery_kind(path: Path) -> TgAudioKind:
     if path.suffix.lower() == ".mp3":
-        return TgAudioKind.DOCUMENT
+        return TgAudioKind.AUDIO
     return TgAudioKind.VOICE
 
 

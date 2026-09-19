@@ -141,13 +141,37 @@ class GiftApplicationMixin:
                   AND eligible
                   AND q1_about IS NOT NULL
                   AND q2_why IS NOT NULL
-                  AND q3_ready IS TRUE
+                  AND q3_ready IS NOT NULL
                   AND rules_accepted
                 RETURNING *
                 """,
                 application_id,
             )
             return dict(row) if row else None
+
+    async def list_stuck_gift_submits(
+        self, *, campaign: str = CAMPAIGN_ID, limit: int = 100
+    ) -> List[Dict[str, Any]]:
+        """Черновики, где человек дошёл до правил, но submit не прошёл (баг q3_ready=False)."""
+        async with self.get_connection() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT *
+                FROM gift_application
+                WHERE campaign = $1
+                  AND status = 'draft'
+                  AND eligible
+                  AND q1_about IS NOT NULL
+                  AND q2_why IS NOT NULL
+                  AND q3_ready IS NOT NULL
+                  AND rules_accepted
+                ORDER BY updated_at
+                LIMIT $2
+                """,
+                campaign,
+                limit,
+            )
+            return [dict(r) for r in rows]
 
     async def set_gift_application_verdict(
         self,
@@ -497,6 +521,132 @@ class GiftApplicationMixin:
                 campaign,
             )
             return [dict(r) for r in rows]
+
+    async def gift_cohort_report(
+        self, *, campaign: str = CAMPAIGN_ID
+    ) -> List[Dict[str, Any]]:
+        """Отчёт по когортам K1–K3: сколько уже в порциях, сколько осталось, факт доставки."""
+        async with self.get_connection() as conn:
+            invited_rows = await conn.fetch(
+                """
+                SELECT cohort, COUNT(*)::int AS invited
+                FROM gift_mailing_sent
+                WHERE campaign = $1 AND cohort IN ('K1', 'K2', 'K3')
+                GROUP BY cohort
+                """,
+                campaign,
+            )
+            invited = {r["cohort"]: int(r["invited"]) for r in invited_rows}
+
+            remaining_rows = await conn.fetch(
+                """
+                WITH paid AS (
+                    SELECT DISTINCT user_id FROM payments WHERE status = 'succeeded'
+                ),
+                lic AS (
+                    SELECT DISTINCT user_id FROM license
+                ),
+                d AS (
+                    SELECT u.user_id,
+                           u.created_at AS reg,
+                           count(DISTINCT (m.created_at AT TIME ZONE 'Europe/Moscow')::date)
+                             FILTER (
+                               WHERE m.sender_type = 'user'
+                                 AND COALESCE(m.chat_type, 'private') = 'private'
+                             ) AS days,
+                           max(m.created_at) FILTER (WHERE m.sender_type = 'user') AS last
+                    FROM users u
+                    LEFT JOIN messages m ON m.user_id = u.user_id
+                    WHERE COALESCE(u.is_active, TRUE)
+                      AND u.user_id NOT IN (SELECT user_id FROM paid)
+                      AND u.user_id NOT IN (SELECT user_id FROM lic)
+                      AND u.user_id NOT IN (
+                          SELECT user_id FROM gift_mailing_sent WHERE campaign = $1
+                      )
+                      AND u.user_id NOT IN (
+                          SELECT user_id FROM gift_application WHERE campaign = $1
+                      )
+                      AND u.user_id NOT IN (
+                          SELECT ma.user_id
+                          FROM mailing_audience ma
+                          JOIN mailing_campaigns mc ON mc.id = ma.campaign_id
+                          WHERE mc.name LIKE 'gift-2026-09%'
+                            AND mc.status IN ('planned', 'running', 'completed')
+                      )
+                    GROUP BY 1, 2
+                ),
+                labeled AS (
+                    SELECT
+                           CASE
+                             WHEN reg >= NOW() - interval '30 days' THEN NULL
+                             WHEN days >= 2 AND last > NOW() - interval '60 days' THEN 'K1'
+                             WHEN days >= 2 THEN 'K2'
+                             ELSE 'K3'
+                           END AS cohort
+                    FROM d
+                )
+                SELECT cohort, COUNT(*)::int AS remaining
+                FROM labeled
+                WHERE cohort IS NOT NULL
+                GROUP BY cohort
+                """,
+                campaign,
+            )
+            remaining = {r["cohort"]: int(r["remaining"]) for r in remaining_rows}
+
+            delivery_rows = await conn.fetch(
+                """
+                SELECT cohort,
+                       SUM(delivered)::int AS delivered,
+                       SUM(blocked)::int AS blocked,
+                       SUM(audience)::int AS audience,
+                       COUNT(*)::int AS campaigns,
+                       BOOL_OR(is_running) AS any_running,
+                       BOOL_OR(is_planned) AS any_planned
+                FROM (
+                    SELECT
+                        CASE
+                            WHEN name LIKE '%Т1 K1%' THEN 'K1'
+                            WHEN name LIKE '%Т1 K2%' THEN 'K2'
+                            WHEN name LIKE '%Т1 K3%' THEN 'K3'
+                            WHEN name LIKE '%Т1 TEST%' THEN 'TEST'
+                            ELSE NULL
+                        END AS cohort,
+                        COALESCE(sent_count, 0) AS delivered,
+                        COALESCE(blocked_count, 0) AS blocked,
+                        (SELECT COUNT(*)::int FROM mailing_audience ma
+                         WHERE ma.campaign_id = mc.id) AS audience,
+                        (status = 'running') AS is_running,
+                        (status = 'planned') AS is_planned
+                    FROM mailing_campaigns mc
+                    WHERE name LIKE 'gift-2026-09%'
+                ) t
+                WHERE cohort IS NOT NULL
+                GROUP BY cohort
+                """
+            )
+            delivery = {r["cohort"]: dict(r) for r in delivery_rows}
+
+        out: List[Dict[str, Any]] = []
+        for c in ("K1", "K2", "K3"):
+            d = delivery.get(c) or {}
+            inv = int(invited.get(c) or 0)
+            rem = int(remaining.get(c) or 0)
+            out.append(
+                {
+                    "cohort": c,
+                    "invited": inv,
+                    "remaining": rem,
+                    "pool_now": inv + rem,
+                    "delivered": int(d.get("delivered") or 0),
+                    "blocked": int(d.get("blocked") or 0),
+                    "audience": int(d.get("audience") or 0),
+                    "campaigns": int(d.get("campaigns") or 0),
+                    "running": bool(d.get("any_running")),
+                    "planned": bool(d.get("any_planned")),
+                }
+            )
+        return out
 
     async def list_club_gift_cohort_candidates(
         self, *, cohort: str, limit: int = 300, campaign: str = CAMPAIGN_ID

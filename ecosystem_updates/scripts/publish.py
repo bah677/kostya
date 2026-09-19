@@ -94,7 +94,15 @@ def parse_note_date(path: Path) -> date | None:
     return date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
 
 
-def page_shell(*, title: str, body: str, nav: str = "") -> str:
+def page_shell(
+    *,
+    title: str,
+    body: str,
+    nav: str = "",
+    brand: str = "Обновления экосистемы",
+    brand_href: str = "/",
+    tagline: str = "Только то, что видно пользователям",
+) -> str:
     generated = datetime.now(MSK).strftime("%d.%m.%Y %H:%M МСК")
     return f"""<!DOCTYPE html>
 <html lang="ru">
@@ -107,8 +115,8 @@ def page_shell(*, title: str, body: str, nav: str = "") -> str:
 </head>
 <body>
   <header class="site-header">
-    <a class="brand" href="/">Обновления экосистемы</a>
-    <p class="tagline">Только то, что видно пользователям</p>
+    <a class="brand" href="{html.escape(brand_href)}">{html.escape(brand)}</a>
+    <p class="tagline">{html.escape(tagline)}</p>
   </header>
   <main>
     {nav}
@@ -122,12 +130,20 @@ def page_shell(*, title: str, body: str, nav: str = "") -> str:
 """
 
 
-def build() -> None:
-    NOTES.mkdir(parents=True, exist_ok=True)
-    ASSETS.mkdir(parents=True, exist_ok=True)
+PROJECTS = (
+    {
+        "slug": "julia_avatar",
+        "title": "Контент-аватар Юлии",
+        "tagline": "Редакция: материалы, банк идей, черновики",
+    },
+)
 
+
+def collect_notes(notes_dir: Path) -> list[tuple[date, Path]]:
     notes: list[tuple[date, Path]] = []
-    for path in sorted(NOTES.glob("????-??-??.md"), reverse=True):
+    if not notes_dir.is_dir():
+        return notes
+    for path in sorted(notes_dir.glob("????-??-??.md"), reverse=True):
         d = parse_note_date(path)
         if d is None:
             continue
@@ -135,8 +151,95 @@ def build() -> None:
         if not text or text.startswith("<!-- empty"):
             continue
         notes.append((d, path))
+    return notes
 
-    # day pages
+
+def build_project(slug: str, title: str, tagline: str) -> None:
+    notes_dir = ROOT / "projects" / slug / "notes"
+    out_dir = SITE / slug
+    out_dir.mkdir(parents=True, exist_ok=True)
+    notes = collect_notes(notes_dir)
+    href_base = f"/{slug}"
+    nav_home = (
+        f'<p class="nav"><a href="/">← Экосистема</a>'
+        f' · <a href="{href_base}/">{html.escape(title)}</a></p>'
+    )
+    for d, path in notes:
+        body_md = path.read_text(encoding="utf-8")
+        body = f"<article class=\"day\">\n<h1>{html.escape(date_label(d))}</h1>\n"
+        body += md_to_html_body(body_md)
+        body += "\n</article>"
+        nav = nav_home + f'<p class="nav"><a href="{href_base}/">← Все обновления</a></p>'
+        html_page = page_shell(
+            title=f"{date_label(d)} — {title}",
+            body=body,
+            nav=nav,
+            brand=title,
+            brand_href=f"{href_base}/",
+            tagline=tagline,
+        )
+        (out_dir / f"{d.isoformat()}.html").write_text(html_page, encoding="utf-8")
+
+    if notes:
+        items = []
+        for d, path in notes:
+            preview = path.read_text(encoding="utf-8").strip().splitlines()
+            blurb = ""
+            for line in preview:
+                t = line.strip()
+                if not t or t.startswith("#"):
+                    continue
+                if t.startswith("-") or t.startswith("*") or t.startswith("•"):
+                    t = re.sub(r"^[-*•]\s+", "", t)
+                blurb = t[:160]
+                break
+            items.append(
+                "<li>"
+                f'<a href="{href_base}/{d.isoformat()}.html"><time datetime="{d.isoformat()}">'
+                f"{html.escape(date_label(d))}</time></a>"
+                + (f"<span class=\"blurb\">{html.escape(blurb)}</span>" if blurb else "")
+                + "</li>"
+            )
+        latest_d, latest_path = notes[0]
+        latest = (
+            f'<article class="day latest">\n'
+            f"<h2>Сегодня / последнее: {html.escape(date_label(latest_d))}</h2>\n"
+            f"{md_to_html_body(latest_path.read_text(encoding='utf-8'))}\n"
+            f"</article>\n"
+        )
+        body = latest + (
+            "<section class=\"index\">\n"
+            f"<h1>{html.escape(title)}</h1>\n"
+            f"<p class=\"lead\">{html.escape(tagline)}</p>\n"
+            "<ol class=\"days\">\n"
+            + "\n".join(items)
+            + "\n</ol>\n</section>"
+        )
+    else:
+        body = (
+            "<section class=\"index\">"
+            f"<h1>{html.escape(title)}</h1>"
+            "<p>Пока нет опубликованных обновлений.</p></section>"
+        )
+    (out_dir / "index.html").write_text(
+        page_shell(
+            title=f"{title} — обновления",
+            body=body,
+            nav=f'<p class="nav"><a href="/">← Экосистема</a></p>',
+            brand=title,
+            brand_href=f"{href_base}/",
+            tagline=tagline,
+        ),
+        encoding="utf-8",
+    )
+
+
+def build() -> None:
+    NOTES.mkdir(parents=True, exist_ok=True)
+    ASSETS.mkdir(parents=True, exist_ok=True)
+
+    notes = collect_notes(NOTES)
+
     for d, path in notes:
         body_md = path.read_text(encoding="utf-8")
         body = f"<article class=\"day\">\n<h1>{html.escape(date_label(d))}</h1>\n"
@@ -146,12 +249,16 @@ def build() -> None:
         html_page = page_shell(title=f"{date_label(d)} — обновления", body=body, nav=nav)
         (SITE / f"{d.isoformat()}.html").write_text(html_page, encoding="utf-8")
 
-    # index
+    project_links = "".join(
+        f'<li><a href="/{html.escape(p["slug"])}/">{html.escape(p["title"])}</a>'
+        f'<span class="blurb">{html.escape(p["tagline"])}</span></li>'
+        for p in PROJECTS
+    )
+
     if notes:
         items = []
         for d, path in notes:
             preview = path.read_text(encoding="utf-8").strip().splitlines()
-            # первая непустая строка после возможного # заголовка
             blurb = ""
             for line in preview:
                 t = line.strip()
@@ -173,11 +280,12 @@ def build() -> None:
             "<h1>Что нового</h1>\n"
             "<p class=\"lead\">Кратко о изменениях для участников клуба, "
             "пользователей БиблияБота и связанных сервисов.</p>\n"
+            "<p class=\"lead\">Разделы: </p>\n"
+            f"<ol class=\"days\">{project_links}</ol>\n"
             "<ol class=\"days\">\n"
             + "\n".join(items)
             + "\n</ol>\n</section>"
         )
-        # latest also on index top as full article
         latest_d, latest_path = notes[0]
         latest = (
             f'<article class="day latest">\n'
@@ -189,13 +297,17 @@ def build() -> None:
     else:
         body = (
             "<section class=\"index\"><h1>Что нового</h1>"
-            "<p>Пока нет опубликованных обновлений.</p></section>"
+            "<p>Пока нет опубликованных обновлений.</p>"
+            f"<ol class=\"days\">{project_links}</ol></section>"
         )
 
     (SITE / "index.html").write_text(
         page_shell(title="Обновления экосистемы — mironbot.ru", body=body),
         encoding="utf-8",
     )
+
+    for p in PROJECTS:
+        build_project(p["slug"], p["title"], p["tagline"])
 
 
 if __name__ == "__main__":

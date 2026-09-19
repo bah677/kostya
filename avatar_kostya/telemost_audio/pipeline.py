@@ -390,7 +390,7 @@ async def _run_audio_pipeline(
                 )
                 sent += 1
                 media_kind = (
-                    "voice" if delivery_kind == TgAudioKind.VOICE else "document"
+                    "voice" if delivery_kind == TgAudioKind.VOICE else "audio"
                 )
                 if storage is not None:
                     try:

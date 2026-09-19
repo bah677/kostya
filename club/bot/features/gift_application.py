@@ -448,14 +448,22 @@ class GiftApplicationFeature(BaseFeature):
             int(app["id"]), rules_accepted=True
         )
         submitted = await self.user_storage.submit_gift_application(int(app["id"]))
-        await state.clear()
         if not submitted:
+            # Не clear state: человек остаётся в анкете.
+            # До фикса q3_ready=False («просто посмотреть») ломал submit —
+            # вернём на вопрос 3, оба ответа теперь принимаются.
+            await self.user_storage.update_gift_application_answers(
+                int(app["id"]), rules_accepted=False
+            )
             await self._reply(
                 callback.message,
-                "Не удалось принять заявку — проверь, что все ответы заполнены.",
+                "Не удалось сразу принять заявку. Ответь ещё раз на вопрос "
+                "про знакомство в чате — после «Согласен» заявка уйдёт.",
                 edit=True,
             )
+            await self._ask_q3(callback.message, state, edit=False)
             return
+        await state.clear()
         try:
             await self.user_storage.log_interaction(
                 user_id=callback.from_user.id,
@@ -761,39 +769,115 @@ class GiftApplicationFeature(BaseFeature):
             await self.user_storage.update_gift_campaign_state(finished=True)
             await message.answer(f"Кампания завершена, not_selected={n}, Т17 разослан.")
             return
+        if sub in ("cohorts", "когорты"):
+            await self._send_cohort_report(message)
+            return
+        if sub in ("repair_stuck", "repair"):
+            n = await self._repair_stuck_submits(notify=True)
+            await message.answer(f"Починено застрявших заявок: <b>{n}</b>", parse_mode=ParseMode.HTML)
+            return
         if sub == "review":
             await self._send_review_queue(message)
             return
         await self._send_status(message)
+
+    async def _repair_stuck_submits(self, *, notify: bool = True) -> int:
+        """Досылает заявки, где человек нажал «просто посмотреть» и упёрся в баг submit."""
+        stuck = await self.user_storage.list_stuck_gift_submits()
+        fixed = 0
+        for app in stuck:
+            app_id = int(app["id"])
+            uid = int(app["user_id"])
+            submitted = await self.user_storage.submit_gift_application(app_id)
+            if not submitted:
+                continue
+            fixed += 1
+            try:
+                await self.user_storage.log_interaction(
+                    user_id=uid,
+                    event_category="gift_application",
+                    event_type="gift_app_submitted",
+                    data={"application_id": app_id, "repaired": True},
+                    source="gift_application",
+                    outcome="success",
+                )
+            except Exception:
+                pass
+            if notify:
+                try:
+                    await self.bot.send_message(
+                        uid,
+                        txt.T14_HTML,
+                        parse_mode=ParseMode.HTML,
+                    )
+                except Exception:
+                    pass
+            asyncio.create_task(
+                self._post_submit_pipeline(app_id),
+                name=f"gift_repair_{app_id}",
+            )
+            await asyncio.sleep(0.05)
+        return fixed
+
+    async def _send_cohort_report(self, message: Message) -> None:
+        rows = await self.user_storage.gift_cohort_report()
+        lines = [
+            "<b>Когорты клубного бота (этап 1)</b>",
+            "приглашено = уже взяли в порции Т1; осталось = ещё можно звать; "
+            "доставлено/блок = факт из mailing_campaigns",
+            "",
+        ]
+        for r in rows:
+            flags = []
+            if r.get("running"):
+                flags.append("идёт")
+            if r.get("planned"):
+                flags.append("черновик")
+            flag_s = f" · {', '.join(flags)}" if flags else ""
+            lines.append(
+                f"<b>{r['cohort']}</b>: приглашено <b>{r['invited']}</b>, "
+                f"осталось ~<b>{r['remaining']}</b>"
+                f" (пул сейчас ~{r['pool_now']})\n"
+                f"  доставлено {r['delivered']}, блок {r['blocked']}, "
+                f"кампаний {r['campaigns']}{flag_s}"
+            )
+        lines.extend(["", "Полный статус: <code>/gift_campaign</code>"])
+        await message.answer("\n".join(lines), parse_mode=ParseMode.HTML)
 
     async def _send_status(self, message: Message) -> None:
         st = await self.user_storage.get_or_create_gift_campaign_state()
         left = await count_remaining_tickets(self.user_storage)
         stats = await self.user_storage.gift_application_stats()
         by_src = await self.user_storage.count_queued_by_source()
-        mail = await self.user_storage.gift_mailing_stats()
+        cohorts = await self.user_storage.gift_cohort_report()
         lines = [
             f"<b>Кампания {CAMPAIGN_ID}</b>",
             f"этап {st.get('stage')} из 3 · осталось билетов <b>{left}</b> из 150",
             f"mailing_paused={st.get('mailing_paused')} waves_paused={st.get('waves_paused')}",
+            f"последняя когорта: <code>{st.get('club_cohort') or '—'}</code>",
             "",
             "<b>Заявки</b>: "
             + (", ".join(f"{k}={v}" for k, v in sorted(stats.items())) or "пусто"),
             "<b>Очередь по источникам</b>: "
             + (", ".join(f"{k}={v}" for k, v in sorted(by_src.items())) or "пусто"),
             "",
-            "<b>Рассылка</b>:",
+            "<b>Когорты (Т1)</b>:",
         ]
-        if mail:
-            for m in mail:
-                lines.append(
-                    f"  {m['cohort']}: sent={m['sent']} blocked={m['blocked']}"
-                )
-        else:
-            lines.append("  ещё не отправлялась")
+        for r in cohorts:
+            flag = ""
+            if r.get("running"):
+                flag = " · идёт"
+            elif r.get("planned"):
+                flag = " · черновик"
+            lines.append(
+                f"  <b>{r['cohort']}</b>: приглашено {r['invited']}, "
+                f"осталось ~{r['remaining']}; "
+                f"доставлено {r['delivered']}/блок {r['blocked']}{flag}"
+            )
         lines.extend(
             [
                 "",
+                "Подробнее: <code>/gift_campaign cohorts</code>",
                 "Справка: <code>/gift_campaign help</code>",
             ]
         )
@@ -813,6 +897,10 @@ class GiftApplicationFeature(BaseFeature):
             "<code>mailing_campaigns</code>, запуск кнопкой под превью.\n\n"
             "<b>Команды</b>\n"
             "• <code>/gift_campaign</code> — статус кампании\n"
+            "• <code>/gift_campaign cohorts</code> — отчёт по когортам "
+            "(приглашено / осталось / доставлено)\n"
+            "• <code>/gift_campaign repair_stuck</code> — дослать заявки, "
+            "застрявшие на «просто посмотреть»\n"
             "• <code>/gift_campaign help</code> — эта справка\n"
             "• <code>/gift_campaign start</code> — отметить старт кампании (этап 1)\n"
             "• <code>/gift_campaign pause</code> — пауза рассылки и волн\n"
@@ -989,6 +1077,13 @@ class GiftApplicationFeature(BaseFeature):
                     logger.info("[%s] gift alerts: %s", self.name, alert_res["sent"])
             except Exception as ae:
                 logger.error("[%s] gift alerts: %s", self.name, ae, exc_info=True)
+
+            try:
+                repaired = await self._repair_stuck_submits(notify=True)
+                if repaired:
+                    logger.info("[%s] repaired stuck submits: %s", self.name, repaired)
+            except Exception as re:
+                logger.error("[%s] repair stuck: %s", self.name, re, exc_info=True)
         except Exception as e:
             logger.error("[%s] hourly: %s", self.name, e, exc_info=True)
 

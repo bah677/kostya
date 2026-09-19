@@ -240,7 +240,7 @@ async def _run_full_voice_pipeline(
                 return
 
             delivery_kind = full_voice_delivery_kind(voice_path)
-            media_kind = "voice" if delivery_kind == TgAudioKind.VOICE else "document"
+            media_kind = "voice" if delivery_kind == TgAudioKind.VOICE else "audio"
 
             philosophy = getattr(config, "TELEMOST_SHORTS_PHILOSOPHY_HINT", "") or ""
             title_plain, desc_plain, caption = await build_full_voice_caption_parts(
@@ -263,6 +263,8 @@ async def _run_full_voice_pipeline(
                 "parse_mode": ParseMode.HTML,
                 "message_thread_id": topic_id,
                 "kind": delivery_kind,
+                "title": (title_plain or kind_label)[:64],
+                "performer": "Любящие Бога",
             }
             sent = await send_tg_audio_path(
                 bot,
