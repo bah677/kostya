@@ -217,6 +217,9 @@ async def grant_wave_batch(
                     detail="; ".join(details),
                     wave_id=wave_id,
                 ),
+                thread_id=(
+                    int(getattr(config, "GIFT_CAMPAIGN_ADMIN_TOPIC_ID", 0) or 0) or None
+                ),
             )
             return {"ok": False, "reason": "paused_thresholds", "details": details}
         if n_viol == 1:

@@ -15,6 +15,12 @@ from config import config
 
 logger = logging.getLogger(__name__)
 
+
+def _gift_admin_thread_id() -> Optional[int]:
+    tid = int(getattr(config, "GIFT_CAMPAIGN_ADMIN_TOPIC_ID", 0) or 0)
+    return tid if tid > 0 else None
+
+
 SCREEN_PROMPT = """\
 Ты помогаешь отобрать участников в закрытое христианское
 сообщество «Любящие Бога». Перед тобой заявка человека,
@@ -149,6 +155,7 @@ async def screen_gift_application(
                     f"user_id={app['user_id']}\n"
                     f"{reason or '—'}"
                 ),
+                thread_id=_gift_admin_thread_id(),
             )
         except Exception:
             pass
@@ -195,6 +202,7 @@ async def screen_gift_application(
                     f"Причина модели: {reason or '—'}\n"
                     f"/gift_campaign review"
                 ),
+                thread_id=_gift_admin_thread_id(),
             )
         except Exception:
             pass
