@@ -49,8 +49,11 @@ class PrayerVoiceQuotaMixin:
             min_floor INTEGER NOT NULL DEFAULT 0,
             revenue_usd DOUBLE PRECISION NOT NULL DEFAULT 0,
             revenue_rub DOUBLE PRECISION NOT NULL DEFAULT 0,
+            carryover_slots INTEGER NOT NULL DEFAULT 0,
             locked_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         );
+        ALTER TABLE prayer_voice_period
+            ADD COLUMN IF NOT EXISTS carryover_slots INTEGER NOT NULL DEFAULT 0;
         ALTER TABLE users
             ADD COLUMN IF NOT EXISTS prayer_voice_unlock_pending BOOLEAN NOT NULL DEFAULT FALSE;
         ALTER TABLE users
@@ -194,7 +197,9 @@ class PrayerVoiceQuotaMixin:
                 row = await conn.fetchrow(
                     """
                     SELECT quota_day, limit_slots, computed_slots, min_floor,
-                           revenue_usd, revenue_rub, locked_at
+                           revenue_usd, revenue_rub,
+                           COALESCE(carryover_slots, 0) AS carryover_slots,
+                           locked_at
                     FROM prayer_voice_period
                     WHERE quota_day = $1
                     """,
@@ -214,6 +219,7 @@ class PrayerVoiceQuotaMixin:
         min_floor: int,
         revenue_usd: float,
         revenue_rub: float,
+        carryover_slots: int = 0,
     ) -> Optional[Dict[str, Any]]:
         try:
             async with self.get_connection() as conn:
@@ -221,11 +227,13 @@ class PrayerVoiceQuotaMixin:
                     """
                     INSERT INTO prayer_voice_period (
                         quota_day, limit_slots, computed_slots, min_floor,
-                        revenue_usd, revenue_rub, locked_at
-                    ) VALUES ($1, $2, $3, $4, $5, $6, NOW())
+                        revenue_usd, revenue_rub, carryover_slots, locked_at
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
                     ON CONFLICT (quota_day) DO NOTHING
                     RETURNING quota_day, limit_slots, computed_slots, min_floor,
-                              revenue_usd, revenue_rub, locked_at
+                              revenue_usd, revenue_rub,
+                              COALESCE(carryover_slots, 0) AS carryover_slots,
+                              locked_at
                     """,
                     quota_day,
                     int(limit_slots),
@@ -233,6 +241,7 @@ class PrayerVoiceQuotaMixin:
                     int(min_floor),
                     float(revenue_usd),
                     float(revenue_rub),
+                    max(0, int(carryover_slots or 0)),
                 )
             if row:
                 return dict(row)
@@ -250,29 +259,57 @@ class PrayerVoiceQuotaMixin:
         min_floor: int,
         revenue_usd: float,
         revenue_rub: float,
+        carryover_slots: Optional[int] = None,
     ) -> Optional[Dict[str, Any]]:
         """Пересчёт уже зафиксированного периода (ручной донат в текущий пул)."""
         try:
             async with self.get_connection() as conn:
-                row = await conn.fetchrow(
-                    """
-                    UPDATE prayer_voice_period
-                       SET limit_slots = $2,
-                           computed_slots = $3,
-                           min_floor = $4,
-                           revenue_usd = $5,
-                           revenue_rub = $6
-                     WHERE quota_day = $1
-                 RETURNING quota_day, limit_slots, computed_slots, min_floor,
-                           revenue_usd, revenue_rub, locked_at
-                    """,
-                    quota_day,
-                    int(limit_slots),
-                    int(computed_slots),
-                    int(min_floor),
-                    float(revenue_usd),
-                    float(revenue_rub),
-                )
+                if carryover_slots is None:
+                    row = await conn.fetchrow(
+                        """
+                        UPDATE prayer_voice_period
+                           SET limit_slots = $2,
+                               computed_slots = $3,
+                               min_floor = $4,
+                               revenue_usd = $5,
+                               revenue_rub = $6
+                         WHERE quota_day = $1
+                     RETURNING quota_day, limit_slots, computed_slots, min_floor,
+                               revenue_usd, revenue_rub,
+                               COALESCE(carryover_slots, 0) AS carryover_slots,
+                               locked_at
+                        """,
+                        quota_day,
+                        int(limit_slots),
+                        int(computed_slots),
+                        int(min_floor),
+                        float(revenue_usd),
+                        float(revenue_rub),
+                    )
+                else:
+                    row = await conn.fetchrow(
+                        """
+                        UPDATE prayer_voice_period
+                           SET limit_slots = $2,
+                               computed_slots = $3,
+                               min_floor = $4,
+                               revenue_usd = $5,
+                               revenue_rub = $6,
+                               carryover_slots = $7
+                         WHERE quota_day = $1
+                     RETURNING quota_day, limit_slots, computed_slots, min_floor,
+                               revenue_usd, revenue_rub,
+                               COALESCE(carryover_slots, 0) AS carryover_slots,
+                               locked_at
+                        """,
+                        quota_day,
+                        int(limit_slots),
+                        int(computed_slots),
+                        int(min_floor),
+                        float(revenue_usd),
+                        float(revenue_rub),
+                        max(0, int(carryover_slots or 0)),
+                    )
             return dict(row) if row else None
         except Exception as e:
             logger.error("update_prayer_voice_period_totals %s: %s", quota_day, e)

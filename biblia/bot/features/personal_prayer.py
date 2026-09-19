@@ -223,9 +223,8 @@ class PersonalPrayerFeature(BaseFeature):
 
     @property
     def tts(self) -> _TTS:
-        if self.voicebox.configured:
-            return self.voicebox
-        return self.speechkit
+        """Primary non-ElevenLabs engine. SpeechKit Zakhar — только failover, не primary."""
+        return self.voicebox
 
     def set_bot(self, app) -> None:
         self._bot_app = app
@@ -272,13 +271,18 @@ class PersonalPrayerFeature(BaseFeature):
                 self.voicebox.atempo,
                 self.tts_queue.max_concurrent,
             )
-        elif self.speechkit.configured:
+        else:
+            logger.warning(
+                "[%s] Voicebox не настроен — primary без локального синтеза",
+                self.name,
+            )
+        if self.speechkit.configured:
             logger.info(
-                "[%s] SpeechKit готов (voice=%s) — Voicebox выключен",
+                "[%s] SpeechKit Zakhar готов как failover (voice=%s)",
                 self.name,
                 self.speechkit.voice,
             )
-        else:
+        if not self.voicebox.configured and not self.speechkit.configured:
             logger.warning(
                 "[%s] TTS не настроен (Voicebox/SpeechKit) — только текст молитвы",
                 self.name,
@@ -746,6 +750,7 @@ class PersonalPrayerFeature(BaseFeature):
                 except Exception:
                     pass
 
+            # 1) ElevenLabs — основной, если настроен
             if self.elevenlabs_tts.configured and vid:
                 try:
                     ogg = await self._synthesize_elevenlabs_prayer(
@@ -753,6 +758,11 @@ class PersonalPrayerFeature(BaseFeature):
                     )
                     if ogg:
                         return ogg
+                    logger.warning(
+                        "[%s] prayer ElevenLabs empty uid=%s → next engine",
+                        self.name,
+                        uid,
+                    )
                 except Exception as e:
                     logger.error(
                         "[%s] prayer ElevenLabs failed uid=%s voice=%s: %s",
@@ -765,45 +775,50 @@ class PersonalPrayerFeature(BaseFeature):
             if elevenlabs_only:
                 return None
 
-            tts = self.tts
-            if tts.configured:
+            # 2) Voicebox (локальный) — второй основной, если настроен
+            if self.voicebox.configured:
                 try:
-                    if tts is self.voicebox:
-                        ogg = await self.voicebox.synthesize_ogg_opus(tts_text)
-                    else:
-                        ogg = await tts.synthesize_ogg_opus(tts_text)
+                    ogg = await self.voicebox.synthesize_ogg_opus(tts_text)
                     if ogg:
                         logger.info(
-                            "[%s] prayer TTS ok engine=fallback uid=%s bytes=%s",
+                            "[%s] prayer TTS ok engine=voicebox uid=%s bytes=%s",
                             self.name,
                             uid,
                             len(ogg),
                         )
                         return ogg
+                    logger.warning(
+                        "[%s] prayer Voicebox empty uid=%s → SpeechKit failover",
+                        self.name,
+                        uid,
+                    )
                 except Exception as e:
                     logger.error(
-                        "[%s] prayer fallback TTS failed uid=%s: %s",
+                        "[%s] prayer Voicebox failed uid=%s: %s → SpeechKit failover",
                         self.name,
                         uid,
                         e,
                     )
 
-                if (
-                    self.voicebox.configured
-                    and self.speechkit.configured
-                    and tts is self.voicebox
-                ):
-                    try:
-                        ogg = await self.speechkit.synthesize_ogg_opus(tts_text)
-                        if ogg:
-                            return ogg
-                    except Exception as e2:
-                        logger.error(
-                            "[%s] prayer SpeechKit fallback failed uid=%s: %s",
+            # 3) Yandex Zakhar — только failover после отказа primary, не «вместо»
+            if self.speechkit.configured:
+                try:
+                    ogg = await self.speechkit.synthesize_ogg_opus(tts_text)
+                    if ogg:
+                        logger.info(
+                            "[%s] prayer TTS ok engine=speechkit_failover uid=%s bytes=%s",
                             self.name,
                             uid,
-                            e2,
+                            len(ogg),
                         )
+                        return ogg
+                except Exception as e2:
+                    logger.error(
+                        "[%s] prayer SpeechKit failover failed uid=%s: %s",
+                        self.name,
+                        uid,
+                        e2,
+                    )
 
         logger.warning("[%s] prayer TTS unavailable uid=%s", self.name, uid)
         return None
@@ -1597,16 +1612,13 @@ class PersonalPrayerFeature(BaseFeature):
             kwargs["reply_to_message_id"] = reply_to_mid
 
         voice_msg_id: Optional[int] = None
-        tts = self.tts
-        if tts.configured:
+        # Primary: Voicebox; SpeechKit Zakhar — только после отказа primary
+        if self.voicebox.configured:
             try:
-                if tts is self.voicebox:
-                    async with self.tts_queue.hold(
-                        label=f"stress:{ctx.proposal_id}"
-                    ):
-                        ogg = await self.voicebox.synthesize_ogg_opus(ctx.sample_text)
-                else:
-                    ogg = await tts.synthesize_ogg_opus(ctx.sample_text)
+                async with self.tts_queue.hold(
+                    label=f"stress:{ctx.proposal_id}"
+                ):
+                    ogg = await self.voicebox.synthesize_ogg_opus(ctx.sample_text)
                 stress_kwargs = dict(kwargs)
                 dur = ogg_opus_duration_sec(ogg)
                 if dur is not None:
@@ -1618,35 +1630,32 @@ class PersonalPrayerFeature(BaseFeature):
                 voice_msg_id = int(msg.message_id)
             except Exception as e:
                 logger.error("[%s] prayer stress voice preview failed: %s", self.name, e)
-                if (
-                    tts is self.voicebox
-                    and self.speechkit.configured
-                    and voice_msg_id is None
-                ):
-                    try:
-                        ogg = await self.speechkit.synthesize_ogg_opus(ctx.sample_text)
-                        stress_kwargs = dict(kwargs)
-                        dur = ogg_opus_duration_sec(ogg)
-                        if dur is not None:
-                            stress_kwargs["duration"] = dur
-                        msg = await self.bot.send_voice(
-                            voice=BufferedInputFile(
-                                ogg, filename=f"stress_{ctx.proposal_id}.ogg"
-                            ),
-                            **stress_kwargs,
-                        )
-                        voice_msg_id = int(msg.message_id)
-                        logger.info(
-                            "[%s] prayer stress preview SpeechKit fallback ok id=%s",
-                            self.name,
-                            ctx.proposal_id,
-                        )
-                    except Exception as e2:
-                        logger.error(
-                            "[%s] prayer stress SpeechKit preview failed: %s",
-                            self.name,
-                            e2,
-                        )
+
+        if voice_msg_id is None and self.speechkit.configured:
+            try:
+                ogg = await self.speechkit.synthesize_ogg_opus(ctx.sample_text)
+                stress_kwargs = dict(kwargs)
+                dur = ogg_opus_duration_sec(ogg)
+                if dur is not None:
+                    stress_kwargs["duration"] = dur
+                msg = await self.bot.send_voice(
+                    voice=BufferedInputFile(
+                        ogg, filename=f"stress_{ctx.proposal_id}.ogg"
+                    ),
+                    **stress_kwargs,
+                )
+                voice_msg_id = int(msg.message_id)
+                logger.info(
+                    "[%s] prayer stress preview SpeechKit failover ok id=%s",
+                    self.name,
+                    ctx.proposal_id,
+                )
+            except Exception as e2:
+                logger.error(
+                    "[%s] prayer stress SpeechKit preview failed: %s",
+                    self.name,
+                    e2,
+                )
 
         text_msg_id: Optional[int] = None
         if voice_msg_id is None:

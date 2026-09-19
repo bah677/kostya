@@ -130,6 +130,15 @@ class ScriptureEncouragementMailingFeature(BaseFeature):
                 "\n\nНе угадывай, что происходит в жизни, а спроси. "
                 "В Библии точно есть ответ на твою ситуацию, просто расскажи об этом, и я найду его."
             )
+            # Однодневная приписка к сбору на озвучки (20.09.2026 МСК).
+            from zoneinfo import ZoneInfo
+
+            msk_today = datetime.now(ZoneInfo("Europe/Moscow")).date()
+            if msk_today.isoformat() == "2026-09-20":
+                suffix += (
+                    "\n\nP.S. Сегодня собираем на 1000 бесплатных озвученных молитв "
+                    "для тех, кому не хватило дневного лимита."
+                )
             campaign_body = f"{body}{suffix}"
 
             day_label = now.strftime("%Y-%m-%d %H:%M UTC")

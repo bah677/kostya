@@ -1,5 +1,8 @@
 # bot/services/prayer_voice_funding.py
-"""Лимит голоса от донатов: фиксация периода в 08:00 МСК + индикатив на завтра."""
+"""Лимит голоса от донатов: фиксация периода в 08:00 МСК + индикатив на завтра.
+
+Неиспользованные слоты переносятся на следующие квотные сутки (накопительный пул).
+"""
 
 from __future__ import annotations
 
@@ -28,6 +31,7 @@ class PrayerVoicePeriodInfo:
     revenue_usd: float
     revenue_rub: float
     used: int
+    carryover_slots: int = 0
 
     @property
     def remaining(self) -> int:
@@ -45,6 +49,16 @@ class PrayerVoiceFundingService:
         day = quota_day_for(now)
         return await self.ensure_period(day)
 
+    async def _carryover_from_previous(self, day: date) -> int:
+        """Сколько слотов осталось вчера и переносится на ``day``."""
+        prev = previous_quota_day(day)
+        prev_row = await self.user_storage.get_prayer_voice_period(prev)
+        if not prev_row:
+            return 0
+        used = await self.user_storage.count_prayer_voice_quota_used(quota_day=prev)
+        limit = int(prev_row.get("limit_slots") or 0)
+        return max(0, limit - int(used or 0))
+
     async def ensure_period(self, day: date) -> PrayerVoicePeriodInfo:
         await self.user_storage.ensure_prayer_voice_quota_schema()
         existing = await self.user_storage.get_prayer_voice_period(day)
@@ -59,7 +73,9 @@ class PrayerVoiceFundingService:
         usd = await self._rub_to_usd(rub, on_date=end)
         computed = slots_from_donation_usd(usd)
         min_floor = await self.user_storage.get_prayer_voice_min_limit()
-        limit = apply_min_floor(computed, min_floor)
+        carryover = await self._carryover_from_previous(day)
+        base = apply_min_floor(computed, min_floor)
+        limit = base + carryover
         row = await self.user_storage.insert_prayer_voice_period(
             quota_day=day,
             limit_slots=limit,
@@ -67,33 +83,40 @@ class PrayerVoiceFundingService:
             min_floor=min_floor,
             revenue_usd=usd,
             revenue_rub=rub,
+            carryover_slots=carryover,
         )
         used = await self.user_storage.count_prayer_voice_quota_used(quota_day=day)
         logger.info(
             "prayer voice period locked day=%s limit=%s computed=%s min=%s "
-            "rub=%.2f usd=%.2f",
+            "carryover=%s rub=%.2f usd=%.2f",
             day,
             limit,
             computed,
             min_floor,
+            carryover,
             rub,
             usd,
         )
-        return self._row_to_info(row or {
-            "quota_day": day,
-            "limit_slots": limit,
-            "computed_slots": computed,
-            "min_floor": min_floor,
-            "revenue_usd": usd,
-            "revenue_rub": rub,
-        }, used=used)
+        return self._row_to_info(
+            row
+            or {
+                "quota_day": day,
+                "limit_slots": limit,
+                "computed_slots": computed,
+                "min_floor": min_floor,
+                "revenue_usd": usd,
+                "revenue_rub": rub,
+                "carryover_slots": carryover,
+            },
+            used=used,
+        )
 
     async def recalculate_locked_period(
         self, day: date
     ) -> Optional[PrayerVoicePeriodInfo]:
         """
         Пересчитать уже зафиксированный период по донатам окна предыдущих суток.
-        Лимит не опускаем ниже уже использованных слотов.
+        Перенос с вчера сохраняем; лимит не опускаем ниже уже использованных слотов.
         """
         existing = await self.user_storage.get_prayer_voice_period(day)
         if not existing:
@@ -105,7 +128,10 @@ class PrayerVoiceFundingService:
         usd = await self._rub_to_usd(rub, on_date=end)
         computed = slots_from_donation_usd(usd)
         min_floor = await self.user_storage.get_prayer_voice_min_limit()
-        limit = apply_min_floor(computed, min_floor)
+        # Перенос фиксируется при создании суток; при пересчёте не трогаем.
+        carryover = int(existing.get("carryover_slots") or 0)
+        base = apply_min_floor(computed, min_floor)
+        limit = base + carryover
         used = await self.user_storage.count_prayer_voice_quota_used(quota_day=day)
         limit = max(limit, used)
         row = await self.user_storage.update_prayer_voice_period_totals(
@@ -115,13 +141,15 @@ class PrayerVoiceFundingService:
             min_floor=min_floor,
             revenue_usd=usd,
             revenue_rub=rub,
+            carryover_slots=carryover,
         )
         logger.info(
             "prayer voice period recalculated day=%s limit=%s computed=%s "
-            "used=%s rub=%.2f usd=%.2f",
+            "carryover=%s used=%s rub=%.2f usd=%.2f",
             day,
             limit,
             computed,
+            carryover,
             used,
             rub,
             usd,
@@ -132,9 +160,8 @@ class PrayerVoiceFundingService:
         self, *, now: Optional[datetime] = None
     ) -> int:
         """
-        Индикатив на завтра: max(расчёт от донатов текущего окна, минимум из /adm).
-        Юзерам и в «спасибо» показываем уже с полом — иначе первый маленький донат
-        выглядел бы как «1», хотя завтра сработает минимум.
+        Индикатив на завтра: max(расчёт от донатов текущего окна, минимум из /adm)
+        + остаток сегодняшнего пула (перенос).
         """
         day = quota_day_for(now)
         start, end = quota_window(day)
@@ -144,7 +171,14 @@ class PrayerVoiceFundingService:
         usd = await self._rub_to_usd(rub, on_date=msk_now().date())
         computed = slots_from_donation_usd(usd)
         min_floor = await self.user_storage.get_prayer_voice_min_limit()
-        return apply_min_floor(computed, min_floor)
+        base = apply_min_floor(computed, min_floor)
+        # Остаток сегодня → перенос на завтра.
+        try:
+            today = await self.ensure_current_period(now=now)
+            carry_preview = int(today.remaining)
+        except Exception:
+            carry_preview = 0
+        return base + carry_preview
 
     async def get_status(self, *, now: Optional[datetime] = None) -> Dict[str, Any]:
         period = await self.ensure_current_period(now=now)
@@ -157,6 +191,7 @@ class PrayerVoiceFundingService:
             "used": period.used,
             "remaining": period.remaining,
             "computed_slots": period.computed_slots,
+            "carryover_slots": period.carryover_slots,
             "min_floor": min_floor,
             "per_user_daily": per_user,
             "revenue_usd": period.revenue_usd,
@@ -208,4 +243,5 @@ class PrayerVoiceFundingService:
             revenue_usd=float(row.get("revenue_usd") or 0),
             revenue_rub=float(row.get("revenue_rub") or 0),
             used=int(used or 0),
+            carryover_slots=int(row.get("carryover_slots") or 0),
         )

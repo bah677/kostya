@@ -322,6 +322,7 @@ def format_voice_limit_status_html(status: dict) -> str:
     remaining = int(status.get("remaining") or 0)
     min_floor = int(status.get("min_floor") or 0)
     computed = int(status.get("computed_slots") or 0)
+    carryover = int(status.get("carryover_slots") or 0)
     next_slots = int(status.get("next_slots") or 0)
     per_user = int(status.get("per_user_daily") or 0)
     rub = float(status.get("revenue_rub") or 0)
@@ -330,12 +331,13 @@ def format_voice_limit_status_html(status: dict) -> str:
         "<b>🎤 Лимит бесплатных голосовых молитв</b>\n\n"
         f"Сутки квоты (с 08:00 МСК): <code>{html_mod.escape(day_s)}</code>\n"
         f"Лимит пула сегодня: <b>{limit}</b> "
-        f"(из сборов: {computed}, минимум: {min_floor})\n"
+        f"(из сборов: {computed}, перенос: {carryover}, минимум: {min_floor})\n"
         f"На одного человека / сутки: <b>{per_user}</b>\n"
         f"Использовано в пуле: <b>{used}</b> · осталось: <b>{remaining}</b>\n"
         f"Сборы за прошлые 24ч (для фиксации): "
         f"{html_mod.escape(f'{rub:.0f}')} ₽ ≈ {html_mod.escape(f'{usd:.2f}')} $\n"
-        f"Индикатив на завтра: <b>{next_slots}</b>\n\n"
-        "<i>Минимум пула — пол от донатов. Лимит на человека — отдельно. "
+        f"Индикатив на завтра (с переносом остатка): <b>{next_slots}</b>\n\n"
+        "<i>Неиспользованные слоты переносятся на следующие сутки. "
+        "Минимум пула — пол от донатов. Лимит на человека — отдельно. "
         "Админы лимит не расходуют.</i>"
     )
