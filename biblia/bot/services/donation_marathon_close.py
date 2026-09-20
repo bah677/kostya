@@ -90,18 +90,28 @@ def format_marathon_close_stats_html(
     closed = marathon.get("closed_at")
     duration = _fmt_duration(started, closed)
 
-    progress = marathon_progress_line(
-        raised=raised, goal=goal, currency=cur, donors=donors, marathon=marathon
+    progress_money = marathon_progress_line(
+        raised=raised, goal=goal, currency=cur, donors=donors, marathon=None
     )
     lines = [
         title,
         f"<code>#{mid}</code>",
         "",
-        progress,
-        f"• Длительность: <b>{html.escape(duration)}</b>",
-        f"• Взносов: <b>{contribs}</b>",
+        progress_money,
     ]
-    if contribs > 0 and not is_prayers_display(marathon):
+    if is_prayers_display(marathon):
+        lines.append(
+            marathon_progress_line(
+                raised=raised, goal=goal, currency=cur, donors=donors, marathon=marathon
+            )
+        )
+    lines.extend(
+        [
+            f"• Длительность: <b>{html.escape(duration)}</b>",
+            f"• Взносов: <b>{contribs}</b>",
+        ]
+    )
+    if contribs > 0:
         lines.append(f"• Средний взнос: <b>{html.escape(format_money(avg_amt, cur))}</b>")
         lines.append(f"• Макс. взнос: <b>{html.escape(format_money(max_amt, cur))}</b>")
     return "\n".join(lines)

@@ -150,7 +150,10 @@ def marathon_progress_line(
 
 
 async def marathon_admin_notify_block(user_storage) -> str:
-    """Блок прогресса активного марафона для админ-уведомлений о платежах."""
+    """Блок прогресса активного марафона для админ-уведомлений о платежах.
+
+    В админке всегда показываем деньги; при режиме ``prayers`` — ещё и молитвы.
+    """
     marathon = await user_storage.get_active_donation_marathon()
     if not marathon:
         return ""
@@ -160,10 +163,16 @@ async def marathon_admin_notify_block(user_storage) -> str:
     goal = float(marathon.get("goal_amount") or 0)
     cur = str(marathon.get("goal_currency") or "USD")
     name = html.escape(str(marathon.get("name") or "Марафон"))
-    line = marathon_progress_line(
-        raised=raised, goal=goal, currency=cur, donors=donors, marathon=marathon
+    money_line = marathon_progress_line(
+        raised=raised, goal=goal, currency=cur, donors=donors, marathon=None
     )
-    return f"\n\n🎙️ <b>Марафон «{name}»</b>\n{line}"
+    lines = [f"\n\n🎙️ <b>Марафон «{name}»</b>", money_line]
+    if is_prayers_display(marathon):
+        prayers_line = marathon_progress_line(
+            raised=raised, goal=goal, currency=cur, donors=donors, marathon=marathon
+        )
+        lines.append(prayers_line)
+    return "\n".join(lines)
 
 
 def marathon_progress_html(
