@@ -24,8 +24,12 @@ from bot.features.base import BaseFeature
 from bot.services.donation_marathon_progress import (
     accept_flags,
     format_money,
+    is_prayers_display,
     marathon_progress_html,
+    marathon_progress_line,
+    resolve_goal_prayers,
 )
+from bot.services.prayer_voice_quota import slots_from_donation_usd
 from bot.services.donation_marathon_attr import backfill_marathon_contributions
 from bot.services.donation_marathon_close import (
     approve_thanks_campaign,
@@ -56,6 +60,8 @@ _CB_PAY_USD = "marathon_pay_usd"
 _CB_PAY_CRYPTO = "marathon_pay_crypto"
 _CB_ACCEPT_TOGGLE = "marathon_acc_"  # marathon_acc_rub / usd / crypto
 _CB_ACCEPT_DONE = "marathon_acc_done"
+_CB_DISP_MONEY = "marathon_disp_money"
+_CB_DISP_PRAYERS = "marathon_disp_prayers"
 _CB_CONFIRM_YES = "marathon_confirm_yes"
 _CB_CONFIRM_NO = "marathon_confirm_no"
 _CB_THANKS_OK = "marathon_thanks_ok_"
@@ -67,6 +73,7 @@ class MarathonAdminStates(StatesGroup):
     goal_amount = State()
     goal_currency = State()
     accept_methods = State()
+    progress_display = State()
     description = State()
     confirm = State()
 
@@ -186,10 +193,17 @@ class DonationMarathonFeature(BaseFeature):
             await message.answer("Не удалось остановить марафон.")
             return
         raised = await self.user_storage.get_marathon_raised_amount(int(active["id"]))
+        donors = await self.user_storage.get_marathon_donors_count(int(active["id"]))
+        line = marathon_progress_line(
+            raised=raised,
+            goal=float(active.get("goal_amount") or 0),
+            currency=str(active.get("goal_currency") or "USD"),
+            donors=donors,
+            marathon=active,
+        )
         await message.answer(
-            f"⏹ Марафон «{active['name']}» принудительно завершён.\n"
-            f"Собрано: {format_money(raised, active['goal_currency'])} "
-            f"из {format_money(float(active['goal_amount']), active['goal_currency'])}."
+            f"⏹ Марафон «{active['name']}» принудительно завершён.\n{line}",
+            parse_mode=ParseMode.HTML,
         )
         await handle_marathon_closed(
             self.bot,
@@ -224,6 +238,16 @@ class DonationMarathonFeature(BaseFeature):
             goal_cur = (
                 (await self.user_storage.get_donation_marathon(marathon_id)) or {}
             ).get("goal_currency", "USD")
+            marathon = await self.user_storage.get_donation_marathon(marathon_id) or {}
+            raised_after = float(stats.get("raised_after") or 0)
+            donors_after = int(stats.get("donors_after") or 0)
+            progress = marathon_progress_line(
+                raised=raised_after,
+                goal=float(marathon.get("goal_amount") or 0),
+                currency=str(marathon.get("goal_currency") or goal_cur),
+                donors=donors_after,
+                marathon=marathon,
+            )
             lines = [
                 f"✅ <b>Бэкфилл марафона #{marathon_id}</b>",
                 f"«{html.escape(str(stats.get('marathon_name') or ''))}»",
@@ -231,8 +255,7 @@ class DonationMarathonFeature(BaseFeature):
                 f"• Добавлено: {stats.get('added')}",
                 f"• Пропущено: {stats.get('skipped')}",
                 f"• Ошибок: {stats.get('errors')}",
-                f"• Собрано сейчас: <b>{format_money(float(stats.get('raised_after') or 0), goal_cur)}</b>",
-                f"• Участников: {stats.get('donors_after')}",
+                progress,
             ]
             if stats.get("auto_closed"):
                 lines.append("🎉 Марафон автоматически завершён по цели.")
@@ -324,16 +347,33 @@ class DonationMarathonFeature(BaseFeature):
             methods.append("крипта")
         goal = float(data.get("goal_amount") or 0)
         cur = str(data.get("goal_currency") or "USD")
-        from bot.services.donation_marathon_progress import marathon_progress_line
-
+        disp = str(data.get("progress_display") or "money")
+        mock = {
+            "goal_amount": goal,
+            "goal_currency": cur,
+            "progress_display": disp,
+            "goal_prayers": data.get("goal_prayers"),
+            "name": data.get("name"),
+        }
         progress = marathon_progress_line(
-            raised=0.0, goal=goal, currency=cur, donors=0
+            raised=0.0, goal=goal, currency=cur, donors=0, marathon=mock
         )
         body = (data.get("description_html") or "").strip()
+        if disp == "prayers":
+            gp = int(data.get("goal_prayers") or resolve_goal_prayers(mock) or 0)
+            goal_line = (
+                f"• Показ прогресса: <b>молитвы</b> (цель {gp})\n"
+                f"• Внутренняя денежная цель: <code>{format_money(goal, cur)}</code>\n"
+            )
+        else:
+            goal_line = (
+                f"• Показ прогресса: <b>деньги</b>\n"
+                f"• Цель: <b>{format_money(goal, cur)}</b>\n"
+            )
         return (
             "📋 <b>Проверка марафона</b>\n\n"
             f"• Название кнопки: <b>{data.get('name')}</b>\n"
-            f"• Цель: <b>{format_money(goal, cur)}</b>\n"
+            f"{goal_line}"
             f"• Засчитывать: <b>{', '.join(methods) or '—'}</b>\n\n"
             f"<b>Как увидят пользователи:</b>\n"
             f"{body}\n\n{progress}"
@@ -377,6 +417,9 @@ class DonationMarathonFeature(BaseFeature):
             return
         if data.startswith(_CB_ACCEPT_TOGGLE) or data == _CB_ACCEPT_DONE:
             await self._on_accept_methods(callback, state, data)
+            return
+        if data in (_CB_DISP_MONEY, _CB_DISP_PRAYERS):
+            await self._on_progress_display(callback, state, data)
             return
         if data in (_CB_CONFIRM_YES, _CB_CONFIRM_NO):
             await self._on_confirm(callback, state, data)
@@ -479,20 +522,66 @@ class DonationMarathonFeature(BaseFeature):
             if not (st.get("accept_rub") or st.get("accept_usd") or st.get("accept_crypto")):
                 await callback.answer("Выберите хотя бы один метод", show_alert=True)
                 return
-            await state.set_state(MarathonAdminStates.description)
+            await state.set_state(MarathonAdminStates.progress_display)
+            kb = InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        InlineKeyboardButton(
+                            text="🙏 Молитвы (без сумм)",
+                            callback_data=_CB_DISP_PRAYERS,
+                        )
+                    ],
+                    [
+                        InlineKeyboardButton(
+                            text="💰 Деньги",
+                            callback_data=_CB_DISP_MONEY,
+                        )
+                    ],
+                ]
+            )
             await callback.message.edit_text(
-                "Введите <b>описание марафона в HTML</b>.\n"
-                "Его увидят при нажатии на кнопку; в конец автоматически "
-                "добавим строку с текущим прогрессом сбора.\n\n"
-                "Пример:\n"
-                "<pre>&lt;b&gt;Голос Кости для молитв&lt;/b&gt;\n"
-                "Собираем $300 на локальную озвучку.</pre>",
+                "Как показывать прогресс пользователям?\n\n"
+                "• <b>Молитвы</b> — только число озвучек, без рублей и долларов\n"
+                "• <b>Деньги</b> — классический сбор с суммами",
                 parse_mode=ParseMode.HTML,
+                reply_markup=kb,
             )
             await callback.answer()
             return
         st = await state.get_data()
         await callback.message.edit_reply_markup(reply_markup=self._accept_keyboard(st))
+        await callback.answer()
+
+    async def _on_progress_display(
+        self, callback: CallbackQuery, state: FSMContext, data: str
+    ) -> None:
+        uid = callback.from_user.id if callback.from_user else 0
+        if not await is_telegram_admin(self.user_storage, uid):
+            await callback.answer("Нет доступа", show_alert=True)
+            return
+        st = await state.get_data()
+        goal = float(st.get("goal_amount") or 0)
+        cur = str(st.get("goal_currency") or "USD").upper()
+        if data == _CB_DISP_PRAYERS:
+            if cur == "USD":
+                gp = slots_from_donation_usd(goal)
+            else:
+                # Без FX в мастере: просим цель в молитвах отдельным шагом не делаем —
+                # берём floor(goal) как запасной вариант; админ правит в БД при необходимости.
+                gp = max(1, int(goal))
+            await state.update_data(progress_display="prayers", goal_prayers=gp)
+        else:
+            await state.update_data(progress_display="money", goal_prayers=None)
+        await state.set_state(MarathonAdminStates.description)
+        await callback.message.edit_text(
+            "Введите <b>описание марафона в HTML</b>.\n"
+            "Его увидят при нажатии на кнопку; в конец автоматически "
+            "добавим строку с текущим прогрессом сбора.\n\n"
+            "Пример:\n"
+            "<pre>&lt;b&gt;1000 молитв&lt;/b&gt;\n"
+            "Собираем озвучки для тех, кому не хватило лимита.</pre>",
+            parse_mode=ParseMode.HTML,
+        )
         await callback.answer()
 
     async def _on_confirm(
@@ -517,6 +606,12 @@ class DonationMarathonFeature(BaseFeature):
             accept_usd=bool(st.get("accept_usd")),
             accept_crypto=bool(st.get("accept_crypto")),
             created_by=uid,
+            progress_display=str(st.get("progress_display") or "money"),
+            goal_prayers=(
+                int(st["goal_prayers"])
+                if st.get("goal_prayers") is not None
+                else None
+            ),
         )
         await state.clear()
         if not row:
@@ -530,10 +625,16 @@ class DonationMarathonFeature(BaseFeature):
             "Под каждым ответом бота — синяя кнопка с названием."
         )
         await callback.answer("Запущен")
+        goal_note = ""
+        if is_prayers_display(row):
+            goal_note = f"Цель: {resolve_goal_prayers(row)} молитв."
+        else:
+            goal_note = (
+                f"Цель: {format_money(float(row['goal_amount']), row['goal_currency'])}."
+            )
         await _notify_payment_topic(
             self.bot,
-            f"🎙️ Марафон <b>{row['name']}</b> запущен. "
-            f"Цель: {format_money(float(row['goal_amount']), row['goal_currency'])}.",
+            f"🎙️ Марафон <b>{row['name']}</b> запущен. {goal_note}",
         )
 
     async def _user_open(self, callback: CallbackQuery) -> None:

@@ -51,16 +51,26 @@ class DonationMarathonsMixin:
         accept_usd: bool,
         accept_crypto: bool,
         created_by: Optional[int] = None,
+        progress_display: str = "money",
+        goal_prayers: Optional[int] = None,
     ) -> Optional[Dict[str, Any]]:
         try:
+            await self.ensure_donation_marathons_schema()
+            disp = (progress_display or "money").strip().lower()
+            if disp not in ("money", "prayers"):
+                disp = "money"
+            gp = int(goal_prayers) if goal_prayers is not None else None
+            if gp is not None and gp <= 0:
+                gp = None
             async with self.get_connection() as conn:
                 row = await conn.fetchrow(
                     """
                     INSERT INTO donation_marathons (
                       name, description_html, goal_amount, goal_currency,
-                      accept_rub, accept_usd, accept_crypto, created_by
+                      accept_rub, accept_usd, accept_crypto, created_by,
+                      progress_display, goal_prayers
                     )
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
                     RETURNING *
                     """,
                     name.strip(),
@@ -71,10 +81,56 @@ class DonationMarathonsMixin:
                     accept_usd,
                     accept_crypto,
                     created_by,
+                    disp,
+                    gp,
                 )
                 return dict(row) if row else None
         except Exception as e:
             logger.error("❌ create_donation_marathon: %s", e)
+            return None
+
+    async def ensure_donation_marathons_schema(self) -> None:
+        sql = """
+        ALTER TABLE donation_marathons
+            ADD COLUMN IF NOT EXISTS progress_display TEXT NOT NULL DEFAULT 'money';
+        ALTER TABLE donation_marathons
+            ADD COLUMN IF NOT EXISTS goal_prayers INTEGER;
+        """
+        try:
+            async with self.get_connection() as conn:
+                await conn.execute(sql)
+        except Exception as e:
+            logger.warning("ensure_donation_marathons_schema: %s", e)
+
+    async def set_marathon_progress_display(
+        self,
+        marathon_id: int,
+        *,
+        progress_display: str,
+        goal_prayers: Optional[int] = None,
+    ) -> Optional[Dict[str, Any]]:
+        disp = (progress_display or "money").strip().lower()
+        if disp not in ("money", "prayers"):
+            disp = "money"
+        gp = int(goal_prayers) if goal_prayers is not None else None
+        try:
+            await self.ensure_donation_marathons_schema()
+            async with self.get_connection() as conn:
+                row = await conn.fetchrow(
+                    """
+                    UPDATE donation_marathons
+                       SET progress_display = $2,
+                           goal_prayers = COALESCE($3, goal_prayers)
+                     WHERE id = $1
+                 RETURNING *
+                    """,
+                    int(marathon_id),
+                    disp,
+                    gp,
+                )
+            return dict(row) if row else None
+        except Exception as e:
+            logger.error("set_marathon_progress_display: %s", e)
             return None
 
     async def close_donation_marathon(
