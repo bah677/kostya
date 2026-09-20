@@ -266,6 +266,9 @@ class Config:
 
     #: ЭФ-2: личные приглашения на эфир (air/qa/repentance/other).
     CLUB_AIR_INVITE_ENABLED: bool = True
+    #: ЭФ-3: топики закрытой группы, куда выкладывают запись эфира
+    #: (message_thread_id, через запятую). Пример ссылки t.me/c/…/3/… → 3.
+    CLUB_AIR_RECORDING_TOPIC_IDS: Tuple[int, ...] = (3, 109)
 
     #: Рассылки дайджеста и цитат в личку (пилот / full rollout).
     CLUB_OUTREACH_DM_ENABLED: bool = False
@@ -777,6 +780,10 @@ def load_config() -> Config:
         ),
         CLUB_SCRIPTURE_DM_HOURS=os.getenv("CLUB_SCRIPTURE_DM_HOURS", "12,21"),
         CLUB_AIR_INVITE_ENABLED=_env_bool("CLUB_AIR_INVITE_ENABLED", True),
+        CLUB_AIR_RECORDING_TOPIC_IDS=_parse_subscription_chain_test_user_ids(
+            os.getenv("CLUB_AIR_RECORDING_TOPIC_IDS", "3,109") or "3,109"
+        )
+        or (3, 109),
         CLUB_OUTREACH_DM_ENABLED=_env_bool("CLUB_OUTREACH_DM_ENABLED", False),
         CLUB_OUTREACH_DM_PILOT_ONLY=_env_bool("CLUB_OUTREACH_DM_PILOT_ONLY", True),
         CLUB_OUTREACH_PILOT_SIZE=_safe_int_env(

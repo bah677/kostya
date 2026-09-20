@@ -127,7 +127,7 @@ class ClubScheduleFeature(BaseFeature):
             dp.message.register(
                 self._on_club_group_text,
                 F.chat.id == config.CLUB_GROUP_ID,
-                F.text | F.caption,
+                F.text | F.caption | F.video | F.video_note | F.document,
             )
 
         gid = config.resolved_admin_group_id()
@@ -164,12 +164,37 @@ class ClubScheduleFeature(BaseFeature):
         await message.answer(body, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
 
     async def _on_club_group_text(self, message: Message) -> None:
+        # ЭФ-3: запись выложили в группе → ссылка на пост в личку отсутствовавшим
+        asyncio.create_task(
+            self._capture_group_recording_safe(message),
+            name=f"club_air_recording_capture_{message.message_id}",
+        )
         if not self._llm_client:
+            return
+        # Индексация расписания — только текст/подписи
+        if not (message.text or message.caption):
             return
         asyncio.create_task(
             self._index_group_message_safe(message),
             name=f"club_schedule_index_{message.message_id}",
         )
+
+    async def _capture_group_recording_safe(self, message: Message) -> None:
+        try:
+            from bot.services.club_air_recording import (
+                maybe_capture_recording_from_group_message,
+            )
+
+            await maybe_capture_recording_from_group_message(
+                self.user_storage, self.bot, message
+            )
+        except Exception as e:
+            logger.error(
+                "air recording capture msg=%s: %s",
+                message.message_id,
+                e,
+                exc_info=True,
+            )
 
     async def _on_schedule_topic_message(self, message: Message) -> None:
         if not message.from_user or message.from_user.is_bot:
@@ -423,11 +448,5 @@ class ClubScheduleFeature(BaseFeature):
             logger.error("[%s] air reminders: %s", self.name, e, exc_info=True)
 
     async def _job_recording_requests(self) -> None:
-        from bot.services.club_air_recording import request_recordings_from_admins
-
-        try:
-            n = await request_recordings_from_admins(self.user_storage, self.bot)
-            if n:
-                logger.info("[%s] recording requests n=%s", self.name, n)
-        except Exception as e:
-            logger.error("[%s] recording requests: %s", self.name, e, exc_info=True)
+        # ЭФ-3: админов больше не дёргаем — ждём пост с записью в группе.
+        return
