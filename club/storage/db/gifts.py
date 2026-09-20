@@ -18,16 +18,23 @@ class GiftsMixin:
         tariff_id: int,
         gift_code: str,
         expires_at: datetime,
+        recipient_username: Optional[str] = None,
     ) -> bool:
         """Создаёт запись о подарке."""
         try:
             async with self.get_connection() as conn:
                 await conn.execute(
                     """
-                    INSERT INTO gifts (order_id, user_id, tariff_id, gift_code, expires_at)
-                    VALUES ($1, $2, $3, $4, $5)
+                    INSERT INTO gifts
+                    (order_id, user_id, tariff_id, gift_code, expires_at, recipient_username)
+                    VALUES ($1, $2, $3, $4, $5, $6)
                     """,
-                    order_id, user_id, tariff_id, gift_code, expires_at,
+                    order_id,
+                    user_id,
+                    tariff_id,
+                    gift_code,
+                    expires_at,
+                    recipient_username,
                 )
                 return True
         except Exception as e:

@@ -180,12 +180,17 @@ class PaidOrderFulfillment:
         gift_days_ru = russian_days_phrase(gift_days)
         expires_at = datetime.now() + timedelta(days=gift_days)
 
+        recipient_username = (
+            (order.get("gift_recipient_username") or "").strip().lstrip("@") or None
+        )
+
         gift_created = await self.user_storage.create_gift(
             order_id=order["id"],
             user_id=order["user_id"],
             tariff_id=order["tariff_id"],
             gift_code=gift_code,
             expires_at=expires_at,
+            recipient_username=recipient_username,
         )
 
         if gift_created:
@@ -206,14 +211,6 @@ class PaidOrderFulfillment:
                 f"• Сама подписка начнет действовать <b>с момента активации</b> получателем.\n\n"
                 f"Спасибо за вашу щедрость! 🙏"
             )
-            try:
-                await self.bot.send_message(
-                    order["user_id"],
-                    donor_message,
-                    parse_mode=ParseMode.HTML,
-                )
-            except Exception as e:
-                logger.error(f"❌ Failed to send gift instruction to donor: {e}")
 
             share_message = (
                 f"✨ <b>Вам подарок!</b>\n\n"
@@ -225,15 +222,81 @@ class PaidOrderFulfillment:
                 f"⏰ <b>Важно:</b> ссылка одноразовая и активна {gift_days_ru}. Подписка начнет действовать с момента перехода.\n\n"
                 f"Пусть этот подарок станет для вас шагом к живому общению 🙏"
             )
-            try:
-                await self.bot.send_message(
-                    order["user_id"],
-                    share_message,
-                    parse_mode=ParseMode.HTML,
-                    disable_web_page_preview=True,
+
+            delivered_to_recipient = False
+            if recipient_username:
+                recipient_row = await self.user_storage.get_user_by_username(
+                    recipient_username
                 )
-            except Exception as e:
-                logger.error(f"❌ Failed to send gift share message to donor: {e}")
+                if recipient_row and recipient_row.get("user_id"):
+                    try:
+                        await self.bot.send_message(
+                            int(recipient_row["user_id"]),
+                            share_message,
+                            parse_mode=ParseMode.HTML,
+                            disable_web_page_preview=True,
+                        )
+                        delivered_to_recipient = True
+                        logger.info(
+                            "🎁 Gift link auto-DM to @%s uid=%s order=%s",
+                            recipient_username,
+                            recipient_row["user_id"],
+                            order["id"],
+                        )
+                    except Exception as e:
+                        logger.warning(
+                            "🎁 Auto-DM gift to @%s failed: %s",
+                            recipient_username,
+                            e,
+                        )
+
+            if delivered_to_recipient:
+                donor_ok_message = (
+                    f"<b>🎁 Подарок успешно оплачен!</b>\n\n"
+                    f"Вы подарили подписку на {duration_days} дней.\n\n"
+                    f"Ссылку отправили @{recipient_username} в личку. "
+                    f"Если он не увидит сообщение — напишите ему сами; "
+                    f"дубликат ссылки ниже.\n\n"
+                    f"<b>🔐 Важно:</b> ссылка одноразовая, срок активации — "
+                    f"<b>{gift_days_ru}</b>.\n\n"
+                    f"Спасибо за вашу щедрость! 🙏"
+                )
+                try:
+                    await self.bot.send_message(
+                        order["user_id"],
+                        donor_ok_message,
+                        parse_mode=ParseMode.HTML,
+                    )
+                except Exception as e:
+                    logger.error(f"❌ Failed to send gift confirmation to donor: {e}")
+                try:
+                    await self.bot.send_message(
+                        order["user_id"],
+                        share_message,
+                        parse_mode=ParseMode.HTML,
+                        disable_web_page_preview=True,
+                    )
+                except Exception as e:
+                    logger.error(f"❌ Failed to send gift share copy to donor: {e}")
+            else:
+                try:
+                    await self.bot.send_message(
+                        order["user_id"],
+                        donor_message,
+                        parse_mode=ParseMode.HTML,
+                    )
+                except Exception as e:
+                    logger.error(f"❌ Failed to send gift instruction to donor: {e}")
+
+                try:
+                    await self.bot.send_message(
+                        order["user_id"],
+                        share_message,
+                        parse_mode=ParseMode.HTML,
+                        disable_web_page_preview=True,
+                    )
+                except Exception as e:
+                    logger.error(f"❌ Failed to send gift share message to donor: {e}")
 
             await self._notify_admins_about_gift(order, expires_at, rub_amount)
         else:

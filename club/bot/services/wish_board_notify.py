@@ -211,7 +211,9 @@ async def post_digest_wish(
         if bot_username
         else ""
     )
-    html_text = wb_txt.digest_single_post_html(wish, respond_url=respond_url)
+    html_text = wb_txt.digest_live_post_html(
+        wish, status="open", respond_url=respond_url
+    )
     msg_id = await send_html_to_club_digest_topic(
         bot,
         chat_id=int(group_id),
@@ -304,6 +306,62 @@ async def post_angel_pool_donation(
             log_prefix="angel_pool_digest",
         )
     )
+
+
+async def edit_digest_wish_post(
+    bot: Bot,
+    user_storage,
+    wish: Dict[str, Any],
+    *,
+    status: Optional[str] = None,
+) -> bool:
+    """Редактирует пост в теме дайджеста под текущий статус (ДДД-2)."""
+    topic_id = config.WISH_BOARD_DIGEST_TOPIC_ID
+    group_id = config.CLUB_GROUP_ID
+    msg_id = wish.get("digest_notice_message_id")
+    if not topic_id or not group_id or not msg_id:
+        return False
+
+    st = (status or wish.get("status") or "").strip().lower()
+    respond_url = ""
+    if st == "open":
+        bot_username = await resolve_telegram_bot_username(bot)
+        if bot_username:
+            respond_url = build_wish_board_deeplink(
+                bot_username, wish_id=int(wish["id"])
+            )
+
+    html_text = sanitize_telegram_html(
+        wb_txt.digest_live_post_html(wish, status=st, respond_url=respond_url)
+    )
+    chat_id = int(group_id)
+    try:
+        await bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=int(msg_id),
+            text=html_text,
+            parse_mode=ParseMode.HTML,
+            disable_web_page_preview=True,
+            reply_markup=None,
+        )
+        try:
+            await user_storage.wish_log_event_public(
+                int(wish["id"]),
+                None,
+                "wb_post_edited",
+                {"to": st},
+            )
+        except Exception:
+            pass
+        return True
+    except Exception as e:
+        logger.warning(
+            "wish_board digest edit wish=%s msg=%s: %s",
+            wish.get("id"),
+            msg_id,
+            format_exception(e),
+        )
+        return False
 
 
 async def reply_group_wish_fulfilled(bot: Bot, wish: Dict[str, Any]) -> bool:
@@ -417,3 +475,45 @@ async def edit_moderation_resolved(
         text=new_text,
         reply_markup=None,
     )
+
+
+async def post_board_intro_to_digest(bot: Bot, *, pin: bool = True) -> Optional[int]:
+    """Пост интро доски в тему дайджеста (ДДД-6.1). Опционально закрепляет.
+
+    Одноразово: ``scripts/post_wish_board_intro.py``. Не вызывать на каждом старте бота.
+    """
+    topic_id = int(config.WISH_BOARD_DIGEST_TOPIC_ID or 0)
+    group_id = int(config.CLUB_GROUP_ID or 0)
+    if not topic_id or not group_id:
+        logger.warning("post_board_intro: нет CLUB_GROUP_ID / WISH_BOARD_DIGEST_TOPIC_ID")
+        return None
+
+    bot_username = await resolve_telegram_bot_username(bot)
+    board_url = build_wish_board_deeplink(bot_username) if bot_username else ""
+    html_text = sanitize_telegram_html(
+        wb_txt.pinned_board_intro_html(board_url=board_url)
+    )
+    msg_id = await send_html_to_club_digest_topic(
+        bot,
+        chat_id=group_id,
+        topic_id=topic_id,
+        html=html_text,
+        log_prefix="wish_board_intro",
+        return_message_id=True,
+    )
+    if not msg_id:
+        return None
+    if pin:
+        try:
+            await bot.pin_chat_message(
+                chat_id=group_id,
+                message_id=int(msg_id),
+                disable_notification=True,
+            )
+        except Exception as e:
+            logger.warning(
+                "post_board_intro: пост %s отправлен, pin не удался: %s",
+                msg_id,
+                format_exception(e),
+            )
+    return int(msg_id)

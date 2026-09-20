@@ -21,6 +21,7 @@ from bot.services.promo_campaign_service import (
     discount_percent_value,
     get_active_promo_for_user,
 )
+from bot.states import PaymentGiftStates
 from bot.texts import media_file_ids as media_ids
 from bot.texts import ru_payment as pay_txt
 from bot.utils.telegram_identity import resolve_telegram_bot_username
@@ -39,6 +40,20 @@ logger = logging.getLogger(__name__)
 CALLBACK_PAYMENT_OFFER_PDF = "payment_offer_pdf"
 # Временно: бот Насти — отключение автосписания (заглушка без БД).
 CALLBACK_NASTYA_DISABLE_RECURRING = "payment_nastya_disable_recurring"
+CALLBACK_GIFT_SET_USERNAME = "payment_gift_set_username"
+
+_GIFT_USERNAME_RE = re.compile(r"^[A-Za-z0-9_]{5,32}$")
+
+
+def normalize_gift_recipient_username(raw: str) -> Optional[str]:
+    """Парсит @username; возвращает без @ или None."""
+    s = (raw or "").strip()
+    if s.startswith("@"):
+        s = s[1:]
+    s = s.strip()
+    if _GIFT_USERNAME_RE.fullmatch(s):
+        return s
+    return None
 
 # Лимиты отправки PDF оферты (защита от спама и лишних запросов к Telegram).
 OFFER_PDF_MIN_INTERVAL_SEC = 30
@@ -741,7 +756,27 @@ class PaymentFeature(BaseFeature):
             
             # Кнопка "Продолжить" после инструкции о подарке
             elif data == "payment_gift_continue":
+                await state.update_data(gift_recipient_username=None)
+                await state.set_state(None)
                 await self.show_tariffs(callback, is_gift=True, state=state)
+                await callback.answer()
+
+            elif data == CALLBACK_GIFT_SET_USERNAME:
+                await state.set_state(PaymentGiftStates.waiting_recipient_username)
+                await callback.message.edit_text(
+                    pay_txt.GIFT_USERNAME_PROMPT_HTML,
+                    reply_markup=with_main_menu(
+                        [
+                            [
+                                InlineKeyboardButton(
+                                    text=pay_txt.BTN_GIFT_CONTINUE,
+                                    callback_data="payment_gift_continue",
+                                )
+                            ]
+                        ]
+                    ),
+                    parse_mode=ParseMode.HTML,
+                )
                 await callback.answer()
             
             # Выбор валюты RUB
@@ -799,9 +834,25 @@ class PaymentFeature(BaseFeature):
     
     async def _show_gift_info(self, callback: CallbackQuery, state: FSMContext):
         """Показывает инструкцию о том, как работает подарок."""
-        keyboard = with_main_menu([
-            [InlineKeyboardButton(text=pay_txt.BTN_GIFT_CONTINUE, callback_data="payment_gift_continue")]
-        ])
+        rows = [
+            [InlineKeyboardButton(text=pay_txt.BTN_GIFT_CONTINUE, callback_data="payment_gift_continue")],
+            [
+                InlineKeyboardButton(
+                    text=pay_txt.BTN_GIFT_SET_USERNAME,
+                    callback_data=CALLBACK_GIFT_SET_USERNAME,
+                )
+            ],
+        ]
+        if config.wish_board_active:
+            rows.append(
+                [
+                    InlineKeyboardButton(
+                        text=pay_txt.BTN_GIFT_HELP_BOARD,
+                        callback_data="wb:hub",
+                    )
+                ]
+            )
+        keyboard = with_main_menu(rows)
         
         gift_days_ru = russian_days_phrase(config.GIFT_LINK_VALIDITY_DAYS)
         text = pay_txt.gift_info_html(gift_days_ru=gift_days_ru)
@@ -812,7 +863,22 @@ class PaymentFeature(BaseFeature):
             parse_mode=ParseMode.HTML
         )
         await callback.answer()
-    
+
+    async def handle_gift_recipient_username(
+        self, message: Message, state: FSMContext, text: str
+    ) -> None:
+        """FSM: опциональный @username получателя классического подарка."""
+        username = normalize_gift_recipient_username(text)
+        if not username:
+            await message.answer(pay_txt.GIFT_USERNAME_INVALID)
+            return
+        await state.update_data(gift_recipient_username=username)
+        await state.set_state(None)
+        await message.answer(
+            pay_txt.GIFT_USERNAME_SAVED_HTML.format(username=username),
+            parse_mode=ParseMode.HTML,
+        )
+        await self.show_tariffs(message, is_gift=True, state=state)
     async def _show_currency_choice(self, callback: CallbackQuery, state: FSMContext, tariff: Dict):
         """Показывает выбор валюты для оплаты."""
         data = await state.get_data()
@@ -893,6 +959,11 @@ class PaymentFeature(BaseFeature):
         is_gift = data.get('is_gift', False)
         is_member_gift = bool(data.get('is_member_gift'))
         gift_recipient_user_id = data.get('gift_recipient_user_id')
+        gift_recipient_username = None
+        if is_gift and not is_member_gift:
+            raw_uname = (data.get("gift_recipient_username") or "").strip().lstrip("@")
+            if raw_uname:
+                gift_recipient_username = raw_uname
 
         tariff = await self.user_storage.get_tariff_by_id(tariff_id)
         if not tariff:
@@ -963,6 +1034,7 @@ class PaymentFeature(BaseFeature):
             gift_recipient_user_id=int(gift_recipient_user_id)
             if is_member_gift and gift_recipient_user_id
             else None,
+            gift_recipient_username=gift_recipient_username,
         )
 
         # Запускаем дожим, если он есть

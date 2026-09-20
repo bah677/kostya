@@ -171,6 +171,26 @@ class UsersMixin:
             logger.error(f"❌ Failed to get user {user_id}: {e}")
             return None
 
+    async def get_user_by_username(self, username: str) -> Optional[Dict[str, Any]]:
+        """Ищет пользователя по Telegram username (без @, case-insensitive)."""
+        raw = (username or "").strip().lstrip("@")
+        if not raw:
+            return None
+        try:
+            async with self.get_connection() as conn:
+                row = await conn.fetchrow(
+                    """
+                    SELECT * FROM users
+                    WHERE LOWER(username) = LOWER($1)
+                    LIMIT 1
+                    """,
+                    raw,
+                )
+                return dict(row) if row else None
+        except Exception as e:
+            logger.error("get_user_by_username failed: %s", e)
+            return None
+
     async def get_all_users(self) -> List[Dict[str, Any]]:
         try:
             async with self.get_connection() as conn:

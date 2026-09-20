@@ -19,6 +19,7 @@ class OrdersMixin:
         is_gift: bool = False,
         promo_campaign_guid: Optional[str] = None,
         gift_recipient_user_id: Optional[int] = None,
+        gift_recipient_username: Optional[str] = None,
         is_angel_pool: bool = False,
         angel_pool_slots: Optional[int] = None,
     ) -> Optional[int]:
@@ -30,8 +31,9 @@ class OrdersMixin:
                     INSERT INTO orders
                     (user_id, tariff_id, currency, amount, is_gift, status,
                      promo_campaign_guid, gift_recipient_user_id,
+                     gift_recipient_username,
                      is_angel_pool, angel_pool_slots)
-                    VALUES ($1, $2, $3, $4, $5, 'pending', $6, $7, $8, $9)
+                    VALUES ($1, $2, $3, $4, $5, 'pending', $6, $7, $8, $9, $10)
                     RETURNING id
                     """,
                     user_id,
@@ -41,13 +43,15 @@ class OrdersMixin:
                     is_gift,
                     promo_campaign_guid,
                     gift_recipient_user_id,
+                    gift_recipient_username,
                     is_angel_pool,
                     angel_pool_slots,
                 )
                 logger.info(
                     f"✅ Order created: id={order_id}, user_id={user_id}, "
                     f"amount={amount} {currency}, is_gift={is_gift}, "
-                    f"gift_recipient={gift_recipient_user_id}"
+                    f"gift_recipient={gift_recipient_user_id}, "
+                    f"gift_username={gift_recipient_username}"
                 )
                 return order_id
         except Exception as e:

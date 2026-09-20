@@ -20,12 +20,14 @@ from apscheduler.triggers.cron import CronTrigger
 from bot.features.base import BaseFeature
 from bot.filters import PRIVATE_INLINE_CALLBACK_ONLY
 from bot.services import wish_board_notify as wb_notify
+from bot.services.wish_board_money_guard import looks_like_money_transfer
 from bot.services.wish_title_generator import generate_wish_button_title
 from bot.states import WishBoardAdminStates, WishBoardStates
 from bot.texts import ru_wish_board as wb_txt
 from bot.texts import ru_angel_pool as ap_txt
-from bot.texts import ru_angel_pool as ap_txt
+from bot.utils.admin_channel import send_admin_html_message_main_bot
 from bot.utils.inline_buttons import callback_button
+from bot.utils.telegram_html import sanitize_telegram_html
 from bot.utils.user_ui import render_user_screen, with_main_menu
 from config import config
 
@@ -39,6 +41,7 @@ CB_MY_DON = "wb:mydon"
 CB_MY_DON_ACTIVE = "wb:mydon:active"
 CB_MY_DON_DONE = "wb:mydon:done"
 CB_PAYMENT = "menu_act:payment"
+CB_GIFT_PAY = "payment_gift_start"
 CB_TYPE_PREFIX = "wb:type:"
 CB_ANON_PREFIX = "wb:anon:"
 CB_SUBMIT = "wb:submit"
@@ -52,6 +55,12 @@ CB_DONE_PREFIX = "wb:done:"
 CB_CONFIRM_PREFIX = "wb:cfm:"
 CB_DISPUTE_PREFIX = "wb:disp:"
 CB_CANCEL_WISH_PREFIX = "wb:cx:"
+CB_CX_CONFIRM = "wb:cxok:"
+CB_CX_KEEP = "wb:cxkeep:"
+CB_CARD_EXT = "wb:card:ext"
+CB_CARD_EDIT = "wb:card:edit"
+CB_PEND_CANCEL_NEW = "wb:pend:cx:"
+CB_PEND_WAIT = "wb:pend:wait"
 CB_RATE_PREFIX = "wb:rate:"
 CB_ASK_PREFIX = "wb:ask:"
 CB_REPLY_PREFIX = "wb:reply:"
@@ -79,9 +88,9 @@ class WishBoardFeature(BaseFeature):
             return
         self._scheduler = AsyncIOScheduler(timezone="Europe/Moscow")
         self._scheduler.add_job(
-            self._cron_maintenance,
-            CronTrigger(hour=3, minute=15),
-            id="wish_board_maintenance",
+            self._cron_hourly,
+            CronTrigger(minute=20),
+            id="wish_board_hourly",
             replace_existing=True,
         )
         self._scheduler.add_job(
@@ -104,7 +113,7 @@ class WishBoardFeature(BaseFeature):
         )
         self._scheduler.start()
         logger.info(
-            "[%s] scheduler started (digest %02d:%02d, reminder %02d:%02d МСК)",
+            "[%s] scheduler started (hourly :20, digest %02d:%02d, reminder %02d:%02d МСК)",
             self.name,
             config.WISH_BOARD_DIGEST_HOUR,
             config.WISH_BOARD_DIGEST_MINUTE,
@@ -146,15 +155,23 @@ class WishBoardFeature(BaseFeature):
             )
 
     def hub_keyboard(self) -> InlineKeyboardMarkup:
-        return with_main_menu(
-            [
-                [callback_button(wb_txt.BTN_REQUESTER, CB_REQ)],
-                [callback_button(wb_txt.BTN_DONOR, CB_DON, style="success")],
-                [callback_button(ap_txt.BTN_ANGEL, "ap:intro", style="success")],
-                [callback_button(wb_txt.BTN_MY_WISHES, CB_MY)],
-                [callback_button(wb_txt.BTN_MY_DONATIONS, CB_MY_DON)],
-            ]
-        )
+        rows: List[List[InlineKeyboardButton]] = [
+            [callback_button(wb_txt.BTN_REQUESTER, CB_REQ)],
+            [callback_button(wb_txt.BTN_DONOR, CB_DON, style="success")],
+            [callback_button(ap_txt.BTN_ANGEL, "ap:intro", style="success")],
+            [callback_button(wb_txt.BTN_MY_WISHES, CB_MY)],
+            [callback_button(wb_txt.BTN_MY_DONATIONS, CB_MY_DON)],
+        ]
+        if self.feature_manager.get("payment"):
+            rows.append(
+                [
+                    InlineKeyboardButton(
+                        text=wb_txt.BTN_GIFT_SPECIFIC_PERSON,
+                        callback_data=CB_GIFT_PAY,
+                    )
+                ]
+            )
+        return with_main_menu(rows)
 
     def _not_member_keyboard(self) -> InlineKeyboardMarkup:
         return with_main_menu(
@@ -184,12 +201,53 @@ class WishBoardFeature(BaseFeature):
             return wb_txt.MODERATION_PROMPT_SUBSCRIPTION_HTML
         return wb_txt.MODERATION_PROMPT_OTHER_HTML
 
+    def _choose_type_keyboard(self) -> InlineKeyboardMarkup:
+        return with_main_menu(
+            [
+                [
+                    InlineKeyboardButton(
+                        text=wb_txt.BTN_TYPE_SUBSCRIPTION,
+                        callback_data=CB_TYPE_PREFIX + "subscription",
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text=wb_txt.BTN_TYPE_OTHER,
+                        callback_data=CB_TYPE_PREFIX + "other",
+                    )
+                ],
+                [InlineKeyboardButton(text=wb_txt.BTN_BACK_HUB, callback_data=CB_HUB)],
+            ]
+        )
+
+    async def _show_choose_type(self, message: Message, *, edit: bool = True) -> None:
+        await render_user_screen(
+            message,
+            text=wb_txt.CHOOSE_TYPE_HTML,
+            reply_markup=self._choose_type_keyboard(),
+            edit=edit,
+            add_main_menu=False,
+        )
+
+    async def _edit_digest(self, wish: Optional[Dict[str, Any]]) -> None:
+        if not self._tg_bot or not wish:
+            return
+        try:
+            await wb_notify.edit_digest_wish_post(
+                self._tg_bot, self.user_storage, wish
+            )
+        except Exception as e:
+            logger.warning("wish_board digest edit wish=%s: %s", wish.get("id"), e)
+
     async def show_hub(
         self, message: Message, *, edit: bool = False
     ) -> None:
+        text = wb_txt.HUB_TITLE_HTML
+        if self.feature_manager.get("payment"):
+            text = f"{text}\n\n{wb_txt.HUB_GIFT_HINT_HTML}"
         await render_user_screen(
             message,
-            text=wb_txt.HUB_TITLE_HTML,
+            text=text,
             reply_markup=self.hub_keyboard(),
             edit=edit,
             add_main_menu=False,
@@ -250,6 +308,77 @@ class WishBoardFeature(BaseFeature):
         if not await self.user_storage.user_has_active_license(user_id):
             await state.clear()
             await self._show_not_member(message, edit=False)
+            return
+
+        if looks_like_money_transfer(desc):
+            logger.info(
+                "wish_board card_blocked uid=%s gift_type=%s",
+                user_id,
+                gift_type,
+            )
+            kb = InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        InlineKeyboardButton(
+                            text=wb_txt.BTN_ASK_EXTENSION,
+                            callback_data=CB_CARD_EXT,
+                        )
+                    ],
+                    [
+                        InlineKeyboardButton(
+                            text=wb_txt.BTN_EDIT_DESC,
+                            callback_data=CB_CARD_EDIT,
+                        )
+                    ],
+                    [
+                        InlineKeyboardButton(
+                            text=wb_txt.BTN_BACK_HUB, callback_data=CB_HUB
+                        )
+                    ],
+                ]
+            )
+            await render_user_screen(
+                message,
+                text=wb_txt.CARD_BLOCKED_HTML,
+                reply_markup=kb,
+                edit=False,
+                add_main_menu=False,
+            )
+            return
+
+        pending = await self.user_storage.wish_get_pending_moderation_for_requester(
+            user_id
+        )
+        if pending:
+            wid = int(pending["id"])
+            kb = InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        InlineKeyboardButton(
+                            text=wb_txt.BTN_CANCEL_AND_NEW,
+                            callback_data=f"{CB_PEND_CANCEL_NEW}{wid}",
+                        )
+                    ],
+                    [
+                        InlineKeyboardButton(
+                            text=wb_txt.BTN_WAIT_MODERATION,
+                            callback_data=CB_PEND_WAIT,
+                        )
+                    ],
+                    [
+                        InlineKeyboardButton(
+                            text=wb_txt.BTN_BACK_HUB, callback_data=CB_HUB
+                        )
+                    ],
+                ]
+            )
+            await render_user_screen(
+                message,
+                text=wb_txt.pending_exists_html(pending),
+                reply_markup=kb,
+                edit=False,
+                add_main_menu=False,
+            )
             return
 
         active = await self.user_storage.wish_count_active_for_requester(user_id)
@@ -320,30 +449,49 @@ class WishBoardFeature(BaseFeature):
             if not await self.user_storage.user_has_active_license(uid):
                 await self._show_not_member(msg, edit=True)
                 return
-            kb = with_main_menu(
-                [
-                    [
-                        InlineKeyboardButton(
-                            text=wb_txt.BTN_TYPE_SUBSCRIPTION,
-                            callback_data=CB_TYPE_PREFIX + "subscription",
-                        )
-                    ],
-                    [
-                        InlineKeyboardButton(
-                            text=wb_txt.BTN_TYPE_OTHER,
-                            callback_data=CB_TYPE_PREFIX + "other",
-                        )
-                    ],
-                    [InlineKeyboardButton(text=wb_txt.BTN_BACK_HUB, callback_data=CB_HUB)],
-                ]
-            )
+            await self._show_choose_type(msg, edit=True)
+            return
+
+        if data == CB_CARD_EXT:
+            await state.update_data(wb_gift_type="subscription")
+            await state.set_state(WishBoardStates.waiting_description)
             await render_user_screen(
                 msg,
-                text=wb_txt.CHOOSE_TYPE_HTML,
-                reply_markup=kb,
+                text=wb_txt.MODERATION_PROMPT_SUBSCRIPTION_HTML,
                 edit=True,
-                add_main_menu=False,
             )
+            return
+
+        if data == CB_CARD_EDIT:
+            fsm = await state.get_data()
+            gift_type = fsm.get("wb_gift_type") or "other"
+            await state.set_state(WishBoardStates.waiting_description)
+            await render_user_screen(
+                msg,
+                text=self._description_prompt(gift_type),
+                edit=True,
+            )
+            return
+
+        if data.startswith(CB_PEND_CANCEL_NEW):
+            try:
+                wish_id = int(data.replace(CB_PEND_CANCEL_NEW, ""))
+            except ValueError:
+                return
+            cancelled = await self.user_storage.wish_cancel(wish_id, uid)
+            if cancelled and self._tg_bot:
+                await wb_notify.post_admin_lifecycle(
+                    self._tg_bot,
+                    event=wb_txt.ADM_EVENT_CANCELLED,
+                    wish=cancelled,
+                )
+                await self._edit_digest(cancelled)
+            await self._show_choose_type(msg, edit=True)
+            return
+
+        if data == CB_PEND_WAIT:
+            await state.clear()
+            await self.show_hub(msg, edit=True)
             return
 
         if data.startswith(CB_TYPE_PREFIX):
@@ -450,8 +598,57 @@ class WishBoardFeature(BaseFeature):
             await self._dispute(msg, uid, wish_id)
             return
 
+        if data.startswith(CB_CX_CONFIRM):
+            try:
+                wish_id = int(data.replace(CB_CX_CONFIRM, ""))
+            except ValueError:
+                return
+            await self._cancel_wish(msg, uid, wish_id)
+            return
+
+        if data.startswith(CB_CX_KEEP):
+            try:
+                wish_id = int(data.replace(CB_CX_KEEP, ""))
+            except ValueError:
+                return
+            await self._show_wish_detail(msg, uid, wish_id)
+            return
+
         if data.startswith(CB_CANCEL_WISH_PREFIX):
-            wish_id = int(data.replace(CB_CANCEL_WISH_PREFIX, ""))
+            try:
+                wish_id = int(data.replace(CB_CANCEL_WISH_PREFIX, ""))
+            except ValueError:
+                return
+            wish = await self.user_storage.wish_get(wish_id)
+            if (
+                wish
+                and wish.get("status") == "taken"
+                and int(wish.get("requester_user_id") or 0) == uid
+            ):
+                kb = InlineKeyboardMarkup(
+                    inline_keyboard=[
+                        [
+                            InlineKeyboardButton(
+                                text=wb_txt.BTN_CONFIRM_CANCEL,
+                                callback_data=f"{CB_CX_CONFIRM}{wish_id}",
+                            )
+                        ],
+                        [
+                            InlineKeyboardButton(
+                                text=wb_txt.BTN_KEEP_WISH,
+                                callback_data=f"{CB_CX_KEEP}{wish_id}",
+                            )
+                        ],
+                    ]
+                )
+                await render_user_screen(
+                    msg,
+                    text=wb_txt.CONFIRM_CANCEL_TAKEN_HTML,
+                    reply_markup=kb,
+                    edit=True,
+                    add_main_menu=False,
+                )
+                return
             await self._cancel_wish(msg, uid, wish_id)
             return
 
@@ -941,6 +1138,7 @@ class WishBoardFeature(BaseFeature):
                 req_id,
                 wb_txt.notify_taken_requester_html(wish),
             )
+            await self._edit_digest(wish)
         await self._show_wish_detail(message, user_id, wish_id)
 
     async def _release_wish(
@@ -954,6 +1152,7 @@ class WishBoardFeature(BaseFeature):
             await wb_notify.post_admin_lifecycle(
                 self._tg_bot, event=wb_txt.ADM_EVENT_RELEASED, wish=wish
             )
+            await self._edit_digest(wish)
         await self._show_wish_detail(message, user_id, wish_id)
 
     async def _start_gift_for_wish(
@@ -1022,6 +1221,7 @@ class WishBoardFeature(BaseFeature):
                 wb_txt.DONE_PENDING_REQUESTER_HTML,
                 reply_markup=kb,
             )
+            await self._edit_digest(wish)
         await render_user_screen(
             message, text=wb_txt.MARK_DONE_OK_HTML, edit=True
         )
@@ -1045,6 +1245,7 @@ class WishBoardFeature(BaseFeature):
                     wb_txt.NOTIFY_DONOR_CONFIRMED_HTML,
                 )
             await wb_notify.reply_group_wish_fulfilled(self._tg_bot, wish)
+            await self._edit_digest(wish)
         kb = wb_notify.rating_prompt_markup(wish_id)
         await render_user_screen(
             message,
@@ -1076,6 +1277,7 @@ class WishBoardFeature(BaseFeature):
                     int(donor_id),
                     wb_txt.notify_dispute_donor_html(wish),
                 )
+            await self._edit_digest(wish)
         await render_user_screen(
             message,
             text=wb_txt.DISPUTE_OK_HTML,
@@ -1085,14 +1287,40 @@ class WishBoardFeature(BaseFeature):
     async def _cancel_wish(
         self, message: Message, user_id: int, wish_id: int
     ) -> None:
-        wish = await self.user_storage.wish_cancel(wish_id, user_id)
-        if not wish:
+        wish = await self.user_storage.wish_get(wish_id)
+        was_taken = bool(wish and wish.get("status") == "taken")
+        donor_id = int(wish.get("donor_user_id") or 0) if wish else 0
+        is_anonymous = bool(wish.get("is_anonymous")) if wish else True
+
+        cancelled = await self.user_storage.wish_cancel(wish_id, user_id)
+        if not cancelled:
             await render_user_screen(message, text=wb_txt.ERR_CANCEL_FAILED, edit=True)
             return
         if self._tg_bot:
             await wb_notify.post_admin_lifecycle(
-                self._tg_bot, event=wb_txt.ADM_EVENT_CANCELLED, wish=wish
+                self._tg_bot, event=wb_txt.ADM_EVENT_CANCELLED, wish=cancelled
             )
+            if was_taken and donor_id:
+                kb = None
+                if not is_anonymous:
+                    req_id = int(cancelled["requester_user_id"])
+                    kb = InlineKeyboardMarkup(
+                        inline_keyboard=[
+                            [
+                                InlineKeyboardButton(
+                                    text=wb_txt.BTN_WRITE_REQUESTER,
+                                    url=f"tg://user?id={req_id}",
+                                )
+                            ]
+                        ]
+                    )
+                await wb_notify.notify_user_html(
+                    self._tg_bot,
+                    donor_id,
+                    wb_txt.donor_cancelled_by_requester_html(cancelled),
+                    reply_markup=kb,
+                )
+            await self._edit_digest(cancelled)
         await self._show_my_wishes(message, user_id)
 
     async def _rate_donor(
@@ -1155,6 +1383,15 @@ class WishBoardFeature(BaseFeature):
                 int(wish["requester_user_id"]),
                 wb_txt.NOTIFY_APPROVED_REQUESTER_HTML,
             )
+            try:
+                await self.user_storage.wish_log_event_public(
+                    wish_id,
+                    None,
+                    "wb_status_notified",
+                    {"status": "approved"},
+                )
+            except Exception:
+                pass
             await wb_notify.post_digest_items(self._tg_bot, self.user_storage, [wish])
             return
 
@@ -1210,31 +1447,132 @@ class WishBoardFeature(BaseFeature):
         )
         await message.reply(wb_txt.ADM_REJECT_DONE.format(wish_id=wish_id))
 
-    async def _cron_maintenance(self) -> None:
+    async def _cron_hourly(self) -> None:
         if not self._tg_bot:
             return
+        bot = self._tg_bot
+        hours_timeout = config.WISH_BOARD_TAKEN_TIMEOUT_HOURS
+
         expired = await self.user_storage.wish_expire_open()
         for w in expired:
             await wb_notify.post_admin_lifecycle(
-                self._tg_bot, event=wb_txt.ADM_EVENT_EXPIRED, wish=w
+                bot, event=wb_txt.ADM_EVENT_EXPIRED, wish=w
             )
-        released = await self.user_storage.wish_release_stale_taken(
-            config.WISH_BOARD_TAKEN_TIMEOUT_DAYS
-        )
+            await self._edit_digest(w)
+
+        released = await self.user_storage.wish_release_stale_taken(hours_timeout)
         for w in released:
             await wb_notify.post_admin_lifecycle(
-                self._tg_bot,
-                event=wb_txt.admin_event_taken_timeout(
-                    config.WISH_BOARD_TAKEN_TIMEOUT_DAYS
-                ),
+                bot,
+                event=wb_txt.admin_event_taken_timeout(hours_timeout),
                 wish=w,
             )
             req_id = int(w["requester_user_id"])
             await wb_notify.notify_user_html(
-                self._tg_bot,
+                bot,
                 req_id,
                 wb_txt.NOTIFY_TAKEN_TIMEOUT_HTML,
             )
+            old_donor = w.get("old_donor_user_id")
+            if old_donor:
+                await wb_notify.notify_user_html(
+                    bot,
+                    int(old_donor),
+                    wb_txt.donor_timeout_returned_html(w),
+                )
+            await self._edit_digest(w)
+
+        to_remind = await self.user_storage.wish_list_taken_needing_donor_remind(
+            config.WISH_BOARD_DONOR_REMIND_HOURS
+        )
+        for w in to_remind:
+            donor_id = w.get("donor_user_id")
+            if not donor_id:
+                continue
+            wid = int(w["id"])
+            kb = InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        InlineKeyboardButton(
+                            text=wb_txt.BTN_DONE_MARK,
+                            callback_data=f"{CB_DONE_PREFIX}{wid}",
+                        )
+                    ],
+                    [
+                        InlineKeyboardButton(
+                            text=wb_txt.BTN_RETURN_POOL,
+                            callback_data=f"{CB_RELEASE_PREFIX}{wid}",
+                        )
+                    ],
+                ]
+            )
+            await wb_notify.notify_user_html(
+                bot,
+                int(donor_id),
+                wb_txt.donor_remind_html(w),
+                reply_markup=kb,
+            )
+            await self.user_storage.wish_mark_donor_reminded(wid)
+
+        overdue_h = config.WISH_BOARD_MODERATION_OVERDUE_HOURS
+        pending_mods = await self.user_storage.wish_list_pending_moderation_reminders(
+            remind_after_hours=config.WISH_BOARD_MODERATION_REMIND_HOURS,
+            overdue_after_hours=overdue_h,
+        )
+        topic_id = config.WISH_BOARD_ADMIN_TOPIC_ID
+        for w in pending_mods:
+            wid = int(w["id"])
+            hours_pending = float(w.get("hours_pending") or 0)
+            already_reminded = w.get("moderation_reminded_at") is not None
+            is_overdue = hours_pending >= overdue_h
+            if is_overdue:
+                if await self.user_storage.wish_has_event(
+                    wid, "wb_moderation_overdue"
+                ):
+                    continue
+                text = wb_txt.adm_moderation_overdue_html(wid)
+            else:
+                if already_reminded:
+                    continue
+                text = wb_txt.adm_moderation_remind_html(wid)
+            if topic_id:
+                await send_admin_html_message_main_bot(
+                    bot,
+                    sanitize_telegram_html(text),
+                    message_thread_id=topic_id,
+                    reply_markup=wb_notify.moderation_keyboard(wid),
+                )
+            if is_overdue:
+                await self.user_storage.wish_log_event_public(
+                    wid,
+                    None,
+                    "wb_moderation_overdue",
+                    {"hours": round(hours_pending, 1)},
+                )
+                if not already_reminded:
+                    await self.user_storage.wish_mark_moderation_reminded(wid)
+            elif not already_reminded:
+                await self.user_storage.wish_mark_moderation_reminded(wid)
+
+        no_donor = await self.user_storage.wish_list_open_needing_no_donor_notify(
+            config.WISH_BOARD_NO_DONOR_NOTIFY_HOURS
+        )
+        for w in no_donor:
+            req_id = int(w["requester_user_id"])
+            await wb_notify.notify_user_html(
+                bot, req_id, wb_txt.NO_DONOR_YET_HTML
+            )
+            await self.user_storage.wish_mark_no_donor_notified(int(w["id"]))
+            try:
+                await wb_notify.post_group_reminder_wish(
+                    bot, self.user_storage, w
+                )
+            except Exception as e:
+                logger.warning(
+                    "wish_board no-donor group reminder wish=%s: %s",
+                    w.get("id"),
+                    e,
+                )
 
     async def _cron_digest(self) -> None:
         if not self._tg_bot:

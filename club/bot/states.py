@@ -32,6 +32,11 @@ class MemberGiftExtensionStates(StatesGroup):
     waiting_recipient_query = State()
 
 
+class PaymentGiftStates(StatesGroup):
+    """Классический подарок: опциональный @username получателя для авто-DM."""
+    waiting_recipient_username = State()
+
+
 class WishBoardStates(StatesGroup):
     """Доска желаний: создание просьбы."""
     waiting_description = State()

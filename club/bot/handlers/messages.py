@@ -21,6 +21,7 @@ from bot.states import (
     GiftApplicationStates,
     LegalConsentStates,
     MemberGiftExtensionStates,
+    PaymentGiftStates,
     SpeargunFundStates,
     WishBoardStates,
 )
@@ -99,6 +100,12 @@ async def route_message_to_feature(
             mgift = feature_manager.get("member_gift_extension")
             if mgift:
                 await mgift.handle_recipient_query(message, state, text)
+            return
+
+        elif current_state == PaymentGiftStates.waiting_recipient_username.state:
+            payment = feature_manager.get("payment")
+            if payment:
+                await payment.handle_gift_recipient_username(message, state, text)
             return
 
         elif current_state == SpeargunFundStates.waiting_custom_amount.state:

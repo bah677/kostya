@@ -15,6 +15,7 @@ from bot.features.base import BaseFeature
 from bot.texts import media_file_ids as media_ids
 from bot.texts import ru_onboarding as onb_txt
 from bot.utils.user_ui import with_main_menu
+from config import config
 
 logger = logging.getLogger(__name__)
 
@@ -411,11 +412,52 @@ class OnboardingFeature(BaseFeature):
                     if link_type == "post"
                     else onb_txt.BTN_JOIN_GROUP
                 )
-                keyboard = with_main_menu(
-                    [[InlineKeyboardButton(text=button_text, url=group_link)]]
+                rows = [[InlineKeyboardButton(text=button_text, url=group_link)]]
+            else:
+                rows = []
+            if config.wish_board_active:
+                from bot.services.wish_board_deeplink import build_wish_board_deeplink
+                from bot.texts import ru_user_menu as menu_txt
+                from bot.utils.telegram_identity import resolve_telegram_bot_username
+
+                bot_username = await resolve_telegram_bot_username(bot)
+                board_url = (
+                    build_wish_board_deeplink(bot_username) if bot_username else ""
                 )
+                if board_url:
+                    rows.append(
+                        [
+                            InlineKeyboardButton(
+                                text=menu_txt.BTN_WISH_BOARD,
+                                url=board_url,
+                            )
+                        ]
+                    )
+                else:
+                    rows.append(
+                        [
+                            InlineKeyboardButton(
+                                text=menu_txt.BTN_WISH_BOARD,
+                                callback_data="wb:hub",
+                            )
+                        ]
+                    )
+            keyboard = with_main_menu(rows) if rows else None
         else:
             logger.warning("ClubGroupFeature not found")
+            if config.wish_board_active:
+                from bot.texts import ru_user_menu as menu_txt
+
+                keyboard = with_main_menu(
+                    [
+                        [
+                            InlineKeyboardButton(
+                                text=menu_txt.BTN_WISH_BOARD,
+                                callback_data="wb:hub",
+                            )
+                        ]
+                    ]
+                )
 
         welcome_text = onb_txt.welcome_subscribed_html(expires_str=expires_str)
         if keyboard:

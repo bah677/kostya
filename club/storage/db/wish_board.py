@@ -118,6 +118,7 @@ class WishBoardMixin:
                     SELECT * FROM wish_requests
                     WHERE status = 'open'
                       AND expires_at > NOW()
+                      AND COALESCE(is_test, FALSE) = FALSE
                     ORDER BY created_at ASC
                     LIMIT $1 OFFSET $2
                     """,
@@ -128,6 +129,28 @@ class WishBoardMixin:
         except Exception as e:
             logger.error("wish_list_open failed: %s", e)
             return []
+
+    async def wish_get_pending_moderation_for_requester(
+        self, user_id: int
+    ) -> Optional[Dict[str, Any]]:
+        try:
+            async with self.get_connection() as conn:
+                row = await conn.fetchrow(
+                    """
+                    SELECT * FROM wish_requests
+                    WHERE requester_user_id = $1
+                      AND status = 'pending_moderation'
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """,
+                    user_id,
+                )
+                return dict(row) if row else None
+        except Exception as e:
+            logger.error(
+                "wish_get_pending_moderation_for_requester uid=%s: %s", user_id, e
+            )
+            return None
 
     async def wish_list_by_requester(
         self, user_id: int, *, limit: int = 10
@@ -740,36 +763,212 @@ class WishBoardMixin:
             return []
 
     async def wish_release_stale_taken(
-        self, timeout_days: int
+        self, timeout_hours: int
     ) -> List[Dict[str, Any]]:
         try:
             async with self.get_connection() as conn:
                 rows = await conn.fetch(
                     """
-                    UPDATE wish_requests
+                    WITH stale AS (
+                        SELECT id, donor_user_id AS old_donor_user_id
+                        FROM wish_requests
+                        WHERE status = 'taken'
+                          AND taken_at IS NOT NULL
+                          AND taken_at <= NOW() - ($1::text || ' hours')::interval
+                          AND COALESCE(is_test, FALSE) = FALSE
+                    )
+                    UPDATE wish_requests w
                     SET status = 'open',
                         donor_user_id = NULL,
                         taken_at = NULL,
+                        donor_reminded_at = NULL,
                         updated_at = NOW()
-                    WHERE status = 'taken'
-                      AND taken_at IS NOT NULL
-                      AND taken_at <= NOW() - ($1::text || ' days')::interval
-                    RETURNING *
+                    FROM stale
+                    WHERE w.id = stale.id
+                    RETURNING w.*, stale.old_donor_user_id
                     """,
-                    str(timeout_days),
+                    str(int(timeout_hours)),
                 )
+                out: List[Dict[str, Any]] = []
                 for row in rows:
+                    d = dict(row)
                     await self._wish_log_event(
                         conn,
-                        int(row["id"]),
+                        int(d["id"]),
                         None,
                         "taken_timeout",
-                        {"timeout_days": timeout_days},
+                        {"timeout_hours": int(timeout_hours)},
                     )
-                return [dict(r) for r in rows]
+                    out.append(d)
+                return out
         except Exception as e:
             logger.error("wish_release_stale_taken failed: %s", e)
             return []
+
+    async def wish_list_taken_needing_donor_remind(
+        self, remind_after_hours: int
+    ) -> List[Dict[str, Any]]:
+        try:
+            async with self.get_connection() as conn:
+                rows = await conn.fetch(
+                    """
+                    SELECT * FROM wish_requests
+                    WHERE status = 'taken'
+                      AND taken_at IS NOT NULL
+                      AND donor_user_id IS NOT NULL
+                      AND donor_reminded_at IS NULL
+                      AND taken_at <= NOW() - ($1::text || ' hours')::interval
+                      AND COALESCE(is_test, FALSE) = FALSE
+                    ORDER BY taken_at ASC
+                    LIMIT 50
+                    """,
+                    str(int(remind_after_hours)),
+                )
+                return [dict(r) for r in rows]
+        except Exception as e:
+            logger.error("wish_list_taken_needing_donor_remind: %s", e)
+            return []
+
+    async def wish_mark_donor_reminded(self, wish_id: int) -> bool:
+        try:
+            async with self.get_connection() as conn:
+                await conn.execute(
+                    """
+                    UPDATE wish_requests
+                    SET donor_reminded_at = NOW(), updated_at = NOW()
+                    WHERE id = $1
+                    """,
+                    wish_id,
+                )
+                await self._wish_log_event(
+                    conn,
+                    wish_id,
+                    None,
+                    "wb_donor_reminded",
+                    {"hours_since_taken": None},
+                )
+                return True
+        except Exception as e:
+            logger.error("wish_mark_donor_reminded id=%s: %s", wish_id, e)
+            return False
+
+    async def wish_list_pending_moderation_reminders(
+        self, *, remind_after_hours: int, overdue_after_hours: int
+    ) -> List[Dict[str, Any]]:
+        """Просьбы на модерации: пора напомнить (12ч) или просрочены (24ч)."""
+        try:
+            async with self.get_connection() as conn:
+                rows = await conn.fetch(
+                    """
+                    SELECT *,
+                      EXTRACT(EPOCH FROM (NOW() - created_at)) / 3600.0 AS hours_pending
+                    FROM wish_requests
+                    WHERE status = 'pending_moderation'
+                      AND COALESCE(is_test, FALSE) = FALSE
+                      AND created_at <= NOW() - ($1::text || ' hours')::interval
+                    ORDER BY created_at ASC
+                    LIMIT 50
+                    """,
+                    str(int(remind_after_hours)),
+                )
+                return [dict(r) for r in rows]
+        except Exception as e:
+            logger.error("wish_list_pending_moderation_reminders: %s", e)
+            return []
+
+    async def wish_mark_moderation_reminded(self, wish_id: int) -> bool:
+        try:
+            async with self.get_connection() as conn:
+                await conn.execute(
+                    """
+                    UPDATE wish_requests
+                    SET moderation_reminded_at = NOW(), updated_at = NOW()
+                    WHERE id = $1
+                    """,
+                    wish_id,
+                )
+                return True
+        except Exception as e:
+            logger.error("wish_mark_moderation_reminded id=%s: %s", wish_id, e)
+            return False
+
+    async def wish_list_open_needing_no_donor_notify(
+        self, after_hours: int
+    ) -> List[Dict[str, Any]]:
+        try:
+            async with self.get_connection() as conn:
+                rows = await conn.fetch(
+                    """
+                    SELECT * FROM wish_requests
+                    WHERE status = 'open'
+                      AND no_donor_notified_at IS NULL
+                      AND COALESCE(is_test, FALSE) = FALSE
+                      AND COALESCE(
+                            (SELECT MIN(created_at) FROM wish_events e
+                             WHERE e.wish_id = wish_requests.id
+                               AND e.event_type = 'approved'),
+                            wish_requests.updated_at
+                          ) <= NOW() - ($1::text || ' hours')::interval
+                    ORDER BY created_at ASC
+                    LIMIT 50
+                    """,
+                    str(int(after_hours)),
+                )
+                return [dict(r) for r in rows]
+        except Exception as e:
+            logger.error("wish_list_open_needing_no_donor_notify: %s", e)
+            return []
+
+    async def wish_mark_no_donor_notified(self, wish_id: int) -> bool:
+        try:
+            async with self.get_connection() as conn:
+                await conn.execute(
+                    """
+                    UPDATE wish_requests
+                    SET no_donor_notified_at = NOW(), updated_at = NOW()
+                    WHERE id = $1
+                    """,
+                    wish_id,
+                )
+                await self._wish_log_event(
+                    conn, wish_id, None, "wb_status_notified", {"status": "open_72h"}
+                )
+                return True
+        except Exception as e:
+            logger.error("wish_mark_no_donor_notified id=%s: %s", wish_id, e)
+            return False
+
+    async def wish_has_event(self, wish_id: int, event_type: str) -> bool:
+        try:
+            async with self.get_connection() as conn:
+                row = await conn.fetchrow(
+                    """
+                    SELECT 1 FROM wish_events
+                    WHERE wish_id = $1 AND event_type = $2
+                    LIMIT 1
+                    """,
+                    wish_id,
+                    event_type,
+                )
+                return row is not None
+        except Exception as e:
+            logger.error("wish_has_event id=%s: %s", wish_id, e)
+            return False
+
+    async def wish_log_event_public(
+        self,
+        wish_id: int,
+        actor_user_id: Optional[int],
+        event_type: str,
+        meta: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        try:
+            async with self.get_connection() as conn:
+                await self._wish_log_event(
+                    conn, wish_id, actor_user_id, event_type, meta
+                )
+        except Exception as e:
+            logger.error("wish_log_event_public id=%s: %s", wish_id, e)
 
     async def wish_list_open_for_digest_since(
         self, since: datetime
@@ -786,6 +985,7 @@ class WishBoardMixin:
                       AND e.created_at >= $1
                       AND w.status = 'open'
                       AND w.digest_notice_message_id IS NULL
+                      AND COALESCE(w.is_test, FALSE) = FALSE
                     ORDER BY e.created_at ASC
                     """,
                     since,
@@ -842,6 +1042,7 @@ class WishBoardMixin:
                         FROM wish_requests w
                         WHERE w.status = 'open'
                           AND w.expires_at > NOW()
+                          AND COALESCE(w.is_test, FALSE) = FALSE
                     )
                     SELECT *
                     FROM enriched

@@ -110,7 +110,16 @@ class Config:
     #: Топик закрытого клуба — дайджест новых просьб.
     WISH_BOARD_DIGEST_TOPIC_ID: int = 0
     WISH_BOARD_DEFAULT_EXPIRE_DAYS: int = 30
-    WISH_BOARD_TAKEN_TIMEOUT_DAYS: int = 7
+    #: Таймаут «взято» в часах (предпочтительнее DAYS). По умолчанию 24.
+    WISH_BOARD_TAKEN_TIMEOUT_HOURS: int = 24
+    #: Устарело: используйте WISH_BOARD_TAKEN_TIMEOUT_HOURS. Держим для env-fallback.
+    WISH_BOARD_TAKEN_TIMEOUT_DAYS: int = 1
+    #: Напоминание дарителю через N часов после взятия.
+    WISH_BOARD_DONOR_REMIND_HOURS: int = 6
+    #: Напоминание модераторам / просрочка модерации / «дарителя нет».
+    WISH_BOARD_MODERATION_REMIND_HOURS: int = 12
+    WISH_BOARD_MODERATION_OVERDUE_HOURS: int = 24
+    WISH_BOARD_NO_DONOR_NOTIFY_HOURS: int = 72
     WISH_BOARD_DIGEST_HOUR: int = 10
     WISH_BOARD_DIGEST_MINUTE: int = 0
     #: Напоминание в группу об «зависших» открытых просьбах (МСК).
@@ -450,6 +459,23 @@ def _env_bool(name: str, default: bool = False) -> bool:
     return v in ("1", "true", "yes", "on")
 
 
+def _wish_board_taken_timeout_hours_from_env() -> int:
+    """HOURS wins; else DAYS*24; else 24."""
+    hours_raw = (os.getenv("WISH_BOARD_TAKEN_TIMEOUT_HOURS") or "").strip()
+    if hours_raw:
+        try:
+            return max(1, int(hours_raw, 10))
+        except ValueError:
+            pass
+    days_raw = (os.getenv("WISH_BOARD_TAKEN_TIMEOUT_DAYS") or "").strip()
+    if days_raw:
+        try:
+            return max(1, int(days_raw, 10) * 24)
+        except ValueError:
+            pass
+    return 24
+
+
 def _env_bool_nastya_off(name: str, *, club_default: bool = True) -> bool:
     """Явный env перекрывает; для ``BOT_VARIANT=nastya`` без env — выкл."""
     raw = (os.getenv(name) or "").strip()
@@ -604,8 +630,21 @@ def load_config() -> Config:
         WISH_BOARD_DEFAULT_EXPIRE_DAYS=max(
             1, int(os.getenv("WISH_BOARD_DEFAULT_EXPIRE_DAYS", "30") or "30")
         ),
+        WISH_BOARD_TAKEN_TIMEOUT_HOURS=_wish_board_taken_timeout_hours_from_env(),
         WISH_BOARD_TAKEN_TIMEOUT_DAYS=max(
-            1, int(os.getenv("WISH_BOARD_TAKEN_TIMEOUT_DAYS", "7") or "7")
+            1, (_wish_board_taken_timeout_hours_from_env() + 23) // 24
+        ),
+        WISH_BOARD_DONOR_REMIND_HOURS=max(
+            1, int(os.getenv("WISH_BOARD_DONOR_REMIND_HOURS", "6") or "6")
+        ),
+        WISH_BOARD_MODERATION_REMIND_HOURS=max(
+            1, int(os.getenv("WISH_BOARD_MODERATION_REMIND_HOURS", "12") or "12")
+        ),
+        WISH_BOARD_MODERATION_OVERDUE_HOURS=max(
+            1, int(os.getenv("WISH_BOARD_MODERATION_OVERDUE_HOURS", "24") or "24")
+        ),
+        WISH_BOARD_NO_DONOR_NOTIFY_HOURS=max(
+            1, int(os.getenv("WISH_BOARD_NO_DONOR_NOTIFY_HOURS", "72") or "72")
         ),
         WISH_BOARD_DIGEST_HOUR=max(
             0, min(23, int(os.getenv("WISH_BOARD_DIGEST_HOUR", "10") or "10"))

@@ -184,6 +184,21 @@ class SubscriptionReminderFeature(BaseFeature):
             rows.append([payment_cta_button(sub_txt.BTN_RETURN_CLUB)])
         if not rows:
             return with_main_menu([])
+        if config.wish_board_active and kind in (
+            "payment_extend",
+            "affiliate_and_extend",
+            "return_club",
+        ):
+            from bot.texts import ru_user_menu as menu_txt
+
+            rows.append(
+                [
+                    InlineKeyboardButton(
+                        text=menu_txt.BTN_WISH_BOARD,
+                        callback_data="wb:hub",
+                    )
+                ]
+            )
         return with_main_menu(rows)
 
     async def _process_all(self):
