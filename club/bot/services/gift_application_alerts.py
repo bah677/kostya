@@ -133,6 +133,57 @@ async def _next_wave_index(user_storage) -> Tuple[int, Optional[Dict[str, Any]]]
     return 0, None
 
 
+async def resolve_campaign_wave_button(
+    user_storage,
+) -> Optional[Dict[str, Any]]:
+    """Кнопка под статусом: розыгрыш или выдача партии.
+
+    Возвращает ``{wave_index, wave_id|None, mode: draw|grant, label}`` или None.
+    """
+    from bot.services.gift_application_eligibility import count_remaining_tickets
+    from bot.texts import ru_gift_application as ga_txt
+
+    st = await user_storage.get_or_create_gift_campaign_state()
+    if st.get("finished_at") or st.get("waves_paused"):
+        return None
+    left = await count_remaining_tickets(user_storage)
+    if left <= 0:
+        return None
+
+    next_idx, wave_row = await _next_wave_index(user_storage)
+    if next_idx <= 0:
+        return None
+
+    wave_id = int(wave_row["id"]) if wave_row else None
+    status = (wave_row or {}).get("status")
+
+    # Уже отобрали — осталось выдать очередь gift_wave_member
+    if wave_id and status in ("running", "paused"):
+        queued_members = await user_storage.list_queued_wave_members(wave_id, limit=1)
+        if queued_members:
+            return {
+                "wave_index": next_idx,
+                "wave_id": wave_id,
+                "mode": "grant",
+                "label": ga_txt.BTN_GRANT_WAVE.format(n=next_idx),
+            }
+
+    # Новый отбор: есть заявки в очереди анкеты
+    if status in ("running", "paused", "done"):
+        return None
+    by_src = await user_storage.count_queued_by_source()
+    apps_queued = sum(int(v) for v in (by_src or {}).values())
+    # Минимум как в алерте «пора отбор» — половина слотов волны
+    if apps_queued < max(15, WAVE_QUEUE_MIN // 2):
+        return None
+    return {
+        "wave_index": next_idx,
+        "wave_id": wave_id,
+        "mode": "draw",
+        "label": ga_txt.BTN_DRAW_WAVE.format(n=next_idx),
+    }
+
+
 async def _hours_since_campaign_start(user_storage) -> Optional[float]:
     st = await user_storage.get_or_create_gift_campaign_state()
     started = st.get("started_at")

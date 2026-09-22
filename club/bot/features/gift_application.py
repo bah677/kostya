@@ -31,13 +31,16 @@ from bot.services.gift_application_eligibility import (
 )
 from bot.services.gift_application_score import score_gift_application
 from bot.services.gift_application_screen import screen_gift_application
+from bot.services.gift_application_alerts import (
+    resolve_campaign_wave_button,
+    run_gift_campaign_alerts,
+)
 from bot.services.gift_application_select import (
     ensure_campaign_wave,
     finish_campaign_not_selected,
     select_applications_for_wave,
 )
 from bot.services.gift_wave_service import grant_wave_batch
-from bot.services.gift_application_alerts import run_gift_campaign_alerts
 from bot.states import GiftApplicationStates
 from bot.texts import ru_gift_application as txt
 from config import config
@@ -99,6 +102,10 @@ class GiftApplicationFeature(BaseFeature):
         )
         dp.callback_query.register(
             self._cb_return_promo, F.data == "gift_return_promo", cb_private
+        )
+        dp.callback_query.register(
+            self._cb_campaign_wave,
+            F.data.startswith(txt.CB_CAMPAIGN_WAVE),
         )
 
         dp.message.register(
@@ -744,23 +751,8 @@ class GiftApplicationFeature(BaseFeature):
             except ValueError:
                 await message.answer("wave N")
                 return
-            wave = await ensure_campaign_wave(self.user_storage, wave_index=idx)
-            if not wave:
-                await message.answer("Не удалось создать волну")
-                return
-            sel = await select_applications_for_wave(
-                self.user_storage,
-                wave_id=int(wave["id"]),
-                wave_index=idx,
-            )
-            await self.user_storage.set_gift_wave_status(int(wave["id"]), "running")
-            grant = await grant_wave_batch(
-                user_storage=self.user_storage,
-                bot=self.bot,
-                feature_manager=self.feature_manager,
-                wave_id=int(wave["id"]),
-            )
-            await message.answer(f"Волна {idx}: select={sel} grant={grant}")
+            result = await self._run_wave(idx, mode="draw")
+            await message.answer(result)
             return
         if sub == "finish":
             n = await finish_campaign_not_selected(self.user_storage)
@@ -818,6 +810,57 @@ class GiftApplicationFeature(BaseFeature):
             )
             await asyncio.sleep(0.05)
         return fixed
+
+    async def _run_wave(self, idx: int, *, mode: str = "draw") -> str:
+        """mode=draw — отбор+выдача; mode=grant — только партия из очереди волны."""
+        wave = await ensure_campaign_wave(self.user_storage, wave_index=idx)
+        if not wave:
+            return "Не удалось создать волну"
+        wid = int(wave["id"])
+        sel = None
+        if mode == "draw":
+            sel = await select_applications_for_wave(
+                self.user_storage,
+                wave_id=wid,
+                wave_index=idx,
+            )
+        await self.user_storage.set_gift_wave_status(wid, "running")
+        grant = await grant_wave_batch(
+            user_storage=self.user_storage,
+            bot=self.bot,
+            feature_manager=self.feature_manager,
+            wave_id=wid,
+        )
+        if sel is not None:
+            return f"Волна {idx}: select={sel} grant={grant}"
+        return f"Волна {idx}: grant={grant}"
+
+    async def _cb_campaign_wave(self, callback: CallbackQuery) -> None:
+        if not callback.from_user or not callback.data:
+            await callback.answer()
+            return
+        if not await is_telegram_admin(self.user_storage, callback.from_user.id):
+            await callback.answer("Нет доступа", show_alert=True)
+            return
+        raw = callback.data.replace(txt.CB_CAMPAIGN_WAVE, "", 1)
+        # grant:N | N | draw:N
+        mode = "draw"
+        idx_s = raw
+        if raw.startswith("grant:"):
+            mode = "grant"
+            idx_s = raw[6:]
+        elif raw.startswith("draw:"):
+            mode = "draw"
+            idx_s = raw[5:]
+        try:
+            idx = int(idx_s)
+        except ValueError:
+            await callback.answer("Некорректная волна", show_alert=True)
+            return
+        await callback.answer("Запускаю…")
+        result = await self._run_wave(idx, mode=mode)
+        if callback.message:
+            await callback.message.answer(result)
 
     async def _send_cohort_report(self, message: Message) -> None:
         rows = await self.user_storage.gift_cohort_report()
@@ -881,7 +924,27 @@ class GiftApplicationFeature(BaseFeature):
                 "Справка: <code>/gift_campaign help</code>",
             ]
         )
-        await message.answer("\n".join(lines), parse_mode=ParseMode.HTML)
+        kb = None
+        action = await resolve_campaign_wave_button(self.user_storage)
+        if action:
+            cb = (
+                f"{txt.CB_CAMPAIGN_WAVE}grant:{action['wave_index']}"
+                if action["mode"] == "grant"
+                else f"{txt.CB_CAMPAIGN_WAVE}draw:{action['wave_index']}"
+            )
+            kb = InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        InlineKeyboardButton(
+                            text=action["label"],
+                            callback_data=cb,
+                        )
+                    ]
+                ]
+            )
+        await message.answer(
+            "\n".join(lines), parse_mode=ParseMode.HTML, reply_markup=kb
+        )
 
     async def _send_help(self, message: Message) -> None:
         text = (

@@ -28,6 +28,9 @@ CB_RULES = "gift_form:rules"
 CB_REVIEW_PASS = "gift_rev:pass:"
 CB_REVIEW_REJECT = "gift_rev:rej:"
 CB_CAMPAIGN = "gift_camp:"
+CB_CAMPAIGN_WAVE = "gift_camp:wave:"  # + index, или gift_camp:wave:grant:N
+BTN_DRAW_WAVE = "🎲 Провести розыгрыш волны {n}"
+BTN_GRANT_WAVE = "🎁 Выдать партию волны {n}"
 
 GIFT_START_SOURCES = frozenset({"bib", "tg", "ig", "yt", "bot"})
 

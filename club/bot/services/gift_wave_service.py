@@ -20,29 +20,6 @@ logger = logging.getLogger(__name__)
 MSK = ZoneInfo("Europe/Moscow")
 
 
-async def is_air_day_today(user_storage) -> bool:
-    """Эфирный день по расписанию клуба — партии не выдаём."""
-    try:
-        today = datetime.now(MSK).date()
-        start = datetime(today.year, today.month, today.day, tzinfo=MSK)
-        end = start + timedelta(days=1)
-        async with user_storage.pool.acquire() as conn:
-            n = await conn.fetchval(
-                """
-                SELECT COUNT(*)::int
-                FROM club_schedule_events
-                WHERE starts_at >= $1 AND starts_at < $2
-                  AND COALESCE(is_cancelled, FALSE) = FALSE
-                """,
-                start,
-                end,
-            )
-            return bool(n and int(n) > 0)
-    except Exception as e:
-        logger.warning("is_air_day_today: %s", e)
-        return False
-
-
 async def evaluate_wave_thresholds(
     user_storage, wave_id: int
 ) -> Tuple[int, List[str]]:
@@ -199,9 +176,6 @@ async def grant_wave_batch(
     wave = await user_storage.get_gift_wave(wave_id)
     if not wave or wave.get("status") != "running":
         return {"ok": False, "reason": "not_running"}
-
-    if await is_air_day_today(user_storage):
-        return {"ok": False, "reason": "air_day"}
 
     # пороги только если уже была партия
     if wave.get("last_batch_at"):

@@ -31,9 +31,9 @@ async def main() -> int:
         logger.error("wish_board_active=false — топики/флаг не настроены")
         return 1
 
-    token = (config.TELEGRAM_BOT_TOKEN or "").strip()
+    token = (config.MIRON_BOT_TOKEN or "").strip()
     if not token:
-        logger.error("нет TELEGRAM_BOT_TOKEN")
+        logger.error("нет MIRON_BOT_TOKEN")
         return 1
 
     bot = Bot(token=token)
