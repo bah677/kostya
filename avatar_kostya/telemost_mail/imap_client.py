@@ -218,24 +218,41 @@ class YandexImapClient:
         min_uid_exclusive: int = 0,
         from_markers: Tuple[str, ...] = ("telemost", "телемост"),
         limit: int = 20,
-    ) -> List[FetchedMail]:
-        """Синхронный IMAP (вызывать через asyncio.to_thread)."""
+    ) -> Tuple[List[FetchedMail], int]:
+        """Новые письма с UID > min_uid_exclusive.
+
+        Берём **самые старые** в окне (не хвост ящика) — иначе при потоке
+        посторонней почты курсор last_uid замирает, а конспекты Телемоста
+        остаются «позади» и никогда не доходят до админ-топика.
+
+        Возвращает (письма Телемоста, max_uid_просмотренный).
+        max_uid двигает курсор даже если в батче не было писем Телемоста.
+        """
         if not self.configured:
-            return []
+            return [], int(min_uid_exclusive or 0)
         markers = tuple(m.lower() for m in from_markers if m)
         out: List[FetchedMail] = []
+        max_seen = int(min_uid_exclusive or 0)
         conn: Optional[imaplib.IMAP4_SSL] = None
         try:
             conn = imaplib.IMAP4_SSL(self._host, self._port)
             conn.login(self._login, self._password)
             conn.select(self._folder)
+            # Надёжнее фильтровать ALL: у Yandex «UID SEARCH N:*» без префикса
+            # UID иногда отдаёт дырявый диапазон. Берём старые UID первыми.
             typ, data = conn.uid("search", None, "ALL")
             if typ != "OK" or not data or not data[0]:
-                return []
-            uids = [u.decode() for u in data[0].split()]
-            uids = [u for u in uids if int(u) > int(min_uid_exclusive)]
-            uids = uids[-limit:]
-            for uid in uids:
+                return [], max_seen
+            uids = [
+                u.decode()
+                for u in data[0].split()
+                if int(u) > int(min_uid_exclusive)
+            ]
+            uids.sort(key=lambda x: int(x))
+            batch = uids[: max(1, int(limit))]
+            if batch:
+                max_seen = max(max_seen, int(batch[-1]))
+            for uid in batch:
                 typ, msg_data = conn.uid("fetch", uid, "(RFC822)")
                 if typ != "OK" or not msg_data:
                     continue
@@ -247,15 +264,18 @@ class YandexImapClient:
                     continue
                 if not is_telemost_sender(fetched.sender, markers):
                     subj_low = (fetched.subject or "").lower()
-                    if "конспект встречи" not in subj_low and "запись встречи" not in subj_low:
+                    if (
+                        "конспект встречи" not in subj_low
+                        and "запись встречи" not in subj_low
+                    ):
                         continue
                 if not fetched.body_text and not fetched.transcript_text:
                     continue
                 out.append(fetched)
-            return out
+            return out, max_seen
         except Exception as e:
             logger.error("telemost_mail IMAP: %s", e, exc_info=True)
-            return out
+            return out, max_seen
         finally:
             if conn is not None:
                 try:

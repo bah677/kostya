@@ -297,14 +297,24 @@ class TelemostMailService:
             return []
 
         last_uid = await self._storage.get_telemost_mail_last_uid()
-        mails: List[FetchedMail] = await asyncio.to_thread(
-            self._imap.fetch_new_since_uid,
-            min_uid_exclusive=last_uid,
-            from_markers=self._from_markers,
-            limit=15,
-        )
+        try:
+            mails, max_seen = await asyncio.wait_for(
+                asyncio.to_thread(
+                    self._imap.fetch_new_since_uid,
+                    min_uid_exclusive=last_uid,
+                    from_markers=self._from_markers,
+                    limit=20,
+                ),
+                timeout=120.0,
+            )
+        except asyncio.TimeoutError:
+            logger.error(
+                "telemost_mail: IMAP fetch_new_since_uid timeout (last_uid=%s)",
+                last_uid,
+            )
+            return []
         notifications: List[dict[str, Any]] = []
-        max_uid = last_uid
+        max_uid = max(int(last_uid or 0), int(max_seen or 0))
 
         for mail in mails:
             try:
@@ -338,7 +348,27 @@ class TelemostMailService:
         if max_uid > last_uid:
             await self._storage.set_telemost_mail_last_uid(max_uid)
 
-        await self._sync_recent_recording_mails()
+        try:
+            await asyncio.wait_for(
+                self._sync_recent_recording_mails(),
+                timeout=120.0,
+            )
+        except asyncio.TimeoutError:
+            logger.error("telemost_mail: sync_recent_recording_mails timeout")
+
+        if notifications:
+            logger.info(
+                "telemost_mail: poll last_uid %s→%s, notify=%s",
+                last_uid,
+                max_uid,
+                len(notifications),
+            )
+        elif max_uid > last_uid:
+            logger.info(
+                "telemost_mail: poll last_uid %s→%s (без новых конспектов)",
+                last_uid,
+                max_uid,
+            )
 
         return notifications
 

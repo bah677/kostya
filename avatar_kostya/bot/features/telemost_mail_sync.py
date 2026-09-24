@@ -135,7 +135,10 @@ class TelemostMailFeature(BaseFeature):
         interval = max(60, int(config.TELEMOST_MAIL_POLL_INTERVAL_SEC or 300))
         while True:
             try:
-                await self._poll_once()
+                # Жёсткий потолок: иначе зависший IMAP держит весь опрос мёртвым.
+                await asyncio.wait_for(self._poll_once(), timeout=300.0)
+            except asyncio.TimeoutError:
+                logger.error("telemost_mail poll: _poll_once timeout 300s — пропускаем цикл")
             except asyncio.CancelledError:
                 raise
             except Exception as e:
