@@ -745,6 +745,31 @@ class GiftApplicationFeature(BaseFeature):
             else:
                 await message.answer(f"Порция не создана: <code>{result}</code>", parse_mode=ParseMode.HTML)
             return
+        if sub in ("biblia", "portion_bib", "bib"):
+            from bot.services.gift_biblia_mailing import create_biblia_portion_draft
+
+            cohort = args[1].upper() if len(args) > 1 else None
+            result = await create_biblia_portion_draft(
+                club_storage=self.user_storage,
+                admin_id=message.from_user.id,
+                cohort=cohort,
+            )
+            if result.get("ok"):
+                await message.answer(
+                    "Черновик <b>Библии</b> создан — превью ушло в личку "
+                    "<b>от БиблияБота</b> "
+                    f"(кампания <code>{result['campaign_id']}</code>, "
+                    f"когорта <b>{result['cohort']}</b>, "
+                    f"получателей <b>{result['added']}</b>).\n"
+                    "Запуск — кнопкой под превью в чате с БиблияБотом.",
+                    parse_mode=ParseMode.HTML,
+                )
+            else:
+                await message.answer(
+                    f"Библия-порция не создана: <code>{result}</code>",
+                    parse_mode=ParseMode.HTML,
+                )
+            return
         if sub == "wave" and len(args) >= 2:
             try:
                 idx = int(args[1])
@@ -952,7 +977,7 @@ class GiftApplicationFeature(BaseFeature):
     async def _send_help(self, message: Message) -> None:
         text = (
             "<b>Подарочная волна — /gift_campaign</b>\n\n"
-            "<b>Когорты (portion)</b>\n"
+            "<b>Когорты клуба (portion → Т1)</b>\n"
             "• <code>TEST</code> — только админы (проверка текста и кнопки)\n"
             "• <code>K1</code> — писали в бот 2+ разных дня, активны за 60 дней, "
             "зарегистрированы 30+ дней назад\n"
@@ -961,6 +986,16 @@ class GiftApplicationFeature(BaseFeature):
             "• <code>K3</code> — один день в боте или без сообщений, рег. 30+\n"
             "В любую порцию всегда добавляются админы. Черновик — стандартная "
             "<code>mailing_campaigns</code>, запуск кнопкой под превью.\n\n"
+            "<b>Когорты Библии (biblia → Т2)</b>\n"
+            "• <code>TEST</code> — только админы\n"
+            "• <code>B1</code> — доноры Библии, активны ≤60 дн.\n"
+            "• <code>B2</code> — активны ≤60 дн., много дней/молитв\n"
+            "• <code>B3</code> — активны ≤60 дн., остальные\n"
+            "• <code>B4</code> — молчали 61–180 дн.\n"
+            "• <code>B5</code> — давно не писали (&gt;180 дн.)\n"
+            "Исключаются оплатившие/с лицензией в клубе и уже званые. "
+            "Черновик создаётся в БД Библии, превью приходит "
+            "<b>от БиблияБота</b> (кнопки mdraft).\n\n"
             "<b>Команды</b>\n"
             "• <code>/gift_campaign</code> — статус кампании\n"
             "• <code>/gift_campaign cohorts</code> — отчёт по когортам "
@@ -972,7 +1007,9 @@ class GiftApplicationFeature(BaseFeature):
             "• <code>/gift_campaign pause</code> — пауза рассылки и волн\n"
             "• <code>/gift_campaign resume</code> — снять паузу\n"
             "• <code>/gift_campaign portion [TEST|K1|K2|K3] [force]</code> — "
-            "черновик Т1 в личку; <code>force</code> — игнорировать лимиты очереди\n"
+            "черновик Т1 клуба в личку; <code>force</code> — игнор. лимитов\n"
+            "• <code>/gift_campaign biblia [TEST|B1|B2|B3|B4|B5]</code> — "
+            "черновик Т2 в БиблияБоте (алиас: portion_bib)\n"
             "• <code>/gift_campaign wave N</code> — отбор и выдача билетов волны 1–6\n"
             "• <code>/gift_campaign review</code> — очередь ручной проверки заявок\n"
             "• <code>/gift_campaign finish</code> — закрыть очередь и разослать Т17\n"

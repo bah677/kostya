@@ -1110,6 +1110,34 @@ def register_admin_mailing_handlers(
             return
         if str(camp.get("status") or "") == "planned":
             await mstore.update_campaign_status(cid, "cancelled")
+            try:
+                from bot.services.gift_club_mailing_release import (
+                    release_club_gift_reservation_from_biblia,
+                )
+
+                aud_uids: list[int] = []
+                try:
+                    async with mstore.db.get_connection() as conn:
+                        rows = await conn.fetch(
+                            "SELECT user_id FROM mailing_audience WHERE campaign_id = $1",
+                            cid,
+                        )
+                        aud_uids = [int(r["user_id"]) for r in rows]
+                except Exception as e:
+                    logger.warning("mdraft cancel audience fetch #%s: %s", cid, e)
+                freed = await release_club_gift_reservation_from_biblia(
+                    campaign_id=cid,
+                    campaign_name=str(camp.get("name") or ""),
+                    audience_user_ids=aud_uids,
+                )
+                if freed:
+                    logger.info(
+                        "mdraft cancel club gift reservation campaign=%s freed=%s",
+                        cid,
+                        freed,
+                    )
+            except Exception as e:
+                logger.warning("mdraft cancel club gift release: %s", e)
         await query.message.edit_reply_markup(reply_markup=None)
         await query.message.answer(
             f"❌ Кампания <code>{cid}</code> отменена.",

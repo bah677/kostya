@@ -102,9 +102,15 @@
 
 Кнопка: **🎁 Подать заявку** → `t.me/Talk_God_Bot?start=gift_bib`
 
+**Создание черновика:** в клубном боте
+`/gift_campaign biblia [TEST|B1|B2|B3|B4|B5]`
+(алиасы: `portion_bib`, `bib`). Черновик пишется в `mailing_campaigns` Библии;
+превью с кнопками mdraft приходит **от БиблияБота**. Запуск — суперадмином в личке Библии.
+
 ---
 
 ## Источник в коде
 
 - `club/bot/texts/ru_gift_application.py` — `T1_BY_COHORT`, `t1_html_for_cohort()`, `T2_PLAIN`
-- порция: `/gift_campaign portion [TEST|K1|K2|K3]`
+- порция клуба: `/gift_campaign portion [TEST|K1|K2|K3]`
+- порция Библии: `/gift_campaign biblia [TEST|B1|B2|B3|B4|B5]` → `club/bot/services/gift_biblia_mailing.py`
