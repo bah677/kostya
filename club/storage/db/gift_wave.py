@@ -197,6 +197,31 @@ class GiftWaveMixin:
             logger.error("mark_wave_member_granted: %s", e)
             return False
 
+    async def mark_wave_member_declined(
+        self, wave_id: int, user_id: int, *, reason: str = ""
+    ) -> bool:
+        try:
+            async with self.get_connection() as conn:
+                await conn.execute(
+                    """
+                    UPDATE gift_wave_member
+                    SET status = 'declined'
+                    WHERE wave_id = $1 AND user_id = $2 AND status = 'queued'
+                    """,
+                    wave_id,
+                    user_id,
+                )
+                return True
+        except Exception as e:
+            logger.error(
+                "mark_wave_member_declined wave=%s uid=%s reason=%s: %s",
+                wave_id,
+                user_id,
+                reason,
+                e,
+            )
+            return False
+
     async def activate_pending_gift_ticket(
         self, user_id: int, *, joined_at: Optional[datetime] = None
     ) -> Optional[Dict[str, Any]]:

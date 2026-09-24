@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any, Optional, Sequence, Set
 
 from bot.admin_guard import is_admin_or_super
 from config import config
@@ -62,6 +62,52 @@ async def user_had_any_license(user_storage, user_id: int) -> bool:
             user_id,
         )
     return bool(row)
+
+
+async def user_ids_already_in_club(
+    user_storage, user_ids: Sequence[int]
+) -> Set[int]:
+    """
+    Уже в клубе к моменту розыгрыша/выдачи: активная лицензия,
+    успешная оплата или участник закрытой группы.
+    """
+    ids = sorted({int(u) for u in user_ids if u is not None})
+    if not ids:
+        return set()
+    out: Set[int] = set()
+    async with user_storage.get_connection() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT DISTINCT user_id FROM license
+            WHERE user_id = ANY($1::bigint[])
+              AND status = 'active'
+              AND expires_at > NOW()
+            """,
+            ids,
+        )
+        out.update(int(r["user_id"]) for r in rows)
+        rows = await conn.fetch(
+            """
+            SELECT DISTINCT user_id FROM payments
+            WHERE user_id = ANY($1::bigint[])
+              AND status = 'succeeded'
+            """,
+            ids,
+        )
+        out.update(int(r["user_id"]) for r in rows)
+        rows = await conn.fetch(
+            """
+            SELECT user_id FROM club_group_member_cache
+            WHERE user_id = ANY($1::bigint[])
+            """,
+            ids,
+        )
+        out.update(int(r["user_id"]) for r in rows)
+    return out
+
+
+async def user_already_in_club(user_storage, user_id: int) -> bool:
+    return int(user_id) in await user_ids_already_in_club(user_storage, [user_id])
 
 
 async def check_gift_application_eligibility(

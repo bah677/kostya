@@ -752,7 +752,7 @@ class GiftApplicationFeature(BaseFeature):
                 await message.answer("wave N")
                 return
             result = await self._run_wave(idx, mode="draw")
-            await message.answer(result)
+            await message.answer(result, parse_mode=ParseMode.HTML)
             return
         if sub == "finish":
             n = await finish_campaign_not_selected(self.user_storage)
@@ -831,9 +831,12 @@ class GiftApplicationFeature(BaseFeature):
             feature_manager=self.feature_manager,
             wave_id=wid,
         )
-        if sel is not None:
-            return f"Волна {idx}: select={sel} grant={grant}"
-        return f"Волна {idx}: grant={grant}"
+        return txt.format_wave_admin_result_html(
+            wave_index=idx,
+            mode=mode,
+            select=sel,
+            grant=grant,
+        )
 
     async def _cb_campaign_wave(self, callback: CallbackQuery) -> None:
         if not callback.from_user or not callback.data:
@@ -860,7 +863,7 @@ class GiftApplicationFeature(BaseFeature):
         await callback.answer("Запускаю…")
         result = await self._run_wave(idx, mode=mode)
         if callback.message:
-            await callback.message.answer(result)
+            await callback.message.answer(result, parse_mode=ParseMode.HTML)
 
     async def _send_cohort_report(self, message: Message) -> None:
         rows = await self.user_storage.gift_cohort_report()

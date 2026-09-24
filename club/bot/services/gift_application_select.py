@@ -25,6 +25,28 @@ DRAW_SLOTS = 5
 SCORE_SLOTS = 20
 
 
+async def _admin_user_ids(user_storage) -> Set[int]:
+    """Telegram id админов + SUPER_ADMIN — их не берём в розыгрыш."""
+    out: Set[int] = set()
+    try:
+        from config import config
+
+        sid = int(getattr(config, "SUPER_ADMIN_ID", 0) or 0)
+        if sid:
+            out.add(sid)
+    except Exception:
+        pass
+    try:
+        rows = await user_storage.list_telegram_admin_ids()
+        for r in rows or []:
+            uid = r.get("telegram_user_id") if isinstance(r, dict) else None
+            if uid is not None:
+                out.add(int(uid))
+    except Exception as e:
+        logger.warning("list admins for wave select: %s", e)
+    return out
+
+
 def _draw_key(seed: str, user_id: int) -> str:
     return hashlib.sha256(f"{seed}:{user_id}".encode("utf-8")).hexdigest()
 
@@ -93,10 +115,64 @@ async def select_applications_for_wave(
             )
 
     queued = await user_storage.list_gift_applications_queued(campaign=campaign)
-    if not queued:
-        return {"ok": True, "drawn": 0, "scored": 0, "selected_ids": []}
+    admin_ids = await _admin_user_ids(user_storage)
+    skipped_admins = 0
+    if admin_ids:
+        before = len(queued)
+        queued = [a for a in queued if int(a["user_id"]) not in admin_ids]
+        skipped_admins = before - len(queued)
+        if skipped_admins:
+            logger.info(
+                "wave select skip admins n=%s",
+                skipped_admins,
+            )
 
-    # 1) жребий среди всех
+    from bot.services.gift_application_eligibility import user_ids_already_in_club
+
+    skipped_in_club = 0
+    in_club_ids = await user_ids_already_in_club(
+        user_storage, [int(a["user_id"]) for a in queued]
+    )
+    if in_club_ids:
+        kept: List[Dict[str, Any]] = []
+        drop_app_ids: List[int] = []
+        for a in queued:
+            if int(a["user_id"]) in in_club_ids:
+                skipped_in_club += 1
+                drop_app_ids.append(int(a["id"]))
+            else:
+                kept.append(a)
+        queued = kept
+        if drop_app_ids:
+            async with user_storage.get_connection() as conn:
+                await conn.execute(
+                    """
+                    UPDATE gift_application
+                    SET status = 'ineligible',
+                        eligible = FALSE,
+                        ineligible_reason = 'already_in_club',
+                        updated_at = NOW()
+                    WHERE id = ANY($1::bigint[])
+                      AND status = 'queued'
+                    """,
+                    drop_app_ids,
+                )
+            logger.info(
+                "wave select skip already in club n=%s",
+                skipped_in_club,
+            )
+
+    if not queued:
+        return {
+            "ok": True,
+            "drawn": 0,
+            "scored": 0,
+            "selected_ids": [],
+            "skipped_admins": skipped_admins,
+            "skipped_in_club": skipped_in_club,
+        }
+
+    # 1) жребий среди всех (без админов)
     by_draw = sorted(
         queued,
         key=lambda a: (_draw_key(seed, int(a["user_id"])), int(a["id"])),
@@ -189,6 +265,8 @@ async def select_applications_for_wave(
         "scored": len(scored),
         "selected_ids": [int(a["id"]) for a in selected],
         "wave_id": wave_id,
+        "skipped_admins": skipped_admins,
+        "skipped_in_club": skipped_in_club,
     }
 
 

@@ -131,6 +131,8 @@ class AgentsClient:
         # (messaging отличает таймаут от пустого content — иначе алерт врёт)
         self.last_chat_finish_reason: Optional[str] = None
         self.last_chat_error: Optional[str] = None
+        # сырой текст исключения API — для понятных алертов (402 / balance и т.п.)
+        self.last_chat_error_detail: Optional[str] = None
 
         self.client = AsyncOpenAI(
             api_key=os.getenv("DEEPSEEK_API_KEY"),
@@ -168,6 +170,7 @@ class AgentsClient:
         """
         self.last_chat_finish_reason = None
         self.last_chat_error = None
+        self.last_chat_error_detail = None
         try:
             history = await self.user_storage.get_private_chat_history(
                 user_id, limit=self.HISTORY_LIMIT
@@ -227,6 +230,7 @@ class AgentsClient:
             reply_text = _message_text(choice.message if choice else None)
             if not reply_text:
                 self.last_chat_error = "empty"
+                self.last_chat_error_detail = None
                 logger.warning(
                     "DeepSeek chat empty content user=%s finish=%s",
                     user_id,
@@ -263,6 +267,7 @@ class AgentsClient:
         except asyncio.TimeoutError:
             self.last_chat_finish_reason = None
             self.last_chat_error = "timeout"
+            self.last_chat_error_detail = "DeepSeek timeout"
             logger.error("❌ DeepSeek timeout for user %s", user_id)
             await self.user_storage.log_interaction(
                 user_id=user_id,
@@ -276,6 +281,7 @@ class AgentsClient:
         except Exception as e:
             self.last_chat_finish_reason = None
             self.last_chat_error = "api_error"
+            self.last_chat_error_detail = str(e)
             logger.error("❌ DeepSeek API error for user %s: %s", user_id, e)
             await self.user_storage.log_interaction(
                 user_id=user_id,
@@ -330,6 +336,7 @@ class AgentsClient:
         """Третья попытка генерации через OpenAI (после двух падений DeepSeek)."""
         self.last_chat_finish_reason = None
         self.last_chat_error = None
+        self.last_chat_error_detail = None
         api_key = (os.getenv("OPENAI_API_KEY") or "").strip()
         if not api_key:
             logger.warning("OpenAI fallback: no OPENAI_API_KEY")
@@ -366,6 +373,7 @@ class AgentsClient:
             reply_text = _message_text(choice.message if choice else None)
             if not reply_text:
                 self.last_chat_error = "empty"
+                self.last_chat_error_detail = "OpenAI empty response"
             await self.user_storage.log_llm_completion_usage(
                 user_id=user_id,
                 provider="openai",
@@ -377,10 +385,12 @@ class AgentsClient:
             return reply_text
         except asyncio.TimeoutError:
             self.last_chat_error = "timeout"
+            self.last_chat_error_detail = "OpenAI fallback timeout"
             logger.error("OpenAI fallback timeout user=%s", user_id)
             return None
         except Exception as e:
             self.last_chat_error = "api_error"
+            self.last_chat_error_detail = str(e)
             logger.error("OpenAI fallback failed user=%s: %s", user_id, e)
             return None
 

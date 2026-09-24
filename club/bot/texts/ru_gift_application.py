@@ -237,3 +237,62 @@ def normalize_answer_text(text: str | None) -> str:
         t = (m.group(1) or "").strip()
     t = re.sub(r"\s+", " ", t).strip()
     return t
+
+
+def format_wave_admin_result_html(
+    *,
+    wave_index: int,
+    mode: str,
+    select: dict | None = None,
+    grant: dict | None = None,
+) -> str:
+    """Человеческий отчёт админу после кнопки / команды wave."""
+    lines = [f"<b>Волна {wave_index}</b>"]
+    if mode == "draw" and select:
+        if select.get("ok"):
+            drawn = int(select.get("drawn") or 0)
+            scored = int(select.get("scored") or 0)
+            skipped = int(select.get("skipped_admins") or 0)
+            skipped_club = int(select.get("skipped_in_club") or 0)
+            lines.append(
+                f"Отбор: жребий <b>{drawn}</b>, по баллам <b>{scored}</b> "
+                f"(всего <b>{drawn + scored}</b>)"
+            )
+            if skipped:
+                lines.append(f"Админов в отборе пропущено: <b>{skipped}</b>")
+            if skipped_club:
+                lines.append(
+                    f"Уже в клубе (оплатили) в отборе убрано: <b>{skipped_club}</b>"
+                )
+        else:
+            lines.append(
+                f"Отбор не удался: <code>{select.get('reason') or select}</code>"
+            )
+    grant = grant or {}
+    if grant.get("ok"):
+        granted = int(grant.get("granted") or 0)
+        skipped = int(grant.get("skipped_admins") or 0)
+        skipped_club = int(grant.get("skipped_in_club") or 0)
+        lines.append(f"Выдано билетов: <b>{granted}</b>")
+        if skipped:
+            lines.append(f"Админов при выдаче пропущено: <b>{skipped}</b>")
+        if skipped_club:
+            lines.append(
+                f"Уже в клубе (оплатили) при выдаче убрано: <b>{skipped_club}</b>"
+            )
+        if grant.get("done"):
+            lines.append("Очередь волны пуста — волна <b>закрыта</b>.")
+        else:
+            lines.append("В очереди волны ещё есть люди — можно выдать следующую партию позже.")
+    else:
+        reason = grant.get("reason") or grant
+        human = {
+            "not_running": "волна не в статусе running",
+            "interval": "ещё не прошло время между партиями",
+            "paused_thresholds": "волна на паузе из‑за порогов нагрузки",
+        }.get(str(reason), str(reason))
+        extra = ""
+        if reason == "interval" and grant.get("hours_left") is not None:
+            extra = f" (осталось ~{float(grant['hours_left']):.1f} ч)"
+        lines.append(f"Выдача не прошла: {human}{extra}")
+    return "\n".join(lines)

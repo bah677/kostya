@@ -246,10 +246,58 @@ async def grant_wave_batch(
     except Exception:
         pass
 
+    from bot.services.gift_application_eligibility import user_ids_already_in_club
+    from bot.services.gift_application_select import _admin_user_ids
+
+    admin_ids = await _admin_user_ids(user_storage)
+    in_club_ids = await user_ids_already_in_club(
+        user_storage, [int(m["user_id"]) for m in members]
+    )
+    skipped_admins = 0
+    skipped_in_club = 0
+
     for m in members:
         uid = int(m["user_id"])
         expires_str = ""
         days_phrase = russian_days_phrase(gift_days)
+
+        if uid in admin_ids:
+            await user_storage.mark_wave_member_declined(
+                wave_id, uid, reason="admin_excluded"
+            )
+            skipped_admins += 1
+            logger.info("wave grant skip admin uid=%s wave=%s", uid, wave_id)
+            continue
+
+        if uid in in_club_ids:
+            await user_storage.mark_wave_member_declined(
+                wave_id, uid, reason="already_in_club"
+            )
+            app_id = m.get("application_id")
+            if app_id:
+                try:
+                    async with user_storage.get_connection() as conn:
+                        await conn.execute(
+                            """
+                            UPDATE gift_application
+                            SET status = 'ineligible',
+                                eligible = FALSE,
+                                ineligible_reason = 'already_in_club',
+                                updated_at = NOW()
+                            WHERE id = $1
+                              AND status IN ('queued', 'selected', 'drawn')
+                            """,
+                            int(app_id),
+                        )
+                except Exception as e:
+                    logger.warning(
+                        "wave grant mark ineligible app=%s: %s", app_id, e
+                    )
+            skipped_in_club += 1
+            logger.info(
+                "wave grant skip already in club uid=%s wave=%s", uid, wave_id
+            )
+            continue
 
         if not defer_license:
             result = await user_storage.grant_admin_gift_license(
@@ -324,4 +372,10 @@ async def grant_wave_batch(
     remaining = await user_storage.list_queued_wave_members(wave_id, limit=1)
     if not remaining:
         await user_storage.set_gift_wave_status(wave_id, "done")
-    return {"ok": True, "granted": granted, "done": not remaining}
+    return {
+        "ok": True,
+        "granted": granted,
+        "done": not remaining,
+        "skipped_admins": skipped_admins,
+        "skipped_in_club": skipped_in_club,
+    }
