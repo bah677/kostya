@@ -19,6 +19,23 @@ logger = logging.getLogger(__name__)
 _FULL_W, _FULL_H = 1280, 720
 _SHORT_W, _SHORT_H = 1080, 1920
 _GEN_ATTEMPTS = 2
+
+# Вертикальная обложка: заголовок вверху, низ пустой — там YouTube рисует
+# счётчик просмотров и служебные плашки.
+_V_TITLE_SIZE = 142
+_V_TITLE_MAX_CHARS = 13
+_V_TITLE_MAX_LINES = 3
+_V_TITLE_TOP_FRAC = 0.135
+_V_TITLE_LEFT = 88
+_V_ACCENT_W = 230
+_V_ACCENT_H = 11
+_V_ACCENT_GAP = 62
+_V_BADGE_SIZE = 44
+_V_BADGE_GAP = 54
+_COL_HEAD = "&H00F4F8FF"    # ASS BGR: тёплый белый
+_COL_GOLD = "&H005AB4E8"    # золото
+_COL_BADGE = "&H00C8D2DC"
+
 _COVER_VARIANT_MOODS = (
     "golden divine light, high contrast, emotional spiritual atmosphere",
     "blue hour mist, soft candle glow, intimate quiet prayer mood",
@@ -81,6 +98,7 @@ async def _gen_cover_bg(
     dest: Path,
     size: str = "1536x1024",
     mood_extra: str = "",
+    vertical: bool = False,
 ) -> bool:
     key = (os.getenv("OPENAI_API_KEY") or "").strip()
     if not key:
@@ -96,9 +114,19 @@ async def _gen_cover_bg(
     model = (os.getenv("YT_PRAYER_IMAGE_MODEL") or "gpt-image-1").strip()
     theme = broll_query or trend
     mood_line = mood_extra or _COVER_VARIANT_MOODS[0]
+    # Вертикаль: верх кадра должен остаться «пустым» — туда ляжет заголовок.
+    layout = (
+        "Vertical 9:16 composition for a phone screen. "
+        "Keep the TOP 45% of the frame visually calm and uncluttered "
+        "(open sky, soft light, haze or bokeh) — a large title goes there. "
+        "Put the main subject and the strongest detail in the LOWER HALF. "
+        if vertical
+        else "Horizontal 16:9 composition. "
+    )
     mood = (
         "Ultra eye-catching YouTube thumbnail background for a Christian prayer video. "
         f"{mood_line}. "
+        f"{layout}"
         "Strong focal point, professional clickbait thumbnail style. "
         "NO text, NO letters, NO logos, NO watermark, NO readable words, NO faces close-up. "
         f"Visual mood for topic: {trend}. "
@@ -131,24 +159,36 @@ async def _gen_cover_bg(
 
 
 def _wrap_title(title: str, *, max_chars: int, max_lines: int = 3) -> str:
+    """Перенос по словам. При переполнении ставим «…», а не теряем хвост молча."""
     words = title.split()
+    limit = max(1, int(max_lines))
     lines: list[str] = []
     cur: list[str] = []
     n = 0
+    overflow = False
     for w in words:
         add = len(w) + (1 if cur else 0)
         if cur and n + add > max_chars:
             lines.append(" ".join(cur))
+            if len(lines) >= limit:
+                overflow = True
+                cur = []
+                break
             cur = [w]
             n = len(w)
-            if len(lines) >= max_lines:
-                break
         else:
             cur.append(w)
             n += add
-    if cur and len(lines) < max_lines:
+    if cur and len(lines) < limit:
         lines.append(" ".join(cur))
-    return "\n".join(lines[:max_lines])
+    elif cur:
+        overflow = True
+    if overflow and lines:
+        tail = lines[-1].rstrip(" .,;:—–-")
+        if len(tail) > max_chars - 1:
+            tail = tail[: max_chars - 1].rstrip(" .,;:—–-")
+        lines[-1] = tail + "…"
+    return "\n".join(lines[:limit])
 
 
 def _burn_title(
@@ -194,6 +234,154 @@ def _burn_title(
         logger.warning("burn title failed: %s", (proc.stderr or "")[-400:])
         return False
     return True
+
+
+def _ass_escape(text: str) -> str:
+    return (text or "").replace("\\", "/").replace("{", "(").replace("}", ")")
+
+
+def _write_cover_ass(
+    path: Path,
+    *,
+    title: str,
+    badge: str,
+    width: int,
+    height: int,
+    fontsize: int,
+) -> None:
+    """Вёрстка обложки через libass.
+
+    drawtext не умеет ни выравнивать многострочник, ни красить отдельную строку,
+    а реальную высоту блока по метрикам шрифта из Python не посчитать. ASS решает
+    и то и другое, и заодно даёт ту же типографику, что в самом ролике.
+    """
+    from youtube_prayer.render import display_font, font_is_heavy
+
+    font = display_font()
+    bold = 0 if font_is_heavy(font) else -1
+    title_y = int(height * _V_TITLE_TOP_FRAC)
+    accent_y = max(0, title_y - _V_ACCENT_GAP)
+    lines = [
+        ln
+        for ln in _wrap_title(
+            title, max_chars=_V_TITLE_MAX_CHARS, max_lines=_V_TITLE_MAX_LINES
+        ).split("\n")
+        if ln.strip()
+    ] or [title]
+
+    # Последняя строка — золотом: классический приём «крючок + добивка».
+    parts = [_ass_escape(ln) for ln in lines]
+    if len(parts) >= 2:
+        parts[-1] = f"{{\\c{_COL_GOLD}}}{parts[-1]}"
+    head_text = "\\N".join(parts)
+
+    head = f"""[Script Info]
+ScriptType: v4.00+
+PlayResX: {width}
+PlayResY: {height}
+WrapStyle: 2
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Head,{font},{fontsize},{_COL_HEAD},&H000000FF,&H30000000,&H50000000,{bold},0,0,0,100,100,-1.5,0,1,5.0,4.0,7,{_V_TITLE_LEFT},{_V_TITLE_LEFT},{title_y},1
+Style: Badge,{font},{_V_BADGE_SIZE},{_COL_BADGE},&H000000FF,&H60000000,&H00000000,{bold},0,0,0,100,100,4.0,0,1,2.5,0,7,0,0,0,1
+Style: Rule,{font},40,{_COL_GOLD},&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+"""
+    ev = [head]
+    ev.append(
+        f"Dialogue: 1,0:00:00.00,0:00:10.00,Rule,,0,0,0,,"
+        f"{{\\p1\\pos({_V_TITLE_LEFT},{accent_y})}}"
+        f"m 0 0 l {_V_ACCENT_W} 0 l {_V_ACCENT_W} {_V_ACCENT_H} l 0 {_V_ACCENT_H}"
+    )
+    ev.append(f"Dialogue: 1,0:00:00.00,0:00:10.00,Head,,0,0,0,,{head_text}")
+    if badge.strip():
+        # Бейдж под блоком заголовка: строк известно сколько, а высота строки
+        # у libass ≈ 1.2 кегля — этого хватает, чтобы не наехать на текст.
+        badge_y = title_y + int(len(lines) * fontsize * 1.2) + _V_BADGE_GAP
+        ev.append(
+            f"Dialogue: 1,0:00:00.00,0:00:10.00,Badge,,0,0,0,,"
+            f"{{\\pos({_V_TITLE_LEFT},{badge_y})}}{_ass_escape(badge.upper())}"
+        )
+    path.write_text("\n".join(ev) + "\n", encoding="utf-8")
+
+
+def _burn_title_vertical(
+    bg: Path,
+    dest: Path,
+    *,
+    title: str,
+    badge: str = "молитва · 1 минута",
+    width: int = _SHORT_W,
+    height: int = _SHORT_H,
+) -> bool:
+    """Обложка 9:16: огромный заголовок сверху, золотой акцент, градиент."""
+    from youtube_prayer.render import build_scrim_png
+
+    ffmpeg = _ffmpeg()
+    fontsize = int(os.getenv("YT_PRAYER_COVER_TITLE_SIZE") or _V_TITLE_SIZE)
+    ass_path = dest.with_suffix(".ass")
+    _write_cover_ass(
+        ass_path,
+        title=title,
+        badge=badge,
+        width=width,
+        height=height,
+        fontsize=fontsize,
+    )
+    ass_esc = ass_path.resolve().as_posix().replace("\\", "/").replace(":", "\\:")
+    draw = f"ass='{ass_esc}'"
+    fit = (
+        f"scale={width}:{height}:force_original_aspect_ratio=increase,"
+        f"crop={width}:{height}"
+    )
+
+    scrim = dest.with_name(f"{dest.stem}_scrim.png")
+    has_scrim = build_scrim_png(
+        scrim,
+        width=width,
+        height=height,
+        top_frac=0.62,
+        bottom_frac=0.16,
+        top_alpha=0.82,
+        bottom_alpha=0.45,
+        top_hold=0.74,
+    )
+
+    def _run(with_scrim: bool) -> bool:
+        if with_scrim:
+            cmd = [
+                ffmpeg, "-y", "-i", str(bg), "-i", str(scrim),
+                "-filter_complex",
+                f"[0:v]{fit}[bgv];[1:v]scale={width}:{height}[sc];"
+                f"[bgv][sc]overlay=0:0:format=auto[lay];[lay]{draw}[v]",
+                "-map", "[v]", "-frames:v", "1", "-q:v", "2", str(dest),
+            ]
+        else:
+            cmd = [
+                ffmpeg, "-y", "-i", str(bg),
+                "-vf",
+                f"{fit},drawbox=x=0:y=0:w=iw:h=ih*0.60:color=black@0.55:t=fill,{draw}",
+                "-frames:v", "1", "-q:v", "2", str(dest),
+            ]
+        proc = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=120, check=False
+        )
+        if proc.returncode != 0 or not dest.is_file():
+            logger.warning(
+                "vertical burn (scrim=%s) failed: %s",
+                with_scrim,
+                (proc.stderr or "")[-400:],
+            )
+            return False
+        return True
+
+    if has_scrim and _run(True):
+        return True
+    return _run(False)
 
 
 def _extract_broll_frame(
@@ -375,6 +563,7 @@ async def generate_vertical_cover_pack(
             broll_query=broll_query,
             dest=bg_v,
             size="1024x1536",
+            vertical=True,
         )
         if ok_v:
             break
@@ -392,15 +581,12 @@ async def generate_vertical_cover_pack(
 
     out_v = work_dir / "cover_9x16.jpg"
     ok = await asyncio.to_thread(
-        _burn_title,
+        _burn_title_vertical,
         bg_v,
         out_v,
         title=thumb_title,
         width=_SHORT_W,
         height=_SHORT_H,
-        fontsize=64,
-        max_chars=16,
-        max_lines=4,
     )
     if not (ok and out_v.is_file()):
         logger.warning("vertical cover burn failed title=%r", thumb_title)

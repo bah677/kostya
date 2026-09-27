@@ -299,11 +299,10 @@ def cue_chunks_from_words(
     words = [(float(s), float(e), w) for s, e, w in timings if (w or "").strip()]
     if not words:
         return []
-    n = max(1, int(words_per_cue))
+    from youtube_prayer.render import group_words_into_cues
+
     out: List[WordTiming] = []
-    i = 0
-    while i < len(words):
-        group = words[i : i + n]
+    for group in group_words_into_cues(words, words_per_cue=words_per_cue):
         out.append(
             (
                 group[0][0],
@@ -311,7 +310,6 @@ def cue_chunks_from_words(
                 " ".join(g[2] for g in group),
             )
         )
-        i += n
     return out
 
 

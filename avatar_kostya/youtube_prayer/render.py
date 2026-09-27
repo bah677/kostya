@@ -20,14 +20,50 @@ SHORT_H = 1920
 _ENCODE_PRESET = "medium"
 _ENCODE_CRF = "20"
 
-# Шрифты: display-семейства (есть на сервере), не Arial/DejaVu.
-_FONT_THEME = "Noto Serif Display"
-_FONT_CAPTION = "Noto Sans Display"
+# Шрифты. Засечный Noto Serif читался «газетно» — для Shorts нужен тяжёлый
+# гротеск. Берём первый реально установленный: ExtraBold/Black идут отдельными
+# семействами fontconfig, поэтому их можно запросить по имени.
+# Ставится так: sudo apt-get install -y fonts-montserrat && sudo fc-cache -f
+_FONT_PREFS = (
+    "Montserrat ExtraBold",
+    "Montserrat Black",
+    "Montserrat",
+    "Inter",
+    "Manrope",
+    "Roboto",
+    "Open Sans",
+    "Noto Sans Display",
+    "DejaVu Sans",
+)
+_HEAVY_SUFFIXES = ("extrabold", "black", "heavy", "extra bold")
+_FONT_CACHE: Optional[str] = None
 # ASS &HAABBGGRR — тёплый крем + мягкий уголь, без «кислотного» белого 90-х.
 _COL_THEME = "&H00D8E8FF"  # тёплый ivory
 _COL_CAPTION = "&H00F2F6FF"  # мягкий белый
 _COL_OUTLINE = "&H40101820"  # полупрозрачный тёмный
 _COL_SHADOW = "&H6E000000"
+# Субтитры стоят в середине кадра, где нет ни градиента, ни тёмного низа.
+# При BorderStyle=3 libass рисует плашку цветом OutlineColour (не BackColour),
+# а Outline задаёт отступ внутри неё.
+_COL_CAPTION_BOX = "&H33000000"   # почти непрозрачный чёрный
+_COL_CAPTION_TEXT = "&H00FFFFFF"  # чистый белый — максимальный контраст
+
+# Замеры по реальному плееру Shorts. На высоком экране (20:9) YouTube
+# масштабирует 9:16 по высоте и срезает примерно по 9% ширины с каждого края.
+# Сверху ряд «назад / поиск / ⋮», снизу канал, описание, счётчик и кнопка,
+# справа в полосе y≈1000–1600 — колонка действий. Чистой остаётся середина.
+_V_MARGIN_LR = 150
+_V_TITLE_SIZE = 124
+_V_TITLE_MARGIN_V = 280
+_V_CAPTION_SIZE = 96
+_V_CAPTION_MARGIN_V = 820
+_V_CAPTION_WRAP = 15
+# При кегле 132 в строку помещается ~11 символов (полезная ширина ~780 px).
+_V_HOOK_SIZE = 132
+_V_HOOK_WRAP = 11
+# 4 слова при кегле 96 не помещаются в строку (~780 px полезной ширины)
+# и оставляют висячее слово отдельной плашкой.
+_V_WORDS_PER_CUE = 3
 
 _STOPWORDS = {
     "и",
@@ -104,6 +140,60 @@ class ShortClip:
 
 def _ffmpeg() -> str:
     return shutil.which("ffmpeg") or "ffmpeg"
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int((os.getenv(name) or str(default)).strip())
+    except ValueError:
+        return default
+
+
+def _env_flag(name: str, default: bool = True) -> bool:
+    v = (os.getenv(name) or "").strip().lower()
+    if not v:
+        return default
+    return v in {"1", "true", "yes", "on"}
+
+
+def display_font() -> str:
+    """Первое реально установленное семейство из _FONT_PREFS.
+
+    fc-match всегда что-то возвращает, поэтому сверяем, что отдали именно то,
+    что просили, — иначе получили бы подстановку DejaVu под любым именем.
+    """
+    global _FONT_CACHE
+    if _FONT_CACHE:
+        return _FONT_CACHE
+    override = (os.getenv("YT_PRAYER_FONT") or "").strip()
+    prefs = (override,) + _FONT_PREFS if override else _FONT_PREFS
+    for name in prefs:
+        try:
+            out = subprocess.run(
+                ["fc-match", "-f", "%{family}", name],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
+            )
+            fam = (out.stdout or "").strip().lower()
+            if fam and name.lower() in fam:
+                _FONT_CACHE = name
+                logger.info("display font: %s", name)
+                return name
+        except Exception:
+            continue
+    _FONT_CACHE = _FONT_PREFS[-1]
+    return _FONT_CACHE
+
+
+def font_is_heavy(family: str) -> bool:
+    """Шрифт сам по себе жирный — тогда ASS-флаг Bold не нужен.
+
+    Иначе libass кладёт поверх Black синтетический bold и буквы заплывают.
+    """
+    f = (family or "").strip().lower()
+    return any(f.endswith(s) for s in _HEAVY_SUFFIXES)
 
 
 def _env_float(name: str, default: float) -> float:
@@ -276,16 +366,23 @@ def _write_video_ass(
     - Caption — кинетическая строка молитвы крупно снизу
     """
     if vertical:
-        # Чуть крупнее + запас сверху, чтобы 2–3 строки названия не обрезались UI Shorts.
-        theme_size, theme_margin_v = 72, 110
-        cap_size, cap_margin_v, wrap_chars = 68, 260, 22
-        hook_size, wrap_hook = 72, 18
-        margin_lr = 64
+        # Цифры — из замеров живого плеера, см. комментарий к _V_* выше.
+        theme_size = _env_int("YT_PRAYER_TITLE_SIZE", _V_TITLE_SIZE)
+        theme_margin_v = _env_int("YT_PRAYER_TITLE_MARGIN_V", _V_TITLE_MARGIN_V)
+        cap_size = _env_int("YT_PRAYER_CAPTION_SIZE", _V_CAPTION_SIZE)
+        cap_margin_v = _env_int("YT_PRAYER_CAPTION_MARGIN_V", _V_CAPTION_MARGIN_V)
+        wrap_chars = _env_int("YT_PRAYER_CAPTION_WRAP_CHARS", _V_CAPTION_WRAP)
+        hook_size = _env_int("YT_PRAYER_HOOK_SIZE", _V_HOOK_SIZE)
+        wrap_hook = _env_int("YT_PRAYER_HOOK_WRAP_CHARS", _V_HOOK_WRAP)
+        margin_lr = _env_int("YT_PRAYER_MARGIN_LR", _V_MARGIN_LR)
     else:
         theme_size, theme_margin_v = 54, 60
         cap_size, cap_margin_v, wrap_chars = 58, 72, 36
         hook_size, wrap_hook = 78, 28
         margin_lr = 72
+    font = display_font()
+    # На ExtraBold/Black ASS-флаг Bold даёт синтетическое утолщение поверх.
+    bold = 0 if font_is_heavy(font) else -1
 
     header = f"""[Script Info]
 ScriptType: v4.00+
@@ -296,9 +393,10 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Theme,{_FONT_THEME},{theme_size},{_COL_THEME},&H000000FF,{_COL_OUTLINE},{_COL_SHADOW},1,0,0,0,100,100,1.2,0,1,3.6,1.6,8,{margin_lr},{margin_lr},{theme_margin_v},1
-Style: Caption,{_FONT_CAPTION},{cap_size},{_COL_CAPTION},&H000000FF,{_COL_OUTLINE},{_COL_SHADOW},0,0,0,0,100,100,0.8,0,1,3.2,1.4,2,{margin_lr},{margin_lr},{cap_margin_v},1
-Style: Hook,{_FONT_THEME},{hook_size},{_COL_THEME},&H000000FF,{_COL_OUTLINE},{_COL_SHADOW},0,0,0,0,100,100,1.0,0,1,4.0,2.0,5,{margin_lr},{margin_lr},0,1
+Style: Theme,{font},{theme_size},{_COL_THEME},&H000000FF,{_COL_OUTLINE},{_COL_SHADOW},{bold},0,0,0,100,100,-0.5,0,1,4.2,2.6,8,{margin_lr},{margin_lr},{theme_margin_v},1
+Style: Caption,{font},{cap_size},{_COL_CAPTION_TEXT},&H000000FF,{_COL_CAPTION_BOX},&H00000000,{bold},0,0,0,100,100,-0.5,0,3,22,0,2,{margin_lr},{margin_lr},{cap_margin_v},1
+Style: Hook,{font},{hook_size},{_COL_THEME},&H000000FF,{_COL_OUTLINE},{_COL_SHADOW},{bold},0,0,0,100,100,-1.0,0,1,5.0,3.0,5,{margin_lr},{margin_lr},0,1
+Style: Shade,{font},40,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -308,11 +406,28 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     hook = (hook_question or "").strip()
     h_sec = max(1.2, min(3.0, float(hook_sec)))
     if hook:
-        wrapped_hook = _ass_line_break(_wrap_line(hook, max_chars=wrap_hook))
+        # Вертикали нужна третья строка: кегль крупный, строки короткие.
+        wrapped_hook = _ass_line_break(
+            _wrap_line(hook, max_chars=wrap_hook, max_lines=3 if vertical else 2)
+        )
         if wrapped_hook:
+            if vertical:
+                # Кадр открытия темнее остального ролика. Shorts показывает
+                # загруженную обложку далеко не везде и берёт превью для полки
+                # из кадра видео — этот кадр должен выглядеть как обложка.
+                lines.append(
+                    f"Dialogue: 0,0:00:00.00,{_sec_to_ass_time(h_sec)},"
+                    f"Shade,,0,0,0,,{{\\fad(0,350)\\p1\\pos(0,0)"
+                    f"\\c&H000000&\\alpha&H66&}}"
+                    f"m 0 0 l {play_w} 0 l {play_w} {play_h} l 0 {play_h}"
+                )
+            # В вертикали проявление на входе запрещено: кадр 0 должен быть
+            # готовой картинкой, из него YouTube делает превью для полки.
+            # blur тоже убран — на жирном гротеске он мылит крупный кегль.
+            fade_in = 0 if vertical else 120
             lines.append(
                 f"Dialogue: 2,0:00:00.00,{_sec_to_ass_time(h_sec)},"
-                f"Hook,,0,0,0,,{{\\fad(120,350)\\blur0.6\\fscx108\\fscy108"
+                f"Hook,,0,0,0,,{{\\fad({fade_in},350)\\fscx108\\fscy108"
                 f"\\t(0,280,\\fscx100\\fscy100)}}{wrapped_hook}"
             )
     theme = (theme_label or "").strip()
@@ -330,7 +445,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             theme_start = h_sec if hook else 0.0
             lines.append(
                 f"Dialogue: 1,{_sec_to_ass_time(theme_start)},{_sec_to_ass_time(dur)},"
-                f"Theme,,0,0,0,,{{\\fad(400,0)\\blur0.4}}{wrapped_theme}"
+                f"Theme,,0,0,0,,{{\\fad(400,0)}}{wrapped_theme}"
             )
     for start, end, text in chunks:
         if end <= start or not (text or "").strip():
@@ -424,6 +539,39 @@ def split_short_windows(
     return windows
 
 
+def group_words_into_cues(
+    words: Sequence[Tuple[float, float, str]],
+    *,
+    words_per_cue: int = 5,
+) -> List[List[Tuple[float, float, str]]]:
+    """Режет поток слов на реплики по смыслу, а не ровно по N.
+
+    Слепая нарезка даёт на экране обрывки вида «сил. Забери с». Поэтому конец
+    предложения рвёт реплику всегда (короткая строка в одно слово, наоборот,
+    бьёт сильнее), запятая — когда слов уже не меньше двух.
+    """
+    max_words = max(1, int(words_per_cue))
+    min_words = 2 if max_words >= 3 else 1
+    groups: List[List[Tuple[float, float, str]]] = []
+    cur: List[Tuple[float, float, str]] = []
+    for item in words:
+        cur.append(item)
+        word = (item[2] or "").rstrip()
+        last = word[-1] if word else ""
+        if last in ".!?…" or len(cur) >= max_words or (
+            len(cur) >= min_words and last in ",;:—–"
+        ):
+            groups.append(cur)
+            cur = []
+    if cur:
+        # Одинокое слово в конце подклеиваем к предыдущей реплике.
+        if groups and len(cur) == 1:
+            groups[-1].extend(cur)
+        else:
+            groups.append(cur)
+    return groups
+
+
 def subtitle_chunks_for_window(
     prayer_text: str,
     *,
@@ -460,19 +608,60 @@ def subtitle_chunks_for_window(
         return [(0.0, max(1.0, window_end - window_start), " ".join(words[:8]))]
 
     chunks: List[Tuple[float, float, str]] = []
-    i = 0
-    while i < len(timed):
-        group = timed[i : i + max(1, words_per_cue)]
+    clip_len = window_end - window_start
+    for group in group_words_into_cues(timed, words_per_cue=words_per_cue):
         start = group[0][0] + offset_sec
         end = group[-1][1] + offset_sec
         # не уводим за границы клипа
-        clip_len = window_end - window_start
         start = max(0.0, min(clip_len - 0.05, start))
         end = max(start + 0.35, min(clip_len, end))
-        text = " ".join(g[2] for g in group)
-        chunks.append((start, end, text))
-        i += max(1, words_per_cue)
+        chunks.append((start, end, " ".join(g[2] for g in group)))
     return chunks
+
+
+def build_scrim_png(
+    dest: Path,
+    *,
+    width: int,
+    height: int,
+    top_frac: float = 0.46,
+    bottom_frac: float = 0.30,
+    top_alpha: float = 0.66,
+    bottom_alpha: float = 0.45,
+    top_hold: float = 0.70,
+    bottom_hold: float = 0.55,
+) -> bool:
+    """Статичный градиент сверху и снизу (RGBA PNG).
+
+    Нужен, чтобы заголовок читался на любом b-roll: обводка спасает на тёмном
+    фоне, но не на ярком небе или снеге. Рисуется один раз на ролик, дальше это
+    дешёвый overlay.
+
+    Форма — «полка + затухание»: под самим текстом затемнение держится на полную,
+    и только за его пределами сходит на нет. Чистый степенной градиент давал под
+    строками почти нулевую альфу. *_hold — доля полосы с полной альфой.
+    """
+    ffmpeg = _ffmpeg()
+    th = max(1, int(height * max(0.05, min(0.7, top_frac))))
+    bh = max(1, int(height * max(0.05, min(0.7, bottom_frac))))
+    t_ramp = max(1, int(th * (1.0 - max(0.0, min(0.95, top_hold)))))
+    b_ramp = max(1, int(bh * max(0.05, min(1.0, bottom_hold))))
+    b0 = height - bh
+    a_top = f"{top_alpha:.3f}*min(1\\,max(0\\,({th}-Y)/{t_ramp}))"
+    a_bot = f"{bottom_alpha:.3f}*min(1\\,max(0\\,(Y-{b0})/{b_ramp}))"
+    vf = f"format=rgba,geq=r='0':g='0':b='0':a='255*max({a_top}\\,{a_bot})'"
+    cmd = [
+        ffmpeg, "-y", "-f", "lavfi",
+        "-i", f"color=c=black:s={width}x{height}",
+        "-vf", vf,
+        "-frames:v", "1",
+        str(dest),
+    ]
+    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=120, check=False)
+    ok = proc.returncode == 0 and dest.is_file() and dest.stat().st_size > 500
+    if not ok:
+        logger.warning("scrim build failed: %s", (proc.stderr or "")[-400:])
+    return ok
 
 
 def render_horizontal(
@@ -714,16 +903,20 @@ def render_vertical_full(
     if word_timings:
         from youtube_prayer.audio_pipeline import cue_chunks_from_words
 
-        chunks = list(cue_chunks_from_words(word_timings, words_per_cue=4))
+        chunks = list(cue_chunks_from_words(word_timings, words_per_cue=_V_WORDS_PER_CUE))
     else:
         offset = _env_float("YT_PRAYER_SUBTITLE_OFFSET_SEC", -0.35)
         chunks = subtitle_chunks_full(
             prayer_text,
             duration_sec=dur,
-            words_per_cue=4,
+            words_per_cue=_V_WORDS_PER_CUE,
             offset_sec=offset,
         )
     hook_sec = _env_float("YT_PRAYER_HOOK_SEC", 2.0)
+    # В шортсах верхняя подпись и так равна thumbnail_title, а отдельного
+    # вопроса пайплайн не передаёт. Показываем ту же фразу крупно в первые
+    # секунды и уводим наверх: кадр 0 становится готовым превью для полки.
+    hook = (hook_question or "").strip() or (theme_label or "").strip()
     _write_video_ass(
         ass_path,
         play_w=width,
@@ -733,75 +926,82 @@ def render_vertical_full(
         chunks=chunks,
         vertical=True,
         kinetic=True,
-        hook_question=(hook_question or "").strip(),
+        hook_question=hook,
         hook_sec=hook_sec,
     )
     ass_esc = ass_path.resolve().as_posix().replace("\\", "/").replace(":", "\\:")
-    vf_fill = (
+
+    work_dir.mkdir(parents=True, exist_ok=True)
+    scrim = work_dir / f"{out_path.stem}_scrim.png"
+    has_scrim = False
+    if _env_flag("YT_PRAYER_SCRIM", True):
+        has_scrim = build_scrim_png(scrim, width=width, height=height)
+
+    base = (
         f"scale={width}:{height}:force_original_aspect_ratio=increase,"
-        f"crop={width}:{height},setsar=1,fps=25,format=yuv420p,"
-        f"ass='{ass_esc}'"
+        f"crop={width}:{height},setsar=1,fps=25"
     )
-    cmd = [
-        ffmpeg,
-        "-y",
-        "-i",
-        str(broll_path),
-        "-i",
-        str(audio_wav),
-        "-t",
-        f"{dur:.3f}",
-        "-map",
-        "0:v:0",
-        "-map",
-        "1:a:0",
-        "-vf",
-        vf_fill,
-        "-c:v",
-        "libx264",
-        "-preset",
-        _ENCODE_PRESET,
-        "-crf",
-        _ENCODE_CRF,
-        "-c:a",
-        "aac",
-        "-b:a",
-        "128k",
-        "-ar",
-        "48000",
-        "-ac",
-        "2",
-        "-shortest",
-        "-movflags",
-        "+faststart",
-        str(out_path),
-    ]
-    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=1200, check=False)
-    if proc.returncode != 0 or not out_path.is_file():
-        logger.warning(
-            "vertical with ass failed, retry without subs: %s",
-            (proc.stderr or "")[-400:],
-        )
-        vf_plain = (
-            f"scale={width}:{height}:force_original_aspect_ratio=increase,"
-            f"crop={width}:{height},setsar=1,fps=25,format=yuv420p"
-        )
-        cmd[cmd.index("-vf") + 1] = vf_plain
-        proc2 = subprocess.run(cmd, capture_output=True, text=True, timeout=1200, check=False)
-        if proc2.returncode != 0 or not out_path.is_file():
-            raise RuntimeError(
-                f"vertical render failed: {(proc2.stderr or '')[-600:]}"
+
+    def _cmd(*, scrimmed: bool, subs: bool) -> List[str]:
+        """Варианты от «всё включено» до самого простого — на случай сбоя фильтра."""
+        cmd = [ffmpeg, "-y", "-i", str(broll_path), "-i", str(audio_wav)]
+        if scrimmed:
+            cmd += ["-loop", "1", "-i", str(scrim)]
+            chain = (
+                f"[0:v]{base}[bg];"
+                f"[2:v]scale={width}:{height}[sc];"
+                f"[bg][sc]overlay=0:0:format=yuv420[lay];"
+                f"[lay]"
             )
-    logger.info(
-        "vertical ok %s %sx%s bytes=%s theme=%r cues=%s",
-        out_path.name,
-        width,
-        height,
-        out_path.stat().st_size,
-        (theme_label or "")[:40],
-        len(chunks),
-    )
-    return out_path
+        else:
+            chain = f"[0:v]{base}[lay];[lay]"
+        chain += f"ass='{ass_esc}'," if subs else ""
+        chain += "format=yuv420p[v]"
+        cmd += [
+            "-t", f"{dur:.3f}",
+            "-filter_complex", chain,
+            "-map", "[v]",
+            "-map", "1:a:0",
+            "-c:v", "libx264",
+            "-preset", _ENCODE_PRESET,
+            "-crf", _ENCODE_CRF,
+            "-c:a", "aac",
+            "-b:a", "128k",
+            "-ar", "48000",
+            "-ac", "2",
+            "-shortest",
+            "-movflags", "+faststart",
+            str(out_path),
+        ]
+        return cmd
+
+    attempts = []
+    if has_scrim:
+        attempts.append(("scrim+subs", _cmd(scrimmed=True, subs=True)))
+    attempts.append(("subs", _cmd(scrimmed=False, subs=True)))
+    attempts.append(("plain", _cmd(scrimmed=False, subs=False)))
+
+    last_err = ""
+    for label, cmd in attempts:
+        proc = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=1800, check=False
+        )
+        if proc.returncode == 0 and out_path.is_file():
+            logger.info(
+                "vertical ok %s %sx%s mode=%s bytes=%s theme=%r cues=%s",
+                out_path.name,
+                width,
+                height,
+                label,
+                out_path.stat().st_size,
+                (theme_label or "")[:40],
+                len(chunks),
+            )
+            return out_path
+        last_err = (proc.stderr or "")[-500:]
+        logger.warning("vertical render mode=%s failed: %s", label, last_err)
+
+    raise RuntimeError(f"vertical render failed: {last_err}")
 
 
 def render_all_shorts(
