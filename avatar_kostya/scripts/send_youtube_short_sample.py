@@ -27,7 +27,7 @@ async def _generate_one_short(work_dir: Path):
     from youtube_prayer.stock_broll import build_broll_montage
     from youtube_prayer.trends import PrayerTopic
     from youtube_shorts.compose import compose_short_prayer_for_topic
-    from youtube_shorts.metadata import generate_short_metadata
+    from youtube_shorts.metadata import generate_short_metadata, theme_overlay_label
 
     topic = PrayerTopic(
         trend="тревога и беспокойство",
@@ -83,7 +83,7 @@ async def _generate_one_short(work_dir: Path):
     )
 
     vertical = work_dir / "sample_short_9x16.mp4"
-    theme_label = format_prayer_theme_label(topic.trend, topic.brief, lang="ru")
+    theme_label = theme_overlay_label(meta, topic.trend)
     logger.info("render vertical theme=%r…", theme_label)
     await asyncio.to_thread(
         render_vertical_full,
