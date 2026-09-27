@@ -12,7 +12,8 @@
 #
 # Политика:
 #   BACKUP_DAYS=7   — дампы БД и tar-снимки кода
-#   DATA_DAYS=7     — файлы в */data/ (кроме chroma*)
+#   DATA_DAYS=7     — файлы в */data/ (кроме chroma*, prayer_bg_music,
+#                     youtube_client_secret.json / youtube_oauth_token.json)
 #   LOG_ARC_DAYS=30 — архивы логов (log/arc и ротированные *.log.*)
 #
 # Owner: свои файлы удаляет RUN_USER; дампы postgres — через sudo -u postgres
@@ -115,21 +116,24 @@ prune_files_mtime() {
 prune_data_tree() {
   local dir="$1" label="$2"
   [[ -d "$dir" ]] || return 0
+  # Не трогаем секреты/токены YouTube OAuth и фоновую музыку/chroma.
+  # Иначе при DATA_DAYS=7 deploy стирает youtube_client_secret.json и
+  # youtube_oauth_token.json (mtime не обновляется, если токен «молчит»).
+  local -a keep=(
+    ! -path '*/chroma_data/*' ! -path '*/chroma/*' ! -path '*/.chromadb/*'
+    ! -path '*/prayer_bg_music/*'
+    ! -name 'youtube_client_secret.json'
+    ! -name 'youtube_oauth_token.json'
+    ! -name 'youtube_oauth_pending.json'
+    ! -name 'client_secret*.json'
+  )
   local cnt sz
-  cnt=$(find "$dir" -type f \
-    ! -path '*/chroma_data/*' ! -path '*/chroma/*' ! -path '*/.chromadb/*' \
-    ! -path '*/prayer_bg_music/*' \
-    -mtime +"$DATA_DAYS" 2>/dev/null | wc -l)
-  sz=$(find "$dir" -type f \
-    ! -path '*/chroma_data/*' ! -path '*/chroma/*' ! -path '*/.chromadb/*' \
-    ! -path '*/prayer_bg_music/*' \
-    -mtime +"$DATA_DAYS" -printf '%s\n' 2>/dev/null \
+  cnt=$(find "$dir" -type f "${keep[@]}" -mtime +"$DATA_DAYS" 2>/dev/null | wc -l)
+  sz=$(find "$dir" -type f "${keep[@]}" -mtime +"$DATA_DAYS" -printf '%s\n' 2>/dev/null \
     | awk '{s+=$1} END{printf "%.1fM", (s?s:0)/1024/1024}')
   log "  $label data: >${DATA_DAYS}d → $cnt ($sz) in $dir"
   if (( APPLY )) && (( cnt > 0 )); then
-    find "$dir" -type f \
-      ! -path '*/chroma_data/*' ! -path '*/chroma/*' ! -path '*/.chromadb/*' \
-      ! -path '*/prayer_bg_music/*' \
+    find "$dir" -type f "${keep[@]}" \
       -user "${RUN_USER}" \
       -mtime +"$DATA_DAYS" -delete 2>/dev/null || true
     find "$dir" -type d -empty \
