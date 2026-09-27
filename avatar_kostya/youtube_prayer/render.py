@@ -58,8 +58,9 @@ _V_TITLE_MARGIN_V = 280
 _V_CAPTION_SIZE = 96
 _V_CAPTION_MARGIN_V = 820
 _V_CAPTION_WRAP = 15
-_V_HOOK_SIZE = 150
-_V_HOOK_WRAP = 13
+# При кегле 132 в строку помещается ~11 символов (полезная ширина ~780 px).
+_V_HOOK_SIZE = 132
+_V_HOOK_WRAP = 11
 # 4 слова при кегле 96 не помещаются в строку (~780 px полезной ширины)
 # и оставляют висячее слово отдельной плашкой.
 _V_WORDS_PER_CUE = 3
@@ -405,7 +406,10 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     hook = (hook_question or "").strip()
     h_sec = max(1.2, min(3.0, float(hook_sec)))
     if hook:
-        wrapped_hook = _ass_line_break(_wrap_line(hook, max_chars=wrap_hook))
+        # Вертикали нужна третья строка: кегль крупный, строки короткие.
+        wrapped_hook = _ass_line_break(
+            _wrap_line(hook, max_chars=wrap_hook, max_lines=3 if vertical else 2)
+        )
         if wrapped_hook:
             if vertical:
                 # Кадр открытия темнее остального ролика. Shorts показывает
@@ -909,6 +913,10 @@ def render_vertical_full(
             offset_sec=offset,
         )
     hook_sec = _env_float("YT_PRAYER_HOOK_SEC", 2.0)
+    # В шортсах верхняя подпись и так равна thumbnail_title, а отдельного
+    # вопроса пайплайн не передаёт. Показываем ту же фразу крупно в первые
+    # секунды и уводим наверх: кадр 0 становится готовым превью для полки.
+    hook = (hook_question or "").strip() or (theme_label or "").strip()
     _write_video_ass(
         ass_path,
         play_w=width,
@@ -918,7 +926,7 @@ def render_vertical_full(
         chunks=chunks,
         vertical=True,
         kinetic=True,
-        hook_question=(hook_question or "").strip(),
+        hook_question=hook,
         hook_sec=hook_sec,
     )
     ass_esc = ass_path.resolve().as_posix().replace("\\", "/").replace(":", "\\:")
