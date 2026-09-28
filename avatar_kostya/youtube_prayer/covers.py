@@ -22,11 +22,15 @@ _GEN_ATTEMPTS = 2
 
 # Вертикальная обложка: заголовок вверху, низ пустой — там YouTube рисует
 # счётчик просмотров и служебные плашки.
-_V_TITLE_SIZE = 142
-_V_TITLE_MAX_CHARS = 13
-_V_TITLE_MAX_LINES = 3
+_V_TITLE_SIZE = 185
+_V_TITLE_MAX_CHARS = 11
+_V_TITLE_MAX_LINES = 4
 _V_TITLE_TOP_FRAC = 0.135
-_V_TITLE_LEFT = 88
+_V_TITLE_LEFT = 68
+# Средняя ширина знака у Montserrat ExtraBold — замер по рендеру: 79 px при
+# кегле 185. Нужна, чтобы поймать строку, которая вылезет за край кадра.
+_V_CHAR_W_RATIO = 0.43
+_V_TITLE_MIN_SIZE = 120
 _V_ACCENT_W = 230
 _V_ACCENT_H = 11
 _V_ACCENT_GAP = 62
@@ -269,6 +273,15 @@ def _write_cover_ass(
         if ln.strip()
     ] or [title]
 
+    # Длинное слово («благодарность», «восстановление») переносить некуда, и оно
+    # уезжает за правый край. Тогда уменьшаем кегль ровно настолько, чтобы влезло.
+    # 0.94 — запас: оценка ширины приблизительная, впритык к краю ставить нельзя.
+    usable = (width - 2 * _V_TITLE_LEFT) * 0.94
+    widest = max((len(ln) for ln in lines), default=1)
+    est = widest * fontsize * _V_CHAR_W_RATIO
+    if est > usable:
+        fontsize = max(_V_TITLE_MIN_SIZE, int(fontsize * usable / est))
+
     # Последняя строка — золотом: классический приём «крючок + добивка».
     parts = [_ass_escape(ln) for ln in lines]
     if len(parts) >= 2:
@@ -344,11 +357,11 @@ def _burn_title_vertical(
         scrim,
         width=width,
         height=height,
-        top_frac=0.62,
+        top_frac=0.68,
         bottom_frac=0.16,
         top_alpha=0.82,
         bottom_alpha=0.45,
-        top_hold=0.74,
+        top_hold=0.76,
     )
 
     def _run(with_scrim: bool) -> bool:
