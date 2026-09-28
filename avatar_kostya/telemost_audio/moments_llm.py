@@ -14,8 +14,21 @@ from telemost_mail.timestamped_speech import SpeechSegment
 
 logger = logging.getLogger(__name__)
 
+
+class MomentsUnavailableError(RuntimeError):
+    """LLM не смог выбрать моменты.
+
+    Раньше на этом месте работал запасной механический отбор: он сортировал
+    реплики по длине текста и брал самые длинные. Смысла он не понимал, и
+    результат выглядел как случайные обрывки — но внешне неотличимо от
+    нормальной работы, поэтому поломку не было видно. Лучше остановиться и
+    сказать об этом прямо.
+    """
+
 _MIN_CLIP_SEC = 45.0
 _MAX_CLIP_SEC = 120.0  # 2 мин
+# Сколько знаков расшифровки отдаём модели за одно окно.
+_WINDOW_CHARS = 18_000
 
 
 @dataclass(frozen=True)
@@ -37,38 +50,35 @@ class AudioClipMoment:
         return max(0.0, self.end_sec - self.start_sec)
 
 
-_SYSTEM = """Ты редактор аудио-подкастов. Из одного эфира нужно собрать {count} НЕЗАВИСИМЫХ отрывков — каждый про свою тему.
+_SYSTEM = """Ты редактор аудио-подкастов. Тебе дают ОДНО ОКНО расшифровки эфира — не весь эфир. Твоя работа: вытащить из этого окна как можно больше сильных самостоятельных мыслей Константина.
 
-В расшифровке — ТОЛЬКО реплики Константина (Кости). Чужие реплики уже отфильтрованы: не выдумывай диалоги.
+Окон несколько, финальную пятёрку соберут из всех кандидатов. Поэтому здесь задача не «выбрать лучшее», а «ничего не упустить»: дай до {count} кандидатов. Чем больше разных мыслей найдёшь, тем лучше.
 
-ГЛАВНАЯ ОШИБКА, КОТОРОЙ НЕЛЬЗЯ ДОПУСКАТЬ.
-Взять одну сильную мысль и нарезать вокруг неё несколько кусков. Отрывки должны быть про РАЗНОЕ: человек, послушав все {count}, должен узнать {count} разных вещей, а не одну с разных сторон.
+В расшифровке — ТОЛЬКО реплики Константина (Кости). Чужие реплики отфильтрованы: не выдумывай диалоги.
 
-ШАГ 1 — КАРТА ЭФИРА.
-Пройди речь от начала до конца и выпиши {count} РАЗНЫХ тем, которые Константин действительно раскрывает. Моменты пока не ищи — сначала темы.
-Требования к набору:
-- каждая тема самостоятельна: её слушают, не зная остальных;
-- темы берутся из разных частей эфира — начала, середины и конца;
-- если по-настоящему сильных тем меньше {count} — верни меньше. Растягивать одну на несколько запрещено.
+ЧТО СЧИТАЕТСЯ КАНДИДАТОМ.
+Законченная мысль: начало → развитие → смысловой финал. Её можно слушать отдельно, не зная остального эфира, и она цепляет — хочется дослушать и открыть полный эфир.
 
-ШАГ 2 — ЛУЧШИЙ МОМЕНТ ПОД КАЖДУЮ ТЕМУ.
-Для каждой темы найди один отрывок, где она раскрыта ярче всего:
-- законченная мысль: начало → развитие → смысловой финал;
-- хочется дослушать и открыть полный эфир;
-- НЕ приветствие, НЕ анонс, НЕ обрывки.
-Длительность любая в диапазоне {min_sec}–{max_sec} секунд — столько, сколько нужно мысли.
+ЧТО КАНДИДАТОМ НЕ ЯВЛЯЕТСЯ (не бери никогда):
+- приветствие, знакомство, «как слышно», настройка на эфир;
+- анонсы, оргвопросы, техническая часть;
+- обрывки без начала или без финала.
+
+РАЗНЫЕ МЫСЛИ, А НЕ ОДНА С РАЗНЫХ СТОРОН.
+Два кандидата, которые описываются одной фразой, — это один кандидат. Если мысль длинная, возьми её целиком одним куском, а не режь на части.
+
+ТАЙМКОДЫ.
+Длительность любая в диапазоне {min_sec}–{max_sec} секунд — сколько нужно мысли.
 - Не режь мысль посередине ради «короче», не добивай пустотой до лимита.
 - Убери края без мысли: оговорки, повторы, уходы в сторону.
 - start — где мысль реально началась; end — после смыслового завершения.
 
-САМОПРОВЕРКА ПЕРЕД ОТВЕТОМ.
-Прочитай свои темы подряд. Если две из них можно описать одной фразой — это одна тема: замени одну на другую из эфира. Если отрывки стоят вплотную по времени — почти наверняка ты нарезал одну мысль, ищи заново.
-
-Для КАЖДОГО отрывка оцени score 0..100:
+Для КАЖДОГО кандидата оцени score 0..100:
 - насколько хочется переслать этот кусочек,
 - насколько мысль завершённая и понятная,
 - насколько она самостоятельна без остального эфира.
 
+theme — о чём мысль, 2–4 слова. По ней потом отсекают дубли, поэтому формулируй так, чтобы разные мысли получили разные темы.
 hook — ОДНО короткое яркое предложение для подписи в Telegram (до 120 символов). Без кликбейта. Тон: честный разговор с Богом.
 
 Верни ТОЛЬКО JSON:
@@ -77,7 +87,7 @@ hook — ОДНО короткое яркое предложение для по
     {{
       "start_sec": 412.0,
       "end_sec": 518.0,
-      "theme": "чем эта тема отличается от остальных, 2-4 слова",
+      "theme": "о чём мысль, 2-4 слова",
       "title": "суть мысли",
       "hook": "Одно предложение — почему стоит послушать.",
       "reason": "Усиление мысли для caption в Telegram (1–2 предложения). Без спойлеров.",
@@ -139,15 +149,33 @@ def _segments_for_prompt(
     *,
     skip_first: int = 0,
 ) -> str:
-    from telemost_mail.timestamped_speech import format_expert_blocks_for_prompt
+    """Окно расшифровки с таймкодами.
 
-    # limit раньше был по репликам; для блоков берём сопоставимый объём
-    skip_blocks = max(0, skip_first // 4)
-    return format_expert_blocks_for_prompt(
-        segments,
-        limit_blocks=min(90, max(40, limit // 4)),
-        skip_first_blocks=skip_blocks,
-    )
+    Раньше здесь вызывался format_expert_blocks_for_prompt: он склеивает
+    соседние реплики, если пауза между ними меньше 12 секунд, а потом режет
+    каждый блок до 520 знаков. В связной речи весь эфир склеивался в ОДИН
+    блок — и модель получала 530 знаков от 69-минутного эфира, а все окна
+    после первого приходили пустыми. Отсюда и брались «кривые» нарезки:
+    выбирать было не из чего, работал запасной механический отбор.
+
+    Теперь окно режется по самим репликам, с таймкодом у каждой.
+    """
+    if not segments:
+        return ""
+    window = segments[skip_first : skip_first + max(1, int(limit))]
+    lines: List[str] = []
+    budget = _WINDOW_CHARS
+    for seg in window:
+        text = (seg.text or "").strip()
+        if not text:
+            continue
+        mm, ss = divmod(int(seg.start_sec), 60)
+        line = f"[{mm:02d}:{ss:02d}] {text}"
+        budget -= len(line)
+        if budget <= 0:
+            break
+        lines.append(line)
+    return "\n".join(lines)
 
 
 def _clamp_moment(
@@ -225,54 +253,13 @@ def _parse_clips(
     return out
 
 
-def _fallback_moments(
-    segments: Sequence[SpeechSegment],
-    *,
-    count: int,
-    min_sec: float,
-    max_sec: float,
-    regenerate: bool = False,
-) -> List[AudioClipMoment]:
-    if not segments:
-        return []
-    scored = sorted(segments, key=lambda s: len(s.text), reverse=True)
-    if regenerate:
-        head = scored[: max(count * 4, 12)]
-        random.shuffle(head)
-        scored = head + [s for s in scored if s not in head]
-    out: List[AudioClipMoment] = []
-    used: List[float] = []
-    for seg in scored:
-        if len(out) >= count:
-            break
-        if any(abs(seg.start_sec - u) < max_sec * 0.45 for u in used):
-            continue
-        end = min(seg.end_sec + max_sec * 0.5, seg.start_sec + max_sec)
-        if end - seg.start_sec < min_sec:
-            end = seg.start_sec + min(max_sec, min_sec)
-        hook = seg.text.split(".")[0].strip()[:120]
-        if hook and not hook.endswith((".", "!", "?", "…")):
-            hook += "."
-        out.append(
-            AudioClipMoment(
-                start_sec=seg.start_sec,
-                end_sec=end,
-                title=seg.text[:80],
-                hook=hook or seg.text[:120],
-                reason="fallback: ясная мысль — хочется дослушать и поделиться",
-                score=float(len(seg.text) or 0),
-            )
-        )
-        used.append(seg.start_sec)
-    return out
-
-
 def _rerank_candidates(
     candidates: List[AudioClipMoment],
     *,
     final_count: int,
     min_overlap_ratio: float = 0.35,
     min_gap_sec: float = 120.0,
+    theme_threshold: float = 0.45,
 ) -> List[AudioClipMoment]:
     """Топ по score: разные темы, без пересечений и не вплотную друг к другу.
 
@@ -312,12 +299,78 @@ def _rerank_candidates(
             if max(
                 (len(toks & pt) / max(1, len(toks | pt)) if pt else 0.0)
                 for pt in picked_tokens
-            ) >= 0.45:
+            ) >= theme_threshold:
                 continue
         picked.append(c)
         picked_tokens.append(toks)
 
     return picked[:final_count]
+
+
+_EDITOR_SYSTEM = """Ты главный редактор. Тебе дают список кандидатов — фрагментов одного эфира, которые отобрали помощники. Каждый смотрел только свой кусок расшифровки и не видел остальных, поэтому в списке много вариаций одной и той же мысли.
+
+Твоя задача: выбрать ровно {count} фрагментов для публикации по отдельности, в разные дни.
+
+ГЛАВНЫЙ КРИТЕРИЙ — РАЗНЫЕ ТЕМЫ.
+Человек, послушавший все {count}, должен узнать {count} разных вещей. Два фрагмента про одно и то же — это один фрагмент, даже если оба сильные и сформулированы по-разному. Из группы похожих бери ОДИН, самый яркий, остальные выбрасывай.
+
+ВТОРОЙ КРИТЕРИЙ — сила: законченная мысль, хочется переслать.
+
+Разброс по времени эфира — хороший признак разных тем, но не цель сам по себе.
+
+ЕСЛИ РАЗНЫХ ТЕМ МЕНЬШЕ, ЧЕМ {count}.
+Значит эфир и правда про одно. Тогда верни меньше — столько, сколько реально разных тем набралось. Добивать список вариациями одной мысли нельзя.
+
+Верни ТОЛЬКО JSON, номера из списка в порядке публикации:
+{{"picked": [3, 17, 42], "why": "одной фразой, по какому признаку разводил темы"}}"""
+
+
+async def _pick_diverse_with_llm(
+    candidates: List[AudioClipMoment],
+    *,
+    count: int,
+    model: str,
+    api_key: str,
+) -> List[AudioClipMoment]:
+    """Финальный отбор: модель видит ВСЕХ кандидатов разом.
+
+    Окна опрашиваются независимо, и если тема доминирует в эфире, она
+    выигрывает в каждом окне. Отбор по score тогда даёт пять вариаций одной
+    мысли — ровно то, на что жаловались. Разнести их может только тот, кто
+    видит весь список сразу; по совпадению слов это не ловится, потому что
+    формулировки у вариаций разные.
+    """
+    if len(candidates) <= count:
+        return candidates
+
+    from openai import AsyncOpenAI
+
+    lines = []
+    for i, c in enumerate(candidates):
+        mm, ss = divmod(int(c.start_sec), 60)
+        lines.append(
+            f"{i}. [{mm:02d}:{ss:02d}] тема: {c.theme or '—'} | {c.title[:90]}"
+        )
+    client = AsyncOpenAI(api_key=api_key)
+    resp = await client.chat.completions.create(
+        model=model,
+        temperature=0.3,
+        messages=[
+            {"role": "system", "content": _EDITOR_SYSTEM.format(count=count)},
+            {"role": "user", "content": "Кандидаты:\n" + "\n".join(lines)},
+        ],
+        max_tokens=800,
+    )
+    raw = (resp.choices[0].message.content or "").strip()
+    m = re.search(r"\{[\s\S]*\}", raw)
+    if not m:
+        raise ValueError("редактор вернул не JSON")
+    data = json.loads(m.group(0))
+    idx = [int(i) for i in (data.get("picked") or []) if isinstance(i, (int, float))]
+    picked = [candidates[i] for i in idx if 0 <= i < len(candidates)]
+    if data.get("why"):
+        logger.info("editor: %s", str(data["why"])[:200])
+    return picked[:count]
 
 
 def _is_pokayanie(recording_kind: str) -> bool:
@@ -426,20 +479,37 @@ async def pick_audio_moments(
                     len(all_candidates),
                 )
             if all_candidates:
-                top = _rerank_candidates(all_candidates, final_count=count)
+                # Сначала механически убираем пересечения по времени — в список
+                # для редактора не должны попадать два куска одного отрезка.
+                pool = _rerank_candidates(
+                    all_candidates,
+                    final_count=max(count * 6, 30),
+                    min_gap_sec=0.0,
+                    theme_threshold=0.95,
+                )
+                try:
+                    top = await _pick_diverse_with_llm(
+                        pool, count=count, model=model, api_key=key
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "editor не сработал (%s), берём топ по score", e
+                    )
+                    top = pool[:count]
                 logger.info(
-                    "pick_audio_moments pool=%s → top=%s",
+                    "pick_audio_moments pool=%s → отобрано=%s",
                     len(all_candidates),
                     len(top),
                 )
-                return top
+                if top:
+                    return top
+            raise MomentsUnavailableError(
+                "LLM вернула пустой список кандидатов по всем окнам расшифровки"
+            )
+        except MomentsUnavailableError:
+            raise
         except Exception as e:
             logger.warning("pick_audio_moments LLM: %s", e)
+            raise MomentsUnavailableError(f"обращение к LLM не удалось: {e}") from e
 
-    return _fallback_moments(
-        segments,
-        count=count,
-        min_sec=min_sec,
-        max_sec=max_sec,
-        regenerate=regenerate,
-    )[:count]
+    raise MomentsUnavailableError("OPENAI_API_KEY не задан — нарезка невозможна")
