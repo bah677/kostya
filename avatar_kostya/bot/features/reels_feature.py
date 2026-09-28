@@ -28,7 +28,8 @@ from telemost_audio.reels_director import (
 logger = logging.getLogger(__name__)
 
 CB_PREFIX = "reels:gen:"
-_PAGE_SIZE = 10
+# Последние N эфиров — больше в списке кнопок не нужно.
+_RECENT_LIMIT = 20
 
 
 def _short_date(row: dict) -> str:
@@ -84,7 +85,7 @@ class ReelsFeature(BaseFeature):
             return
         if not await is_admin_or_super(self.user_storage, message.from_user.id):
             return
-        rows = await self.user_storage.list_telemost_for_reels(limit=_PAGE_SIZE * 3)
+        rows = await self.user_storage.list_telemost_for_reels(limit=_RECENT_LIMIT)
         if not rows:
             await message.answer("Нет архивных эфиров с расшифровкой.")
             return
@@ -209,7 +210,7 @@ def _build_list(rows: list[dict]) -> tuple[str, InlineKeyboardMarkup]:
         "Нажми эфир → появятся текстовые сценарии Reels.\n",
     ]
     buttons: list[list[InlineKeyboardButton]] = []
-    shown = rows[:_PAGE_SIZE * 3]
+    shown = rows[:_RECENT_LIMIT]
     for row in shown:
         date = _short_date(row)
         title = _row_title(row)
