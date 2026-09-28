@@ -183,21 +183,23 @@ def build_payload(
 
 
 def _club_dsn() -> Optional[Dict[str, Any]]:
-    """Реквизиты клубной базы: свой DB_NAME, но хост и пользователь наши.
+    """Реквизиты боевой базы клуба из блока CLUB_DB_* в .env.
 
-    Все проекты экосистемы живут на одном Postgres, поэтому отдельный
-    пользователь не нужен — нужен только SELECT на две таблицы клуба.
+    Там уже заведён отдельный club_db_user со своими правами — своему
+    avatar_db_user ничего выдавать не нужно. Имя базы именно club_db:
+    club_db_dev это тестовая, данных в ней в семь раз меньше.
     """
-    from config import config
-
-    name = (os.getenv("CLUB_DB_NAME") or "club_db_dev").strip()
-    if not name:
+    host = (os.getenv("CLUB_DB_HOST") or "").strip()
+    name = (os.getenv("CLUB_DB_NAME") or "").strip()
+    user = (os.getenv("CLUB_DB_USER") or "").strip()
+    password = os.getenv("CLUB_DB_PASSWORD") or ""
+    if not (host and name and user):
         return None
     return {
-        "host": getattr(config, "DB_HOST", "localhost"),
-        "port": int(getattr(config, "DB_PORT", 5432) or 5432),
-        "user": getattr(config, "DB_USER", ""),
-        "password": getattr(config, "DB_PASSWORD", ""),
+        "host": host,
+        "port": int(os.getenv("CLUB_DB_PORT") or 5432),
+        "user": user,
+        "password": password,
         "database": name,
     }
 
@@ -211,7 +213,7 @@ async def collect_bot_arrivals(*, day: str, days_back: int = 7) -> Dict[str, Any
     """
     dsn = _club_dsn()
     if not dsn or not dsn.get("user"):
-        return {"статус": "нет реквизитов клубной базы"}
+        return {"статус": "не задан блок CLUB_DB_* в .env"}
     try:
         import asyncpg
     except ImportError:
@@ -249,7 +251,7 @@ async def collect_bot_arrivals(*, day: str, days_back: int = 7) -> Dict[str, Any
             yday,
         )
     except Exception as e:
-        return {"статус": f"запрос не прошёл (нужен GRANT SELECT): {type(e).__name__}"}
+        return {"статус": f"запрос не прошёл: {type(e).__name__}: {str(e)[:120]}"}
     finally:
         await conn.close()
 
