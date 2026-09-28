@@ -28,6 +28,27 @@ from telemost_audio.recording_resolver import wait_and_download_audio
 
 logger = logging.getLogger(__name__)
 
+
+def _transcript_spread(transcript: str, budget: int = 16_000) -> str:
+    """Текст эфира для копирайтера: начало, середина и конец.
+
+    Раньше сюда уходил transcript[:12000] — для 48-тысячного эфира это
+    первая четверть. Описание всей записи составлялось по её началу, и
+    ничего из второй половины в него попасть не могло.
+    """
+    text = (transcript or "").strip()
+    if len(text) <= budget:
+        return text
+    head = int(budget * 0.35)
+    mid = int(budget * 0.30)
+    tail = budget - head - mid
+    center = len(text) // 2
+    return (
+        f"{text[:head].rstrip()}\n\n[…середина записи…]\n\n"
+        f"{text[center - mid // 2 : center + mid // 2].strip()}"
+        f"\n\n[…дальше…]\n\n{text[-tail:].lstrip()}"
+    )
+
 _active_full: set[str] = set()
 
 
@@ -246,7 +267,7 @@ async def _run_full_voice_pipeline(
             title_plain, desc_plain, caption = await build_full_voice_caption_parts(
                 meeting_title=str(title),
                 summary=summary,
-                transcript_excerpt=transcript[:12000],
+                transcript_excerpt=_transcript_spread(transcript),
                 recording_kind=recording_kind,
                 philosophy_hint=philosophy,
             )
@@ -289,7 +310,7 @@ async def _run_full_voice_pipeline(
                         "meeting_title": str(title),
                         "recording_kind": recording_kind,
                         "kind_label": kind_label,
-                        "transcript_excerpt": transcript[:8000],
+                        "transcript_excerpt": _transcript_spread(transcript, 8000),
                         "summary": summary[:1500],
                     },
                 )
