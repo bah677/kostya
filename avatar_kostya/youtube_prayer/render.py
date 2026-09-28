@@ -46,6 +46,9 @@ _COL_SHADOW = "&H6E000000"
 # При BorderStyle=3 libass рисует плашку цветом OutlineColour (не BackColour),
 # а Outline задаёт отступ внутри неё.
 _COL_CAPTION_BOX = "&H33000000"   # почти непрозрачный чёрный
+# Отступ внутри плашки. Межстрочный шаг ≈1.31 кегля, поэтому плашка
+# (кегль + 2×отступ) обязана быть ниже него, иначе строки наезжают.
+_V_CAPTION_BOX_PAD = 12
 _COL_CAPTION_TEXT = "&H00FFFFFF"  # чистый белый — максимальный контраст
 
 # Замеры по реальному плееру Shorts. На высоком экране (20:9) YouTube
@@ -55,9 +58,9 @@ _COL_CAPTION_TEXT = "&H00FFFFFF"  # чистый белый — максимал
 _V_MARGIN_LR = 150
 _V_TITLE_SIZE = 124
 _V_TITLE_MARGIN_V = 280
-_V_CAPTION_SIZE = 96
+_V_CAPTION_SIZE = 88
 _V_CAPTION_MARGIN_V = 820
-_V_CAPTION_WRAP = 15
+_V_CAPTION_WRAP = 18
 # При кегле 132 в строку помещается ~11 символов (полезная ширина ~780 px).
 _V_HOOK_SIZE = 132
 _V_HOOK_WRAP = 11
@@ -380,6 +383,11 @@ def _write_video_ass(
         cap_size, cap_margin_v, wrap_chars = 58, 72, 36
         hook_size, wrap_hook = 78, 28
         margin_lr = 72
+    cap_pad = _env_int("YT_PRAYER_CAPTION_BOX_PAD", _V_CAPTION_BOX_PAD)
+    # Резкое появление плашки читается как вспышка. 60 мс — это полтора кадра,
+    # то есть практически мгновенно; 150 мс уже мягко и всё ещё быстро.
+    cap_fade_in = _env_int("YT_PRAYER_CAPTION_FADE_IN_MS", 150)
+    cap_fade_out = _env_int("YT_PRAYER_CAPTION_FADE_OUT_MS", 120)
     font = display_font()
     # На ExtraBold/Black ASS-флаг Bold даёт синтетическое утолщение поверх.
     bold = 0 if font_is_heavy(font) else -1
@@ -394,7 +402,7 @@ ScaledBorderAndShadow: yes
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
 Style: Theme,{font},{theme_size},{_COL_THEME},&H000000FF,{_COL_OUTLINE},{_COL_SHADOW},{bold},0,0,0,100,100,-0.5,0,1,4.2,2.6,8,{margin_lr},{margin_lr},{theme_margin_v},1
-Style: Caption,{font},{cap_size},{_COL_CAPTION_TEXT},&H000000FF,{_COL_CAPTION_BOX},&H00000000,{bold},0,0,0,100,100,-0.5,0,3,22,0,2,{margin_lr},{margin_lr},{cap_margin_v},1
+Style: Caption,{font},{cap_size},{_COL_CAPTION_TEXT},&H000000FF,{_COL_CAPTION_BOX},&H00000000,{bold},0,0,0,100,100,-0.5,0,3,{cap_pad},0,2,{margin_lr},{margin_lr},{cap_margin_v},1
 Style: Hook,{font},{hook_size},{_COL_THEME},&H000000FF,{_COL_OUTLINE},{_COL_SHADOW},{bold},0,0,0,100,100,-1.0,0,1,5.0,3.0,5,{margin_lr},{margin_lr},0,1
 Style: Shade,{font},40,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1
 
@@ -464,7 +472,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             continue
         lines.append(
             f"Dialogue: 0,{_sec_to_ass_time(start)},{_sec_to_ass_time(end)},"
-            f"Caption,,0,0,0,,{{\\fad(60,90)}}{body}"
+            f"Caption,,0,0,0,,{{\\fad({cap_fade_in},{cap_fade_out})}}{body}"
         )
     path.write_text("\n".join(lines), encoding="utf-8")
 

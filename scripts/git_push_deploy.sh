@@ -8,7 +8,17 @@ set -euo pipefail
 
 KOSTYA_ROOT="${KOSTYA_ROOT:-/home/appuser/dev/kostya}"
 GIT_REMOTE_URL="${GIT_REMOTE_URL:-git@github.com:bah677/kostya.git}"
-GIT_BRANCH="${GIT_BRANCH:-main}"
+# Ветка по умолчанию — та, что реально выкачена в рабочем каталоге.
+# Раньше здесь было жёстко "main". Если чекаут стоит на другой ветке,
+# "git push origin main" толкает ЛОКАЛЬНУЮ ветку main (а она обычно
+# отстала), свежие коммиты на GitHub не уезжают, и скрипт при этом
+# рапортует об успехе — «Everything up-to-date». Именно так с конца
+# июля ничего и не попадало в репозиторий.
+_detected_branch="$(git -C "${KOSTYA_ROOT:-/home/appuser/dev/kostya}" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+if [[ -z "${_detected_branch}" || "${_detected_branch}" == "HEAD" ]]; then
+  _detected_branch="main"  # detached HEAD — деваться некуда
+fi
+GIT_BRANCH="${GIT_BRANCH:-${_detected_branch}}"
 GIT_AUTHOR_NAME="${GIT_AUTHOR_NAME:-bah677}"
 GIT_AUTHOR_EMAIL="${GIT_AUTHOR_EMAIL:-bah677@users.noreply.github.com}"
 GIT_COMMITTER_NAME="${GIT_COMMITTER_NAME:-$GIT_AUTHOR_NAME}"
@@ -49,8 +59,16 @@ else
   echo "==> [git] Коммит: ${msg}"
 fi
 
+# Страховка: пушим ровно то, что выкачено. Если кто-то передал GIT_BRANCH
+# руками и промахнулся, лучше остановиться, чем молча залить не тот код.
+current="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+if [[ "${current}" != "HEAD" && "${current}" != "${GIT_BRANCH}" ]]; then
+  die "выкачена ветка ${current}, а пушить просят ${GIT_BRANCH} — уточните GIT_BRANCH"
+fi
+
 echo "==> [git] fetch + rebase origin/${GIT_BRANCH}"
-git fetch origin "${GIT_BRANCH}"
+# Ветки может ещё не быть на remote — это не ошибка, push её создаст.
+git fetch origin "${GIT_BRANCH}" 2>/dev/null || true
 if ! git rev-parse --verify "origin/${GIT_BRANCH}" >/dev/null 2>&1; then
   echo "==> [git] remote-ветка origin/${GIT_BRANCH} пока не существует — push создаст её"
 elif ! git merge-base --is-ancestor "origin/${GIT_BRANCH}" HEAD 2>/dev/null; then

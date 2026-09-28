@@ -356,6 +356,45 @@ def _lavfi_scene(dest: Path, *, seconds: float, width: int, height: int, color: 
     return proc.returncode == 0 and dest.is_file()
 
 
+async def _fetch_capped(
+    client: "httpx.AsyncClient",
+    url: str,
+    dest: Path,
+    *,
+    max_bytes: int,
+) -> int:
+    """Качает файл потоком и бросает его, если он вылезает за лимит.
+
+    Pexels не отдаёт размер в поиске, а под одним и тем же width=1920 попадаются
+    и 6 МБ, и 195 МБ. Заранее это не узнать, поэтому режем по ходу.
+    Возвращает размер или 0, если качать не стоило.
+    """
+    total = 0
+    too_big = False
+    try:
+        async with client.stream("GET", url) as r:
+            if r.status_code >= 400:
+                return 0
+            cl = r.headers.get("content-length")
+            if cl and cl.isdigit() and int(cl) > max_bytes:
+                return 0  # даже не начинаем
+            with dest.open("wb") as fh:
+                async for chunk in r.aiter_bytes(65536):
+                    total += len(chunk)
+                    if total > max_bytes:
+                        too_big = True
+                        break
+                    fh.write(chunk)
+    except Exception as e:
+        logger.warning("Pexels download failed: %s", e)
+        dest.unlink(missing_ok=True)
+        return 0
+    if too_big or total < 50_000:
+        dest.unlink(missing_ok=True)
+        return 0
+    return total
+
+
 async def _download_pexels_many(
     query: str,
     dest_dir: Path,
@@ -368,6 +407,7 @@ async def _download_pexels_many(
     dest_dir.mkdir(parents=True, exist_ok=True)
     timeout = httpx.Timeout(90.0, connect=15.0)
     headers = {"Authorization": key}
+    max_bytes = _env_int("YT_PRAYER_PEXELS_MAX_MB", 60) * 1024 * 1024
     queries = [
         query or "calm nature",
         f"{query} sky" if query else "soft clouds sky",
@@ -384,52 +424,92 @@ async def _download_pexels_many(
     ]
     out: List[Path] = []
     seen_ids: set[int] = set()
+    cache: dict[str, list] = {}
+    # Без потолка на запрос первый же поиск отдаёт все 12 клипов, и пул
+    # получается из одной сцены. Добираем вторым проходом, если не хватило.
+    per_query = max(1, math.ceil(count / 4))
+
+    async def _search(client, q: str) -> list:
+        if q in cache:
+            return cache[q]
+        try:
+            r = await client.get(
+                _PEXELS_SEARCH,
+                params={
+                    "query": q,
+                    "per_page": 15,
+                    "orientation": "landscape",
+                    "size": "medium",
+                },
+            )
+            if r.status_code >= 400:
+                logger.warning("Pexels search HTTP %s q=%r", r.status_code, q)
+                cache[q] = []
+                return []
+            videos = list(r.json().get("videos") or [])
+            random.shuffle(videos)
+        except Exception as e:
+            logger.warning("Pexels search failed q=%r: %s", q, e)
+            videos = []
+        cache[q] = videos
+        return videos
+
     try:
         async with httpx.AsyncClient(timeout=timeout, headers=headers) as client:
-            for q in queries:
+            for cap in (per_query, count):
                 if len(out) >= count:
                     break
-                r = await client.get(
-                    _PEXELS_SEARCH,
-                    params={
-                        "query": q,
-                        "per_page": 15,
-                        "orientation": "landscape",
-                        "size": "medium",
-                    },
-                )
-                if r.status_code >= 400:
-                    logger.warning("Pexels search HTTP %s q=%r", r.status_code, q)
-                    continue
-                videos = list(r.json().get("videos") or [])
-                random.shuffle(videos)
-                for vid in videos:
+                for q in queries:
                     if len(out) >= count:
                         break
-                    vid_id = int(vid.get("id") or 0)
-                    if vid_id and vid_id in seen_ids:
-                        continue
-                    files = sorted(
-                        vid.get("video_files") or [],
-                        key=lambda f: abs(int(f.get("width") or 0) - 1920),
-                    )
-                    for f in files:
-                        link = (f.get("link") or "").strip()
-                        w = int(f.get("width") or 0)
-                        if not link or w < 1280:
+                    taken = 0
+                    for vid in await _search(client, q):
+                        if len(out) >= count or taken >= cap:
+                            break
+                        vid_id = int(vid.get("id") or 0)
+                        if vid_id and vid_id in seen_ids:
                             continue
-                        dr = await client.get(link)
-                        if dr.status_code >= 400 or len(dr.content) < 50_000:
-                            continue
-                        if vid_id:
-                            seen_ids.add(vid_id)
-                        path = dest_dir / f"pexels_{vid_id or random.randint(1000,9999)}_{len(out)}.mp4"
-                        path.write_bytes(dr.content)
-                        out.append(path)
-                        logger.info("Pexels clip #%s q=%r bytes=%s", len(out), q, len(dr.content))
-                        break
+                        # 4K тянуть незачем: кадр всё равно ужимается до 1080×1920
+                        files = [
+                            f
+                            for f in (vid.get("video_files") or [])
+                            if 1280 <= int(f.get("width") or 0) <= 2560
+                            and (f.get("link") or "").strip()
+                        ]
+                        files.sort(key=lambda f: abs(int(f.get("width") or 0) - 1920))
+                        for f in files:
+                            path = dest_dir / (
+                                f"pexels_{vid_id or random.randint(1000, 9999)}"
+                                f"_{len(out)}.mp4"
+                            )
+                            size = await _fetch_capped(
+                                client,
+                                (f.get("link") or "").strip(),
+                                path,
+                                max_bytes=max_bytes,
+                            )
+                            if not size:
+                                continue
+                            if vid_id:
+                                seen_ids.add(vid_id)
+                            out.append(path)
+                            taken += 1
+                            logger.info(
+                                "Pexels clip #%s q=%r w=%s bytes=%s",
+                                len(out),
+                                q,
+                                f.get("width"),
+                                size,
+                            )
+                            break
     except Exception as e:
         logger.warning("Pexels multi download failed: %s", e)
+    logger.info(
+        "Pexels итого %s клипов из %s запросов (лимит %s МБ на файл)",
+        len(out),
+        len({q for q in cache if cache[q]}),
+        max_bytes // (1024 * 1024),
+    )
     return out
 
 
