@@ -315,6 +315,9 @@ class AppConfig:
     YT_PRAYER_CHAT_ID: int = -1003756916561
     YT_PRAYER_TOPIC_ID: int = 1021
     YT_PRAYER_HOUR_MSK: int = 3
+    # Час старта Shorts. None — идут одним прогоном следом за
+    # горизонтальными; заданный час разводит их в отдельное расписание.
+    YT_SHORTS_HOUR_MSK: Optional[int] = None
     YT_PRAYER_COUNT: int = 3
     YT_PRAYER_WORK_DIR: str = "data/youtube_prayer"
     # Не повторять темы за последние N дней (used_trends.json + done.json).
@@ -918,8 +921,14 @@ def load_app_config() -> AppConfig:
         ),
         YT_PRAYER_TOPIC_ID=int(os.getenv("YT_PRAYER_TOPIC_ID", "1021") or 1021),
         YT_PRAYER_HOUR_MSK=int(os.getenv("YT_PRAYER_HOUR_MSK", "3") or 3) % 24,
+        YT_SHORTS_HOUR_MSK=(
+            int(os.getenv("YT_SHORTS_HOUR_MSK", "")) % 24
+            if (os.getenv("YT_SHORTS_HOUR_MSK") or "").strip().isdigit()
+            else None
+        ),
+        # 0 — не делать горизонтальные вовсе (нужно для «только Shorts»)
         YT_PRAYER_COUNT=max(
-            1, min(5, int(os.getenv("YT_PRAYER_COUNT", "3") or 3))
+            0, min(5, int(os.getenv("YT_PRAYER_COUNT", "3") or 3))
         ),
         YT_PRAYER_WORK_DIR=(
             os.getenv("YT_PRAYER_WORK_DIR") or "data/youtube_prayer"
@@ -991,8 +1000,9 @@ def load_app_config() -> AppConfig:
             "YT_PRAYER_YOUTUBE_NOTIFY_SUBSCRIBERS", default=True
         ),
         YT_SHORTS_ENABLED=_env_flag_true("YT_SHORTS_ENABLED", default=True),
+        # 0 — не делать Shorts вовсе (нужно для «только горизонтальные»)
         YT_SHORTS_COUNT=max(
-            1, min(12, int(os.getenv("YT_SHORTS_COUNT", "8") or 8))
+            0, min(12, int(os.getenv("YT_SHORTS_COUNT", "8") or 8))
         ),
         YT_SHORTS_WORK_DIR=(os.getenv("YT_SHORTS_WORK_DIR") or "data/youtube_shorts"),
         YT_SHORTS_TOPIC_ID=int(os.getenv("YT_SHORTS_TOPIC_ID", "0") or 0),
