@@ -103,6 +103,11 @@ def _is_marketing_start_payload(token: str) -> bool:
         return True
     if token.startswith("gift_") and token[5:] in {"bib", "tg", "ig", "yt", "bot"}:
         return True
+    # Приход с YouTube: yt_<день>_<номер ролика в пачке>. Ставится в описании
+    # шортса на канале «Любящие Бога», чтобы видеть, какой ролик приводит людей,
+    # а не только какой набирает просмотры — это разные ролики.
+    if token.startswith("yt_"):
+        return True
     return False
 
 
