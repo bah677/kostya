@@ -182,26 +182,15 @@ def build_payload(
 # ── приходы в бота (база клуба) ─────────────────────────────────────────────
 
 
-def _club_dsn() -> Optional[Dict[str, Any]]:
-    """Реквизиты боевой базы клуба из блока CLUB_DB_* в .env.
+def _club_dsn() -> str:
+    """DSN базы клуба из готового свойства конфига.
 
-    Там уже заведён отдельный club_db_user со своими правами — своему
-    avatar_db_user ничего выдавать не нужно. Имя базы именно club_db:
-    club_db_dev это тестовая, данных в ней в семь раз меньше.
+    Аватар уже ходит в неё из shorts_mail_wizard через это же свойство —
+    отдельный механизм заводить незачем. Реквизиты в блоке CLUB_DB_* .env.
     """
-    host = (os.getenv("CLUB_DB_HOST") or "").strip()
-    name = (os.getenv("CLUB_DB_NAME") or "").strip()
-    user = (os.getenv("CLUB_DB_USER") or "").strip()
-    password = os.getenv("CLUB_DB_PASSWORD") or ""
-    if not (host and name and user):
-        return None
-    return {
-        "host": host,
-        "port": int(os.getenv("CLUB_DB_PORT") or 5432),
-        "user": user,
-        "password": password,
-        "database": name,
-    }
+    from config import config
+
+    return getattr(config, "club_mail_database_url", "") or ""
 
 
 async def collect_bot_arrivals(*, day: str, days_back: int = 7) -> Dict[str, Any]:
@@ -212,7 +201,7 @@ async def collect_bot_arrivals(*, day: str, days_back: int = 7) -> Dict[str, Any
     людей» — это разные ролики.
     """
     dsn = _club_dsn()
-    if not dsn or not dsn.get("user"):
+    if not dsn:
         return {"статус": "не задан блок CLUB_DB_* в .env"}
     try:
         import asyncpg
@@ -223,7 +212,7 @@ async def collect_bot_arrivals(*, day: str, days_back: int = 7) -> Dict[str, Any
     since = d0 - timedelta(days=days_back)   # asyncpg ждёт date, не строку
     yday = d0 - timedelta(days=1)
     try:
-        conn = await asyncpg.connect(**dsn, timeout=10)
+        conn = await asyncpg.connect(dsn, timeout=10)
     except Exception as e:
         return {"статус": f"нет доступа к базе клуба: {type(e).__name__}"}
     try:
