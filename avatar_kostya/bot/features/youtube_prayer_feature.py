@@ -115,6 +115,10 @@ class YoutubePrayerFeature(BaseFeature):
     async def start_background_tasks(self) -> None:
         if not getattr(config, "YT_PRAYER_ENABLED", True):
             return
+        if not getattr(config, "YT_SCHEDULE_ENABLED", True):
+            # Команды остаются доступны — просто никто не будит их по часам.
+            self.log("YT_SCHEDULE_ENABLED=0 — ночные прогоны не запускаются")
+            return
         if self._tasks:
             return
         h_hour, s_hour = _horiz_hour(), _shorts_hour()
