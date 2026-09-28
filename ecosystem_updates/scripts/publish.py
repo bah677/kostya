@@ -139,6 +139,20 @@ PROJECTS = (
 )
 
 
+def strip_md(text: str) -> str:
+    """Убирает разметку из короткого анонса на списке.
+
+    Анонс раньше экранировался как есть, и на главной было видно
+    «**1000 озвученных молитв**» вместе со звёздочками. Рендерить теги в
+    превью не нужно — достаточно снять маркеры.
+    """
+    t = re.sub(r"\*\*(.+?)\*\*", r"\1", text)
+    t = re.sub(r"(?<!\*)\*(.+?)\*(?!\*)", r"\1", t)
+    t = re.sub(r"\[([^\]]+)\]\((https?://[^)]+)\)", r"\1", t)
+    t = re.sub(r"`([^`]+)`", r"\1", t)
+    return t
+
+
 def collect_notes(notes_dir: Path) -> list[tuple[date, Path]]:
     notes: list[tuple[date, Path]] = []
     if not notes_dir.is_dir():
@@ -191,7 +205,7 @@ def build_project(slug: str, title: str, tagline: str) -> None:
                     continue
                 if t.startswith("-") or t.startswith("*") or t.startswith("•"):
                     t = re.sub(r"^[-*•]\s+", "", t)
-                blurb = t[:160]
+                blurb = strip_md(t)[:160]
                 break
             items.append(
                 "<li>"
@@ -266,7 +280,7 @@ def build() -> None:
                     continue
                 if t.startswith("-") or t.startswith("*") or t.startswith("•"):
                     t = re.sub(r"^[-*•]\s+", "", t)
-                blurb = t[:160]
+                blurb = strip_md(t)[:160]
                 break
             items.append(
                 "<li>"
