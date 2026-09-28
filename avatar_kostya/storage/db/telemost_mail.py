@@ -466,12 +466,19 @@ class TelemostMailMixin:
             logger.error("get_last_indexed_telemost_mail: %s", e)
             return None
 
-    async def list_telemost_for_reels(self, limit: int = 50) -> list[Dict[str, Any]]:
-        """Список эфиров с расшифровкой для /reels (без молитв и конспектов).
+    async def list_telemost_for_reels(self, limit: int = 20) -> list[Dict[str, Any]]:
+        """Последние эфиры с расшифровкой для /reels (без молитв и покаяний).
 
-        Источник — ``telemost_mail_pending`` с длинной расшифровкой.
-        Конспекты часто дублируют живую встречу того же дня — скрываем их.
-        За календарный день (МСК) оставляем одну запись (предпочтительно «встреча»).
+        Источник — ``telemost_mail_pending``: только там расшифровка лежит
+        целиком, с таймкодами и разделением говорящих. В RAG эфир разложен
+        на чанки под эмбеддинги — ни таймкодов, ни спикеров там не остаётся,
+        а генератору рилс нужно и то, и другое.
+
+        Раньше здесь стояло ещё условие «тема письма не содержит конспект».
+        Тема у ВСЕХ писем Телемоста одна — «Конспект встречи от …», поэтому
+        список всегда выходил пустым: 154 записи отсекались до нуля.
+        Дубли-конспекты отсекает row_number ниже: за календарный день (МСК)
+        остаётся одна запись, предпочтительно та, где в заголовке «встреча».
         """
         try:
             async with self.get_connection() as conn:
@@ -491,7 +498,6 @@ class TelemostMailMixin:
                               NOT ILIKE '%молитв%'
                           AND coalesce(classification->>'title', subject, '')
                               NOT ILIKE '%конспект%'
-                          AND coalesce(subject, '') NOT ILIKE '%конспект%'
                     ),
                     ranked AS (
                       SELECT *,
