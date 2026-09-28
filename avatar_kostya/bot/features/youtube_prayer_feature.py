@@ -1,4 +1,14 @@
-"""Команда /yt_prayer + ежедневный запуск в 03:00 MSK."""
+"""Команды /yt_prayer, /yt_shorts, /yt_run и ночные прогоны по расписанию.
+
+Горизонтальные ролики 16:9 и вертикальные Shorts 9:16 разведены полностью:
+у каждого свой счётчик, свой час старта и свои слоты премьер. Счётчик 0
+означает «не делать», поэтому любая комбинация собирается двумя цифрами
+в .env: только шортсы, только горизонтальные, 3 + 5 и так далее.
+
+Если часы старта совпадают, оба вида идут одним прогоном подряд (как было
+раньше) — иначе они конкурировали бы за ffmpeg. Разные часы дают два
+независимых расписания.
+"""
 
 from __future__ import annotations
 
@@ -6,7 +16,7 @@ import asyncio
 import logging
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 from zoneinfo import ZoneInfo
 
 from aiogram import Dispatcher
@@ -22,6 +32,48 @@ logger = logging.getLogger(__name__)
 
 _MSK = ZoneInfo("Europe/Moscow")
 
+KIND_HORIZ = "horiz"
+KIND_SHORTS = "shorts"
+_KIND_TITLE = {
+    KIND_HORIZ: "горизонтальные 16:9",
+    KIND_SHORTS: "Shorts 9:16",
+}
+
+
+def _horiz_hour() -> int:
+    return int(getattr(config, "YT_PRAYER_HOUR_MSK", 3) or 3) % 24
+
+
+def _shorts_hour() -> int:
+    """Не задан — шортсы идут тем же прогоном, следом за горизонтальными."""
+    raw = getattr(config, "YT_SHORTS_HOUR_MSK", None)
+    if raw is None:
+        return _horiz_hour()
+    return int(raw) % 24
+
+
+def _parse_args(raw: str) -> Tuple[bool, Optional[int]]:
+    """«force», «3», «force 3» — в любом порядке.
+
+    «1» раньше означало force; теперь это количество, иначе не отличить
+    «сделай один ролик» от «запусти принудительно».
+    """
+    force = False
+    count: Optional[int] = None
+    for token in (raw or "").lower().split():
+        if token in {"force", "forced", "f", "yes", "y"}:
+            force = True
+        elif token.isdigit():
+            count = int(token)
+    return force, count
+
+
+def _abs_dir(raw: Optional[str], default: str) -> Path:
+    p = Path(raw or default)
+    if not p.is_absolute():
+        p = Path(__file__).resolve().parents[2] / p
+    return p
+
 
 class YoutubePrayerFeature(BaseFeature):
     name = "youtube_prayer"
@@ -29,7 +81,7 @@ class YoutubePrayerFeature(BaseFeature):
     def __init__(self) -> None:
         super().__init__()
         self._app: Any = None
-        self._task: Optional[asyncio.Task] = None
+        self._tasks: List[asyncio.Task] = []
         self._run_lock = asyncio.Lock()
 
     def set_bot(self, app: Any) -> None:
@@ -42,68 +94,130 @@ class YoutubePrayerFeature(BaseFeature):
             return True
         return False
 
+    # ── регистрация ──────────────────────────────────────────────────────
+
     def register_handlers(self, dispatcher: Dispatcher) -> None:
         if not getattr(config, "YT_PRAYER_ENABLED", True):
             self.log("YT_PRAYER_ENABLED=0 — хендлеры не регистрируются")
             return
         dispatcher.message.register(
-            self.cmd_yt_prayer, PRIVATE_CHAT, Command("yt_prayer")
+            self.cmd_horiz, PRIVATE_CHAT, Command("yt_prayer")
         )
         dispatcher.message.register(
-            self.cmd_yt_prayer, PRIVATE_CHAT, Command("yt_prayer_run")
+            self.cmd_horiz, PRIVATE_CHAT, Command("yt_prayer_run")
         )
-        self.log("/yt_prayer зарегистрирован")
+        dispatcher.message.register(
+            self.cmd_shorts, PRIVATE_CHAT, Command("yt_shorts")
+        )
+        dispatcher.message.register(self.cmd_all, PRIVATE_CHAT, Command("yt_run"))
+        self.log("/yt_prayer, /yt_shorts, /yt_run зарегистрированы")
 
     async def start_background_tasks(self) -> None:
         if not getattr(config, "YT_PRAYER_ENABLED", True):
             return
-        if self._task and not self._task.done():
+        if self._tasks:
             return
-        self._task = asyncio.create_task(
-            self._daily_loop(), name="youtube_prayer_daily"
-        )
-        hour = int(getattr(config, "YT_PRAYER_HOUR_MSK", 3) or 3)
-        self.log(f"ежедневный запуск в {hour:02d}:00 MSK")
+        h_hour, s_hour = _horiz_hour(), _shorts_hour()
+        if h_hour == s_hour:
+            self._tasks.append(
+                asyncio.create_task(
+                    self._daily_loop(h_hour, (KIND_HORIZ, KIND_SHORTS)),
+                    name="youtube_daily_all",
+                )
+            )
+            self.log(f"ночной прогон {h_hour:02d}:00 MSK: горизонтальные + Shorts")
+        else:
+            self._tasks.append(
+                asyncio.create_task(
+                    self._daily_loop(h_hour, (KIND_HORIZ,)),
+                    name="youtube_daily_horiz",
+                )
+            )
+            self._tasks.append(
+                asyncio.create_task(
+                    self._daily_loop(s_hour, (KIND_SHORTS,)),
+                    name="youtube_daily_shorts",
+                )
+            )
+            self.log(
+                f"ночные прогоны: горизонтальные {h_hour:02d}:00, "
+                f"Shorts {s_hour:02d}:00 MSK"
+            )
 
     async def stop_background_tasks(self) -> None:
-        if self._task and not self._task.done():
-            self._task.cancel()
-            try:
-                await self._task
-            except asyncio.CancelledError:
-                pass
-        self._task = None
+        for task in self._tasks:
+            if not task.done():
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+        self._tasks = []
 
-    async def cmd_yt_prayer(self, message: Message, command: CommandObject) -> None:
+    # ── команды ──────────────────────────────────────────────────────────
+
+    async def cmd_horiz(self, message: Message, command: CommandObject) -> None:
+        await self._cmd(message, command, kinds=(KIND_HORIZ,))
+
+    async def cmd_shorts(self, message: Message, command: CommandObject) -> None:
+        await self._cmd(message, command, kinds=(KIND_SHORTS,))
+
+    async def cmd_all(self, message: Message, command: CommandObject) -> None:
+        await self._cmd(message, command, kinds=(KIND_HORIZ, KIND_SHORTS))
+
+    async def _cmd(
+        self,
+        message: Message,
+        command: CommandObject,
+        *,
+        kinds: Sequence[str],
+    ) -> None:
         if message.from_user is None:
             return
         if not await self._is_admin(message.from_user.id):
             return
-        args = (command.args or "").strip().lower()
-        force = args in {"force", "forced", "1", "yes"}
+        force, count = _parse_args(command.args or "")
+        counts = {k: count for k in kinds} if count is not None else {}
+        what = " + ".join(_KIND_TITLE[k] for k in kinds)
+        plan = ", ".join(
+            f"{_KIND_TITLE[k]}: {self._count_for(k, counts)}" for k in kinds
+        )
         await message.answer(
-            "Запускаю пайплайн YouTube-молитв"
+            f"Запускаю: {what}"
             + (" (force)" if force else "")
-            + "… Это может занять 15–40 минут."
+            + f"\n{plan}\nЭто может занять от 15 минут до нескольких часов."
         )
         asyncio.create_task(
-            self._run_safe(force=force, progress_chat_id=message.chat.id),
-            name="yt_prayer_manual",
+            self._run(
+                kinds=kinds,
+                force=force,
+                progress_chat_id=message.chat.id,
+                counts=counts,
+                wait=False,
+            ),
+            name=f"yt_manual_{'_'.join(kinds)}",
         )
 
-    async def _daily_loop(self) -> None:
-        hour = int(getattr(config, "YT_PRAYER_HOUR_MSK", 3) or 3) % 24
+    # ── расписание ───────────────────────────────────────────────────────
+
+    async def _daily_loop(self, hour: int, kinds: Sequence[str]) -> None:
+        label = ",".join(kinds)
         while True:
             try:
                 delay = _seconds_until_msk(hour, 0)
                 logger.info(
-                    "[%s] sleep %.0fs until %02d:00 MSK",
+                    "[%s] sleep %.0fs until %02d:00 MSK (%s)",
                     self.name,
                     delay,
                     hour,
+                    label,
                 )
                 await asyncio.sleep(delay)
-                await self._run_safe(force=False, progress_chat_id=None)
+                # wait=True: если второй прогон ещё идёт, дожидаемся его,
+                # а не пропускаем сегодняшний запуск молча.
+                await self._run(
+                    kinds=kinds, force=False, progress_chat_id=None, wait=True
+                )
                 # защита от повторного срабатывания в ту же минуту
                 await asyncio.sleep(70)
             except asyncio.CancelledError:
@@ -112,18 +226,32 @@ class YoutubePrayerFeature(BaseFeature):
                 logger.exception("[%s] daily loop error: %s", self.name, e)
                 await asyncio.sleep(300)
 
-    async def _run_safe(
-        self, *, force: bool, progress_chat_id: Optional[int]
+    # ── запуск ───────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _count_for(kind: str, counts: Dict[str, int]) -> int:
+        if kind in counts:
+            return max(0, int(counts[kind]))
+        if kind == KIND_HORIZ:
+            return int(getattr(config, "YT_PRAYER_COUNT", 3) or 0)
+        if not getattr(config, "YT_SHORTS_ENABLED", True):
+            return 0
+        return int(getattr(config, "YT_SHORTS_COUNT", 8) or 0)
+
+    async def _run(
+        self,
+        *,
+        kinds: Sequence[str],
+        force: bool,
+        progress_chat_id: Optional[int],
+        counts: Optional[Dict[str, int]] = None,
+        wait: bool = False,
     ) -> None:
-        if self._run_lock.locked():
-            if progress_chat_id and self._app:
-                try:
-                    await self._app.bot.send_message(
-                        progress_chat_id,
-                        "Пайплайн уже выполняется — дождитесь окончания.",
-                    )
-                except Exception:
-                    pass
+        counts = counts or {}
+        if not wait and self._run_lock.locked():
+            await self._say(
+                progress_chat_id, "Пайплайн уже выполняется — дождитесь окончания."
+            )
             return
         async with self._run_lock:
             if not self._app:
@@ -133,89 +261,128 @@ class YoutubePrayerFeature(BaseFeature):
             if not chat_id:
                 logger.error("[%s] YT_PRAYER_CHAT_ID не задан", self.name)
                 return
-            work = Path(
-                getattr(config, "YT_PRAYER_WORK_DIR", None)
-                or "data/youtube_prayer"
-            )
-            if not work.is_absolute():
-                work = Path(__file__).resolve().parents[2] / work
-            count = int(getattr(config, "YT_PRAYER_COUNT", 3) or 3)
             history_days = int(
                 getattr(config, "YT_PRAYER_TREND_HISTORY_DAYS", 14) or 14
             )
-            en_enabled = bool(getattr(config, "YT_PRAYER_EN_ENABLED", False))
-            en_count = int(getattr(config, "YT_PRAYER_EN_COUNT", 1) or 1)
-            en_voice = (
+            work = _abs_dir(
+                getattr(config, "YT_PRAYER_WORK_DIR", None), "data/youtube_prayer"
+            )
+            notes: List[str] = []
+
+            if KIND_HORIZ in kinds:
+                notes.append(
+                    await self._run_horizontal(
+                        count=self._count_for(KIND_HORIZ, counts),
+                        chat_id=chat_id,
+                        topic_id=topic_id,
+                        work=work,
+                        history_days=history_days,
+                        force=force,
+                        progress_chat_id=progress_chat_id,
+                    )
+                )
+            if KIND_SHORTS in kinds:
+                notes.append(
+                    await self._run_shorts(
+                        count=self._count_for(KIND_SHORTS, counts),
+                        chat_id=chat_id,
+                        topic_id=topic_id,
+                        horizontal_work=work,
+                        history_days=history_days,
+                        force=force,
+                        progress_chat_id=progress_chat_id,
+                    )
+                )
+            await self._say(progress_chat_id, "\n".join(n for n in notes if n))
+
+    async def _run_horizontal(
+        self,
+        *,
+        count: int,
+        chat_id: int,
+        topic_id: int,
+        work: Path,
+        history_days: int,
+        force: bool,
+        progress_chat_id: Optional[int],
+    ) -> str:
+        if count <= 0:
+            logger.info("[%s] горизонтальные пропущены (count=0)", self.name)
+            return "Горизонтальные: пропущены (count=0)."
+        result = await run_daily_youtube_prayer_pipeline(
+            self._app.bot,
+            chat_id=chat_id,
+            topic_id=topic_id,
+            work_root=work,
+            count=count,
+            force=force,
+            progress_chat_id=progress_chat_id,
+            history_days=history_days,
+            en_enabled=bool(getattr(config, "YT_PRAYER_EN_ENABLED", False)),
+            en_count=int(getattr(config, "YT_PRAYER_EN_COUNT", 1) or 1),
+            en_voice_id=str(
                 getattr(config, "YT_PRAYER_EN_VOICE_ID", None)
                 or "a4CnuaYbALRvW39mDitg"
+            ),
+        )
+        if result.skipped and not force:
+            return (
+                f"Горизонтальные: уже есть прогон за {result.day}. "
+                f"Повтор — /yt_prayer force"
             )
-            result = await run_daily_youtube_prayer_pipeline(
-                self._app.bot,
-                chat_id=chat_id,
-                topic_id=topic_id,
-                work_root=work,
-                count=count,
-                force=force,
-                progress_chat_id=progress_chat_id,
-                history_days=history_days,
-                en_enabled=en_enabled,
-                en_count=en_count,
-                en_voice_id=str(en_voice),
-            )
-            shorts_msg = ""
-            if getattr(config, "YT_SHORTS_ENABLED", True):
-                from youtube_shorts.pipeline import run_daily_youtube_shorts_pipeline
+        if not result.ok:
+            return f"⛔ Горизонтальные остановлены: {result.error}"
+        parts = []
+        if result.themes:
+            parts.append("RU: " + ", ".join(result.themes))
+        if result.themes_en:
+            parts.append("EN: " + ", ".join(result.themes_en))
+        return f"Горизонтальные за {result.day}: " + (" | ".join(parts) or "ok")
 
-                shorts_work = Path(
-                    getattr(config, "YT_SHORTS_WORK_DIR", None)
-                    or "data/youtube_shorts"
-                )
-                if not shorts_work.is_absolute():
-                    shorts_work = Path(__file__).resolve().parents[2] / shorts_work
-                shorts_topic = int(getattr(config, "YT_SHORTS_TOPIC_ID", 0) or 0)
-                if not shorts_topic:
-                    shorts_topic = topic_id
-                shorts_count = int(getattr(config, "YT_SHORTS_COUNT", 8) or 8)
-                shorts_result = await run_daily_youtube_shorts_pipeline(
-                    self._app.bot,
-                    chat_id=chat_id,
-                    topic_id=shorts_topic,
-                    work_root=shorts_work,
-                    count=shorts_count,
-                    force=force,
-                    progress_chat_id=progress_chat_id,
-                    history_days=history_days,
-                    horizontal_work_root=work,
-                )
-                if shorts_result.skipped:
-                    shorts_msg = f" Shorts: уже готовы за {shorts_result.day}."
-                elif shorts_result.ok:
-                    shorts_msg = f" Shorts: ×{len(shorts_result.themes)}."
-                else:
-                    shorts_msg = f" Shorts: ошибка — {shorts_result.error}"
-            if progress_chat_id:
-                if result.skipped and not force:
-                    msg = (
-                        f"Уже есть готовый прогон за {result.day}. "
-                        f"Добавьте force: /yt_prayer force{shorts_msg}"
-                    )
-                elif result.ok:
-                    parts = []
-                    if result.themes:
-                        parts.append("RU: " + ", ".join(result.themes))
-                    if result.themes_en:
-                        parts.append("EN: " + ", ".join(result.themes_en))
-                    msg = (
-                        f"Готово за {result.day}. "
-                        + (" | ".join(parts) if parts else "ok")
-                        + shorts_msg
-                    )
-                else:
-                    msg = f"⛔ Пайплайн остановлен по ошибке.\n{result.error}{shorts_msg}"
-                try:
-                    await self._app.bot.send_message(progress_chat_id, msg)
-                except Exception:
-                    pass
+    async def _run_shorts(
+        self,
+        *,
+        count: int,
+        chat_id: int,
+        topic_id: int,
+        horizontal_work: Path,
+        history_days: int,
+        force: bool,
+        progress_chat_id: Optional[int],
+    ) -> str:
+        if count <= 0:
+            logger.info("[%s] Shorts пропущены (count=0)", self.name)
+            return "Shorts: пропущены (count=0)."
+        from youtube_shorts.pipeline import run_daily_youtube_shorts_pipeline
+
+        shorts_work = _abs_dir(
+            getattr(config, "YT_SHORTS_WORK_DIR", None), "data/youtube_shorts"
+        )
+        shorts_topic = int(getattr(config, "YT_SHORTS_TOPIC_ID", 0) or 0) or topic_id
+        result = await run_daily_youtube_shorts_pipeline(
+            self._app.bot,
+            chat_id=chat_id,
+            topic_id=shorts_topic,
+            work_root=shorts_work,
+            count=count,
+            force=force,
+            progress_chat_id=progress_chat_id,
+            history_days=history_days,
+            horizontal_work_root=horizontal_work,
+        )
+        if result.skipped:
+            return f"Shorts: уже готовы за {result.day}. Повтор — /yt_shorts force"
+        if not result.ok:
+            return f"⛔ Shorts остановлены: {result.error}"
+        return f"Shorts за {result.day}: ×{len(result.themes)}"
+
+    async def _say(self, chat_id: Optional[int], text: str) -> None:
+        if not chat_id or not self._app or not text.strip():
+            return
+        try:
+            await self._app.bot.send_message(chat_id, text)
+        except Exception:
+            pass
 
 
 def _seconds_until_msk(hour: int, minute: int) -> float:
