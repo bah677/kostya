@@ -204,6 +204,8 @@ async def run_daily_youtube_shorts_pipeline(
                 complete_fn=_complete_metadata,
                 trend_pool=trend_pool,
                 work_dir=item_dir,
+                day=day,
+                index=i,
             )
 
             # prayer.txt остаётся чистой молитвой, озвучиваем её вместе с призывом

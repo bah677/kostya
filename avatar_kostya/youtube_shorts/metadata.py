@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Awaitable, Callable, List, Optional, Sequence
@@ -86,6 +87,34 @@ def theme_overlay_label(meta: VideoMetadata, trend: str = "") -> str:
     from youtube_prayer.render import format_prayer_theme_label
 
     return format_prayer_theme_label(trend or _strip_shorts_suffix(meta.title), short=True)
+
+
+_DEFAULT_BOT_USERNAME = "Talk_God_Bot"
+
+
+def bot_start_link(*, day: str, index: int) -> str:
+    """Ссылка на клубного бота с меткой, какой ролик привёл человека.
+
+    Клуб распознаёт payload yt_* как маркетинговое касание и кладёт его в
+    users.first_touch_key. Так видно не «что набрало просмотры», а «что
+    привело людей» — это разные ролики.
+    """
+    user = (os.getenv("YT_SHORTS_BOT_USERNAME") or _DEFAULT_BOT_USERNAME).strip().lstrip("@")
+    if not user:
+        return ""
+    tag = f"yt_{day.replace('-', '')}_{int(index):02d}"
+    return f"https://t.me/{user}?start={tag}"
+
+
+def _inject_bot_link(description: str, link: str) -> str:
+    """Ставим ссылку перед блоком Keywords — там её видно до «ещё»."""
+    if not link or link in description:
+        return description
+    line = f"Молитва по твоей ситуации — в боте: {link}"
+    if "\n---" in description:
+        head, sep, tail = description.partition("\n---")
+        return f"{head.rstrip()}\n\n{line}\n{sep}{tail}"
+    return f"{description.rstrip()}\n\n{line}"
 
 
 def _order_hashtags(tags: list[str]) -> list[str]:
@@ -198,6 +227,8 @@ async def generate_short_metadata(
     complete_fn: CompleteFn,
     trend_pool: Optional[Sequence[str]] = None,
     work_dir: Optional[Path] = None,
+    day: str = "",
+    index: int = 0,
 ) -> VideoMetadata:
     today = datetime.now(_MSK).strftime("%d.%m.%Y")
     pool = [t for t in (trend_pool or []) if t and t != trend][:10]
@@ -223,6 +254,11 @@ async def generate_short_metadata(
 
     if meta is None:
         meta = _fallback_short_metadata(trend=trend, brief=brief)
+
+    if day and index:
+        link = bot_start_link(day=day, index=index)
+        if link:
+            meta = replace(meta, description=_inject_bot_link(meta.description, link))
 
     if work_dir is not None:
         work_dir.mkdir(parents=True, exist_ok=True)
