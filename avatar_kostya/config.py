@@ -257,6 +257,10 @@ class AppConfig:
     TELEMOST_REELS_BRIEF_ENABLED: bool = True
     TELEMOST_REELS_BRIEF_CHAT_ID: int = 0
     TELEMOST_REELS_BRIEF_TOPIC_ID: int = 1492
+    # Выбор моментов и подписи к ним — творческие задачи. На gpt-4o-mini
+    # (модель для разметки) выходил плоский пересказ и куски про одно и то же.
+    TELEMOST_AUDIO_MOMENTS_MODEL: str = "gpt-4.1"
+    TELEMOST_AUDIO_CAPTION_MODEL: str = "gpt-4.1"
     TELEMOST_REELS_BRIEF_MODEL: str = "gpt-4.1"
     TELEMOST_REELS_BRIEF_MAX_TOKENS: int = 16000
     TELEMOST_REELS_BRIEF_CROSSCHECK_ENABLED: bool = True
@@ -842,6 +846,12 @@ def load_app_config() -> AppConfig:
         TELEMOST_REELS_BRIEF_TOPIC_ID=int(
             os.getenv("TELEMOST_REELS_BRIEF_TOPIC_ID", "1492") or 1492
         ),
+        TELEMOST_AUDIO_MOMENTS_MODEL=(
+            os.getenv("TELEMOST_AUDIO_MOMENTS_MODEL") or "gpt-4.1"
+        ).strip(),
+        TELEMOST_AUDIO_CAPTION_MODEL=(
+            os.getenv("TELEMOST_AUDIO_CAPTION_MODEL") or "gpt-4.1"
+        ).strip(),
         TELEMOST_REELS_BRIEF_MODEL=(
             os.getenv("TELEMOST_REELS_BRIEF_MODEL") or "gpt-4.1"
         ).strip()
