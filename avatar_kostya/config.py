@@ -314,6 +314,9 @@ class AppConfig:
     YT_PRAYER_ENABLED: bool = True
     YT_PRAYER_CHAT_ID: int = -1003756916561
     YT_PRAYER_TOPIC_ID: int = 1021
+    # Ночные прогоны по расписанию. 0 — фича остаётся включённой и команды
+    # работают, но само расписание не поднимается.
+    YT_SCHEDULE_ENABLED: bool = True
     YT_PRAYER_HOUR_MSK: int = 3
     # Час старта Shorts. None — идут одним прогоном следом за
     # горизонтальными; заданный час разводит их в отдельное расписание.
@@ -920,6 +923,7 @@ def load_app_config() -> AppConfig:
             int(os.getenv("YT_PRAYER_CHAT_ID", "-1003756916561") or -1003756916561)
         ),
         YT_PRAYER_TOPIC_ID=int(os.getenv("YT_PRAYER_TOPIC_ID", "1021") or 1021),
+        YT_SCHEDULE_ENABLED=_env_flag_true("YT_SCHEDULE_ENABLED", default=True),
         YT_PRAYER_HOUR_MSK=int(os.getenv("YT_PRAYER_HOUR_MSK", "3") or 3) % 24,
         YT_SHORTS_HOUR_MSK=(
             int(os.getenv("YT_SHORTS_HOUR_MSK", "")) % 24
