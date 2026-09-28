@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -136,7 +137,12 @@ def _delta(cur: Dict[str, Any], prev: Optional[Dict[str, Any]]) -> Optional[Dict
 
 
 def build_payload(
-    snap_dir: Path, snap: Dict[str, Any], *, day: str, days_back: int = 7
+    snap_dir: Path,
+    snap: Dict[str, Any],
+    *,
+    day: str,
+    days_back: int = 7,
+    arrivals: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Итоги, приросты за сутки и за неделю, ролики последних дней."""
     d = datetime.strptime(day, "%Y-%m-%d").date()
@@ -169,7 +175,91 @@ def build_payload(
             sorted(v["views"] for v in shorts)[len(shorts) // 2] if shorts else 0
         ),
         "ролики_за_период": recent[:20],
-        "переходы_в_бота": "нет данных: в описаниях роликов нет ссылки на бота",
+        "переходы_в_бота": arrivals or "нет данных",
+    }
+
+
+# ── приходы в бота (база клуба) ─────────────────────────────────────────────
+
+
+def _club_dsn() -> Optional[Dict[str, Any]]:
+    """Реквизиты клубной базы: свой DB_NAME, но хост и пользователь наши.
+
+    Все проекты экосистемы живут на одном Postgres, поэтому отдельный
+    пользователь не нужен — нужен только SELECT на две таблицы клуба.
+    """
+    from config import config
+
+    name = (os.getenv("CLUB_DB_NAME") or "club_db_dev").strip()
+    if not name:
+        return None
+    return {
+        "host": getattr(config, "DB_HOST", "localhost"),
+        "port": int(getattr(config, "DB_PORT", 5432) or 5432),
+        "user": getattr(config, "DB_USER", ""),
+        "password": getattr(config, "DB_PASSWORD", ""),
+        "database": name,
+    }
+
+
+async def collect_bot_arrivals(*, day: str, days_back: int = 7) -> Dict[str, Any]:
+    """Сколько людей пришло в клубного бота с YouTube и с каких роликов.
+
+    Метка ставится в описании шортса (yt_<день>_<номер>), клуб кладёт её в
+    attribution_touches. Показывает не «что набрало просмотры», а «что привело
+    людей» — это разные ролики.
+    """
+    dsn = _club_dsn()
+    if not dsn or not dsn.get("user"):
+        return {"статус": "нет реквизитов клубной базы"}
+    try:
+        import asyncpg
+    except ImportError:
+        return {"статус": "asyncpg не установлен"}
+
+    d0 = datetime.strptime(day, "%Y-%m-%d").date()
+    since = d0 - timedelta(days=days_back)   # asyncpg ждёт date, не строку
+    yday = d0 - timedelta(days=1)
+    try:
+        conn = await asyncpg.connect(**dsn, timeout=10)
+    except Exception as e:
+        return {"статус": f"нет доступа к базе клуба: {type(e).__name__}"}
+    try:
+        by_video = await conn.fetch(
+            r"""
+            SELECT touch_key, COUNT(DISTINCT user_id) AS people
+            FROM attribution_touches
+            WHERE touch_key LIKE 'yt\_%' AND created_at >= $1
+            GROUP BY touch_key ORDER BY people DESC LIMIT 10
+            """,
+            since,
+        )
+        first_touch = await conn.fetchval(
+            r"""
+            SELECT COUNT(*) FROM users
+            WHERE first_touch_key LIKE 'yt\_%' AND first_touch_at >= $1
+            """,
+            since,
+        )
+        yesterday = await conn.fetchval(
+            r"""
+            SELECT COUNT(DISTINCT user_id) FROM attribution_touches
+            WHERE touch_key LIKE 'yt\_%' AND created_at::date = $1
+            """,
+            yday,
+        )
+    except Exception as e:
+        return {"статус": f"запрос не прошёл (нужен GRANT SELECT): {type(e).__name__}"}
+    finally:
+        await conn.close()
+
+    return {
+        "статус": "ок",
+        "новых_из_youtube_за_период": int(first_touch or 0),
+        "пришло_вчера": int(yesterday or 0),
+        "по_роликам": [
+            {"метка": r["touch_key"], "человек": int(r["people"])} for r in by_video
+        ],
     }
 
 
@@ -262,7 +352,12 @@ async def run_daily_channel_report(
         return None
 
     save_snapshot(snap_dir, snap, day=day)
-    payload = build_payload(snap_dir, snap, day=day)
+    try:
+        arrivals = await collect_bot_arrivals(day=day)
+    except Exception as e:
+        logger.warning("приходы в бота не собрались: %s", e)
+        arrivals = {"статус": "ошибка сбора"}
+    payload = build_payload(snap_dir, snap, day=day, arrivals=arrivals)
 
     try:
         analysis = await analyze(payload)
