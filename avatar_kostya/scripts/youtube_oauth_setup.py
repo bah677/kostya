@@ -17,6 +17,10 @@ if str(_ROOT) not in sys.path:
 _SCOPES = [
     "https://www.googleapis.com/auth/youtube.upload",
     "https://www.googleapis.com/auth/youtube",
+    # Нужен, чтобы бот мог оставлять комментарии под роликами
+    # (commentThreads.insert). Загрузке видео не мешает.
+    # Закрепить комментарий через API нельзя — такого метода в Data API v3 нет.
+    "https://www.googleapis.com/auth/youtube.force-ssl",
 ]
 
 _DEFAULT_SECRET = _ROOT / "data/youtube_prayer/youtube_client_secret.json"

@@ -298,6 +298,8 @@ class YoutubePrayerFeature(BaseFeature):
                     )
                 )
             await self._say(progress_chat_id, "\n".join(n for n in notes if n))
+            # Срез и разбор — после публикации, чтобы вчерашний день был закрыт.
+            await self._channel_report(chat_id, topic_id, progress_chat_id)
 
     async def _run_horizontal(
         self,
@@ -379,6 +381,23 @@ class YoutubePrayerFeature(BaseFeature):
         if not result.ok:
             return f"⛔ Shorts остановлены: {result.error}"
         return f"Shorts за {result.day}: ×{len(result.themes)}"
+
+    async def _channel_report(
+        self, chat_id: int, topic_id: int, progress_chat_id: Optional[int]
+    ) -> None:
+        """Ночной разбор динамики канала. Не роняет прогон: отчёт вторичен."""
+        if not getattr(config, "YT_REPORT_ENABLED", True):
+            return
+        try:
+            from youtube_prayer.channel_stats import run_daily_channel_report
+
+            await run_daily_channel_report(
+                self._app.bot,
+                chat_id=progress_chat_id or chat_id,
+                topic_id=0 if progress_chat_id else topic_id,
+            )
+        except Exception as e:
+            logger.warning("[%s] отчёт по каналу не собрался: %s", self.name, e)
 
     async def _say(self, chat_id: Optional[int], text: str) -> None:
         if not chat_id or not self._app or not text.strip():
