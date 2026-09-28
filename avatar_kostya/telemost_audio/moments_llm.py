@@ -259,6 +259,7 @@ def _rerank_candidates(
     final_count: int,
     min_overlap_ratio: float = 0.35,
     min_gap_sec: float = 120.0,
+    theme_threshold: float = 0.45,
 ) -> List[AudioClipMoment]:
     """Топ по score: разные темы, без пересечений и не вплотную друг к другу.
 
@@ -298,12 +299,78 @@ def _rerank_candidates(
             if max(
                 (len(toks & pt) / max(1, len(toks | pt)) if pt else 0.0)
                 for pt in picked_tokens
-            ) >= 0.45:
+            ) >= theme_threshold:
                 continue
         picked.append(c)
         picked_tokens.append(toks)
 
     return picked[:final_count]
+
+
+_EDITOR_SYSTEM = """Ты главный редактор. Тебе дают список кандидатов — фрагментов одного эфира, которые отобрали помощники. Каждый смотрел только свой кусок расшифровки и не видел остальных, поэтому в списке много вариаций одной и той же мысли.
+
+Твоя задача: выбрать ровно {count} фрагментов для публикации по отдельности, в разные дни.
+
+ГЛАВНЫЙ КРИТЕРИЙ — РАЗНЫЕ ТЕМЫ.
+Человек, послушавший все {count}, должен узнать {count} разных вещей. Два фрагмента про одно и то же — это один фрагмент, даже если оба сильные и сформулированы по-разному. Из группы похожих бери ОДИН, самый яркий, остальные выбрасывай.
+
+ВТОРОЙ КРИТЕРИЙ — сила: законченная мысль, хочется переслать.
+
+Разброс по времени эфира — хороший признак разных тем, но не цель сам по себе.
+
+ЕСЛИ РАЗНЫХ ТЕМ МЕНЬШЕ, ЧЕМ {count}.
+Значит эфир и правда про одно. Тогда верни меньше — столько, сколько реально разных тем набралось. Добивать список вариациями одной мысли нельзя.
+
+Верни ТОЛЬКО JSON, номера из списка в порядке публикации:
+{{"picked": [3, 17, 42], "why": "одной фразой, по какому признаку разводил темы"}}"""
+
+
+async def _pick_diverse_with_llm(
+    candidates: List[AudioClipMoment],
+    *,
+    count: int,
+    model: str,
+    api_key: str,
+) -> List[AudioClipMoment]:
+    """Финальный отбор: модель видит ВСЕХ кандидатов разом.
+
+    Окна опрашиваются независимо, и если тема доминирует в эфире, она
+    выигрывает в каждом окне. Отбор по score тогда даёт пять вариаций одной
+    мысли — ровно то, на что жаловались. Разнести их может только тот, кто
+    видит весь список сразу; по совпадению слов это не ловится, потому что
+    формулировки у вариаций разные.
+    """
+    if len(candidates) <= count:
+        return candidates
+
+    from openai import AsyncOpenAI
+
+    lines = []
+    for i, c in enumerate(candidates):
+        mm, ss = divmod(int(c.start_sec), 60)
+        lines.append(
+            f"{i}. [{mm:02d}:{ss:02d}] тема: {c.theme or '—'} | {c.title[:90]}"
+        )
+    client = AsyncOpenAI(api_key=api_key)
+    resp = await client.chat.completions.create(
+        model=model,
+        temperature=0.3,
+        messages=[
+            {"role": "system", "content": _EDITOR_SYSTEM.format(count=count)},
+            {"role": "user", "content": "Кандидаты:\n" + "\n".join(lines)},
+        ],
+        max_tokens=800,
+    )
+    raw = (resp.choices[0].message.content or "").strip()
+    m = re.search(r"\{[\s\S]*\}", raw)
+    if not m:
+        raise ValueError("редактор вернул не JSON")
+    data = json.loads(m.group(0))
+    idx = [int(i) for i in (data.get("picked") or []) if isinstance(i, (int, float))]
+    picked = [candidates[i] for i in idx if 0 <= i < len(candidates)]
+    if data.get("why"):
+        logger.info("editor: %s", str(data["why"])[:200])
+    return picked[:count]
 
 
 def _is_pokayanie(recording_kind: str) -> bool:
@@ -412,13 +479,30 @@ async def pick_audio_moments(
                     len(all_candidates),
                 )
             if all_candidates:
-                top = _rerank_candidates(all_candidates, final_count=count)
+                # Сначала механически убираем пересечения по времени — в список
+                # для редактора не должны попадать два куска одного отрезка.
+                pool = _rerank_candidates(
+                    all_candidates,
+                    final_count=max(count * 6, 30),
+                    min_gap_sec=0.0,
+                    theme_threshold=0.95,
+                )
+                try:
+                    top = await _pick_diverse_with_llm(
+                        pool, count=count, model=model, api_key=key
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "editor не сработал (%s), берём топ по score", e
+                    )
+                    top = pool[:count]
                 logger.info(
-                    "pick_audio_moments pool=%s → top=%s",
+                    "pick_audio_moments pool=%s → отобрано=%s",
                     len(all_candidates),
                     len(top),
                 )
-                return top
+                if top:
+                    return top
             raise MomentsUnavailableError(
                 "LLM вернула пустой список кандидатов по всем окнам расшифровки"
             )

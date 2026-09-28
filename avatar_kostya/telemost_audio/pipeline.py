@@ -19,7 +19,11 @@ from telemost_mail.imap_client import YandexImapClient
 from telemost_mail.timestamped_speech import parse_speech_segments
 from telemost_audio.caption_llm import build_audio_captions
 from telemost_audio.ffmpeg_render import render_audio_clips
-from telemost_audio.moments_llm import AudioClipMoment, pick_audio_moments
+from telemost_audio.moments_llm import (
+    AudioClipMoment,
+    MomentsUnavailableError,
+    pick_audio_moments,
+)
 from telemost_audio.recording_resolver import wait_and_download_audio
 from telemost_audio.tg_voice_delivery import TgAudioKind, prepare_ogg_path, send_tg_audio_path
 
@@ -314,15 +318,30 @@ async def _run_audio_pipeline(
         max_dur = int(getattr(config, "TELEMOST_AUDIO_CLIPS_MAX_DURATION_SEC", 90) or 90)
         philosophy = getattr(config, "TELEMOST_SHORTS_PHILOSOPHY_HINT", "") or ""
 
-        moments: List[AudioClipMoment] = await pick_audio_moments(
-            segments,
-            philosophy_hint=philosophy,
-            meeting_title=str(title),
-            count=count,
-            max_duration_sec=max_dur,
-            regenerate=regenerate_moments,
-            recording_kind=kind,
-        )
+        try:
+            moments: List[AudioClipMoment] = await pick_audio_moments(
+                segments,
+                philosophy_hint=philosophy,
+                meeting_title=str(title),
+                count=count,
+                max_duration_sec=max_dur,
+                regenerate=regenerate_moments,
+                recording_kind=kind,
+            )
+        except MomentsUnavailableError as e:
+            # Молча нарезать «как получится» нельзя: раньше на этом месте
+            # работал механический отбор по длине реплик, и сломанная выборка
+            # выглядела как обычный результат.
+            logger.warning("telemost_audio: нарезка остановлена: %s", e)
+            await bot.send_message(
+                chat_id,
+                "⛔ <b>Аудио: нарезка остановлена</b>\n\n"
+                f"Не удалось выбрать моменты: {str(e)[:300]}\n\n"
+                "Клипы НЕ нарезаны. Проверьте доступность модели и запустите заново.",
+                parse_mode="HTML",
+                message_thread_id=topic_id,
+            )
+            return
         if not moments:
             await bot.send_message(
                 chat_id,
