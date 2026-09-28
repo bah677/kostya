@@ -88,6 +88,17 @@ def theme_overlay_label(meta: VideoMetadata, trend: str = "") -> str:
     return format_prayer_theme_label(trend or _strip_shorts_suffix(meta.title), short=True)
 
 
+def _order_hashtags(tags: list[str]) -> list[str]:
+    """Тематические вперёд, #Shorts в хвост.
+
+    YouTube показывает над заголовком только первые три хэштега описания —
+    это единственная видимая часть. #Shorts там ничего не ищет и не даёт,
+    а слот занимает.
+    """
+    rest = [t for t in tags if t.casefold() != "#shorts"]
+    return rest + ["#Shorts"]
+
+
 def _metadata_system_prompt(*, strict: bool = False) -> str:
     extra = ""
     if strict:
@@ -108,8 +119,13 @@ def _metadata_system_prompt(*, strict: bool = False) -> str:
         "ЗАПРЕЩЕНО: обрыв на «—», «Молитва, когда X — обратись…», повелительное после тире, "
         "канцелярит, SEO-простыня без эмоции.\n"
         "thumbnail_title: 3–6 коротких слов для подписи НА ВИДЕО (крупно), без #Shorts.\n"
-        "description: 2–4 коротких абзаца + CTA; в конце Keywords через ---.\n"
-        "hashtags: 6–10 тегов, первый #Shorts.\n"
+        "description: 2–3 коротких абзаца. ОБЯЗАТЕЛЬНО отдельной строкой "
+        "призыв написать «Аминь» в комментариях — но как обмен, а не команду: "
+        "человек пишет «Аминь» и получает что-то в ответ (за него помолятся, "
+        "его имя прозвучит в молитве, он присоединяется к тем, кто молится "
+        "сегодня). Не «поставьте лайк и подпишитесь» списком — это не работает. "
+        "В конце Keywords через ---.\n"
+        "hashtags: 6–10 тегов по теме молитвы. #Shorts не пиши, он добавится сам.\n"
     )
 
 
@@ -123,7 +139,9 @@ def _fallback_short_metadata(*, trend: str, brief: str) -> VideoMetadata:
         "---\n"
         f"Keywords: молитва, shorts, христианская молитва, {trend}, вера, утешение"
     )
-    tags = ["#Shorts", "#молитва", "#вера", "#христианство", "#утешение"]
+    tags = _order_hashtags(
+        ["#молитва", "#вера", "#христианство", "#утешение", "#Shorts"]
+    )
     return VideoMetadata(
         title=title,
         thumbnail_title=core[:42],
@@ -142,9 +160,9 @@ async def _parse_metadata_response(
         if not thumb:
             thumb = _strip_shorts_suffix(title)[:42]
         description = str(data.get("description") or "").strip()
-        hashtags = _normalize_hashtags(data.get("hashtags") or [], lang="ru")
-        if "#Shorts".casefold() not in {h.casefold() for h in hashtags}:
-            hashtags = ["#Shorts"] + hashtags
+        hashtags = _order_hashtags(
+            _normalize_hashtags(data.get("hashtags") or [], lang="ru")
+        )
         if len(title) < 8 or len(description) < 40:
             raise ValueError("metadata too short")
         if not _title_quality_ok(title):

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import re
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
@@ -33,6 +34,24 @@ from youtube_shorts.metadata import generate_short_metadata, theme_overlay_label
 from youtube_shorts.uploader import shorts_upload_enabled, upload_short_premiere_if_enabled
 
 logger = logging.getLogger(__name__)
+
+# Призыв звучит голосом и попадает в субтитры: описание у шортсов почти никто
+# не открывает, а разрыв между 8% лайков и 0,6% комментариев говорит, что люди
+# готовы реагировать — их просто не просят. Формулировка не команда, а обмен.
+_DEFAULT_CTA = "Если эта молитва про тебя — напиши «Аминь» в комментариях, и я помолюсь за тебя."
+
+
+def _cta_text() -> str:
+    """Пустая строка в YT_SHORTS_CTA отключает призыв."""
+    raw = os.getenv("YT_SHORTS_CTA")
+    return (_DEFAULT_CTA if raw is None else raw).strip()
+
+
+def _with_cta(prayer: str) -> str:
+    cta = _cta_text()
+    if not cta:
+        return prayer
+    return f"{prayer.rstrip()}\n\n{cta}"
 _MSK = ZoneInfo("Europe/Moscow")
 
 
@@ -187,9 +206,12 @@ async def run_daily_youtube_shorts_pipeline(
                 work_dir=item_dir,
             )
 
+            # prayer.txt остаётся чистой молитвой, озвучиваем её вместе с призывом
+            spoken = _with_cta(prayer)
+
             await _notify(f"🎙 [Short {i}/{len(topics)}] TTS…")
             wav, _ogg, dur, _tts, word_timings = await synthesize_prayer_audio(
-                prayer,
+                spoken,
                 work_dir=item_dir,
                 voice_id=None,
                 lang="ru",
@@ -205,7 +227,7 @@ async def run_daily_youtube_shorts_pipeline(
                 duration_sec=dur,
                 width=SHORT_W,
                 height=SHORT_H,
-                prayer_text=prayer,
+                prayer_text=spoken,
             )
             covers = await generate_vertical_cover_pack(
                 item_dir,
@@ -224,7 +246,7 @@ async def run_daily_youtube_shorts_pipeline(
                 audio_wav=wav,
                 out_path=vertical,
                 duration_sec=dur,
-                prayer_text=prayer,
+                prayer_text=spoken,
                 work_dir=item_dir,
                 theme_label=theme_label,
                 word_timings=word_timings,

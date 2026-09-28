@@ -284,6 +284,9 @@ def _upload_sync(
             "tags": _tags_from_metadata(meta, lang=lang),
             "categoryId": str(category_id or "22"),
             "defaultLanguage": default_lang,
+            # Без него YouTube не знает язык дорожки: хуже таргетинг на
+            # русскоязычных и не включается автоперевод метаданных.
+            "defaultAudioLanguage": default_lang,
         },
         "status": {
             "privacyStatus": "private",
