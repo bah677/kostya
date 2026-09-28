@@ -31,27 +31,46 @@ from youtube_prayer.youtube_uploader import (
 from youtube_shorts.compose import ShortComposeIncompleteError, compose_short_prayer_for_topic
 from youtube_shorts.deliver import deliver_short_pack
 from youtube_shorts.metadata import generate_short_metadata, theme_overlay_label
+from youtube_shorts.tg_channel_publish import enqueue_short_voice
 from youtube_shorts.uploader import shorts_upload_enabled, upload_short_premiere_if_enabled
 
 logger = logging.getLogger(__name__)
 
-# Призыв звучит голосом и попадает в субтитры: описание у шортсов почти никто
-# не открывает, а разрыв между 8% лайков и 0,6% комментариев говорит, что люди
-# готовы реагировать — их просто не просят. Формулировка не команда, а обмен.
-_DEFAULT_CTA = "Если эта молитва про тебя — напиши «Аминь» в комментариях, и я помолюсь за тебя."
+# Сонастройка в начале и призыв в конце звучат голосом и попадают в субтитры.
+# prayer.txt остаётся чистой молитвой — обёртки только для озвучки.
+# Пустая строка в env отключает соответствующий кусок.
+_DEFAULT_ATTUNE = "Закрой глаза и давай вместе помолимся."
+_DEFAULT_CTA = (
+    "Если эта молитва про тебя — напиши «Аминь» в комментариях, "
+    "и я помолюсь за тебя."
+)
+
+
+def _attune_text() -> str:
+    raw = os.getenv("YT_SHORTS_ATTUNE")
+    return (_DEFAULT_ATTUNE if raw is None else raw).strip()
 
 
 def _cta_text() -> str:
-    """Пустая строка в YT_SHORTS_CTA отключает призыв."""
     raw = os.getenv("YT_SHORTS_CTA")
     return (_DEFAULT_CTA if raw is None else raw).strip()
 
 
-def _with_cta(prayer: str) -> str:
+def _spoken_prayer(prayer: str) -> str:
+    """Молитва + сонастройка в начале + CTA в конце (для TTS/субтитров)."""
+    parts: List[str] = []
+    attune = _attune_text()
+    if attune:
+        parts.append(attune)
+    body = (prayer or "").rstrip()
+    if body:
+        parts.append(body)
     cta = _cta_text()
-    if not cta:
-        return prayer
-    return f"{prayer.rstrip()}\n\n{cta}"
+    if cta:
+        parts.append(cta)
+    return "\n\n".join(parts) if parts else (prayer or "")
+
+
 _MSK = ZoneInfo("Europe/Moscow")
 
 
@@ -208,11 +227,11 @@ async def run_daily_youtube_shorts_pipeline(
                 index=i,
             )
 
-            # prayer.txt остаётся чистой молитвой, озвучиваем её вместе с призывом
-            spoken = _with_cta(prayer)
+            # prayer.txt остаётся чистой молитвой; сонастройка + CTA только в озвучке
+            spoken = _spoken_prayer(prayer)
 
             await _notify(f"🎙 [Short {i}/{len(topics)}] TTS…")
-            wav, _ogg, dur, _tts, word_timings = await synthesize_prayer_audio(
+            wav, ogg_path, dur, _tts, word_timings = await synthesize_prayer_audio(
                 spoken,
                 work_dir=item_dir,
                 voice_id=None,
@@ -268,6 +287,45 @@ async def run_daily_youtube_shorts_pipeline(
             )
             if yt is not None:
                 premiere_label = yt.premiere_label
+
+            # Голос в TG-канал — в тот же слот, что премьера на YouTube.
+            # Очередь живёт вне item_dir, чтобы cleanup после upload её не снёс.
+            try:
+                from datetime import datetime as _dt
+
+                publish_at = None
+                if yt is not None and getattr(yt, "publish_at_msk", None):
+                    try:
+                        publish_at = _dt.fromisoformat(str(yt.publish_at_msk))
+                    except Exception:
+                        publish_at = None
+                audio_src = None
+                if ogg_path and Path(ogg_path).is_file():
+                    audio_src = Path(ogg_path)
+                elif wav.is_file():
+                    audio_src = wav
+                job = enqueue_short_voice(
+                    work_root=work_root,
+                    item_dir=item_dir,
+                    day=day,
+                    index=i,
+                    title=meta.title,
+                    trend=topic.trend,
+                    audio_src=audio_src,
+                    publish_at_msk=publish_at,
+                )
+                if job is not None:
+                    try:
+                        jmeta = json.loads(
+                            (job / "job.json").read_text(encoding="utf-8")
+                        )
+                        slot = jmeta.get("premiere_label") or "?"
+                    except Exception:
+                        slot = "?"
+                    await _notify(f"📣 [Short {i}] голос в канал → {slot}")
+            except Exception as e:
+                logger.exception("tg voice enqueue failed: %s", e)
+                await _notify(f"⚠️ [Short {i}] голос в канал не поставлен: {e}")
 
             await deliver_short_pack(
                 bot,

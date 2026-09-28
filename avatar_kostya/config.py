@@ -358,6 +358,9 @@ class AppConfig:
     YT_SHORTS_TOPIC_ID: int = 0
     YT_SHORTS_YOUTUBE_UPLOAD_ENABLED: Optional[bool] = None
     YT_SHORTS_YOUTUBE_PREMIERE_HOURS_MSK: str = "0,3,6,9,12,15,18,21"
+    # Дубль Shorts голосовыми в TG-канал (нативный voice) с той же отложкой, что премьеры.
+    YT_SHORTS_TG_CHANNEL_ENABLED: bool = True
+    YT_SHORTS_TG_CHANNEL_ID: int = -1003995394243  # @lubyashieboga
     # Опционально: сток Pexels; без ключа — lavfi-фон.
     PEXELS_API_KEY: str = ""
 
@@ -1029,6 +1032,13 @@ def load_app_config() -> AppConfig:
             os.getenv("YT_SHORTS_YOUTUBE_PREMIERE_HOURS_MSK")
             or "0,3,6,9,12,15,18,21"
         ).strip(),
+        YT_SHORTS_TG_CHANNEL_ENABLED=_env_flag_true(
+            "YT_SHORTS_TG_CHANNEL_ENABLED", default=True
+        ),
+        YT_SHORTS_TG_CHANNEL_ID=int(
+            os.getenv("YT_SHORTS_TG_CHANNEL_ID", "-1003995394243")
+            or -1003995394243
+        ),
         PEXELS_API_KEY=(os.getenv("PEXELS_API_KEY") or "").strip(),
     )
 

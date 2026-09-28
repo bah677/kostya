@@ -113,13 +113,46 @@ class YoutubePrayerFeature(BaseFeature):
         self.log("/yt_prayer, /yt_shorts, /yt_run зарегистрированы")
 
     async def start_background_tasks(self) -> None:
+        # Очередь голосовых в канал Shorts — даже если ночной cron выключен:
+        # иначе /yt_shorts force поставит job'ы, а отправлять будет некому.
+        if (
+            self._app
+            and getattr(config, "YT_SHORTS_TG_CHANNEL_ENABLED", True)
+            and int(getattr(config, "YT_SHORTS_TG_CHANNEL_ID", 0) or 0)
+        ):
+            already = any(
+                t.get_name() == "yt_shorts_tg_voice_poll" and not t.done()
+                for t in self._tasks
+            )
+            if not already:
+                from youtube_shorts.tg_channel_publish import tg_voice_poll_loop
+
+                work = _abs_dir(
+                    getattr(config, "YT_SHORTS_WORK_DIR", None),
+                    "data/youtube_shorts",
+                )
+                self._tasks.append(
+                    asyncio.create_task(
+                        tg_voice_poll_loop(self._app.bot, work_root=work),
+                        name="yt_shorts_tg_voice_poll",
+                    )
+                )
+                self.log(
+                    "TG voice poll → chat "
+                    f"{getattr(config, 'YT_SHORTS_TG_CHANNEL_ID', 0)}"
+                )
+
         if not getattr(config, "YT_PRAYER_ENABLED", True):
             return
         if not getattr(config, "YT_SCHEDULE_ENABLED", True):
             # Команды остаются доступны — просто никто не будит их по часам.
             self.log("YT_SCHEDULE_ENABLED=0 — ночные прогоны не запускаются")
             return
-        if self._tasks:
+        # Ночные loops — не дублируем, если уже подняты (poller выше мог добавить task).
+        if any(
+            (t.get_name() or "").startswith("youtube_daily_") and not t.done()
+            for t in self._tasks
+        ):
             return
         h_hour, s_hour = _horiz_hour(), _shorts_hour()
         if h_hour == s_hour:
