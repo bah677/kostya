@@ -437,6 +437,36 @@ class GiftWaveMixin:
             logger.error("set_greeter_active: %s", e)
             return False
 
+    async def deactivate_greeters_without_active_license(self) -> List[int]:
+        """Снять с пула тех, у кого нет действующей лицензии."""
+        try:
+            async with self.get_connection() as conn:
+                rows = await conn.fetch(
+                    """
+                    UPDATE club_greeter g
+                    SET active = FALSE,
+                        notes = CASE
+                            WHEN g.notes IS NULL OR btrim(g.notes) = ''
+                            THEN 'auto: no active license'
+                            WHEN g.notes LIKE '%auto: no active license%'
+                            THEN g.notes
+                            ELSE g.notes || '; auto: no active license'
+                        END
+                    WHERE g.active = TRUE
+                      AND NOT EXISTS (
+                          SELECT 1 FROM license l
+                          WHERE l.user_id = g.user_id
+                            AND l.status = 'active'
+                            AND l.expires_at > NOW()
+                      )
+                    RETURNING g.user_id
+                    """
+                )
+                return [int(r["user_id"]) for r in rows]
+        except Exception as e:
+            logger.error("deactivate_greeters_without_active_license: %s", e)
+            return []
+
     async def pause_greeter_until(self, user_id: int, until: datetime) -> bool:
         try:
             async with self.get_connection() as conn:
@@ -515,6 +545,12 @@ class GiftWaveMixin:
                     ) a ON TRUE
                     WHERE g.active = TRUE
                       AND (g.paused_until IS NULL OR g.paused_until <= $2)
+                      AND EXISTS (
+                          SELECT 1 FROM license l
+                          WHERE l.user_id = g.user_id
+                            AND l.status = 'active'
+                            AND l.expires_at > NOW()
+                      )
                     ORDER BY COALESCE(a.cnt, 0) ASC, g.added_at ASC
                     """,
                     today_start,

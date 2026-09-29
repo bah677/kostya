@@ -255,6 +255,40 @@ class GiftWaveFeature(BaseFeature):
                     )
                 await message.answer("\n".join(lines), parse_mode=ParseMode.HTML)
                 return
+            if sub == "sync":
+                from bot.services.club_greeter_service import sync_greeter_pool_licenses
+
+                removed = await sync_greeter_pool_licenses(
+                    user_storage=self.user_storage
+                )
+                await message.answer(
+                    f"Снято без лицензии: {len(removed)}"
+                    + (f"\n<code>{removed}</code>" if removed else "")
+                )
+                return
+            if sub == "suggest":
+                from bot.services.club_greeter_service import (
+                    fetch_greeter_pool_candidates,
+                )
+
+                cands = await fetch_greeter_pool_candidates(
+                    self.user_storage, limit=15
+                )
+                if not cands:
+                    await message.answer("Подходящих кандидатов не нашёл.")
+                    return
+                lines = ["<b>Кандидаты в пул встречающих</b> (лицензия + в группе):"]
+                for r in cands:
+                    un = r.get("username") or r.get("first_name") or "—"
+                    lines.append(
+                        f"• <code>{r['user_id']}</code> @{un} — "
+                        f"ответов≈{r['replies_180d']}, за 30д={r['msgs_30d']}"
+                    )
+                lines.append(
+                    "\nДобавить: <code>/wave greeter add UID</code>"
+                )
+                await message.answer("\n".join(lines), parse_mode=ParseMode.HTML)
+                return
             if sub == "add" and len(parts) >= 3:
                 gid = int(parts[2].split()[0])
                 ok = await self.user_storage.upsert_club_greeter(gid, active=True)
@@ -274,7 +308,7 @@ class GiftWaveFeature(BaseFeature):
             "<code>/wave start|pause|stop ID</code>\n"
             "<code>/wave status [ID]</code>\n"
             "<code>/wave faster|slower ID</code>\n"
-            "<code>/wave greeter list|add UID|remove UID</code>",
+            "<code>/wave greeter list|suggest|sync|add UID|remove UID</code>",
             parse_mode=ParseMode.HTML,
         )
 

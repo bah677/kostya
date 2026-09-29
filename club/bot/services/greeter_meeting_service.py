@@ -24,6 +24,13 @@ MEETING_AT = datetime(2026, 9, 30, 13, 0, tzinfo=MSK)
 MORNING_AT = datetime(2026, 9, 30, 9, 0, tzinfo=MSK)
 PRE_MEETING_AT = datetime(2026, 9, 30, 12, 45, tzinfo=MSK)
 
+# Нет активной подписки / не в клубе — не слать напоминания
+EXCLUDE_USER_IDS = {
+    1608138917,  # Оксана @oksana_arinushkin
+    1915441022,  # Анжела Сиврова @angel_biscuit
+    1336205081,  # Sabina Alizade — бот заблокирован, без подписки
+}
+
 CB_COMING = f"gm:{MEETING_KEY}:coming"
 CB_CANT = f"gm:{MEETING_KEY}:cant"
 
@@ -40,7 +47,7 @@ def rsvp_keyboard() -> InlineKeyboardMarkup:
 
 
 async def collect_meeting_recipients(user_storage) -> List[int]:
-    """Активные встречающие + все админы (без дублей)."""
+    """Активные встречающие + все админы (без дублей и исключений)."""
     ids: Set[int] = set()
     for uid in await user_storage.list_active_club_greeter_ids():
         if uid > 0:
@@ -51,6 +58,7 @@ async def collect_meeting_recipients(user_storage) -> List[int]:
             ids.add(uid)
     if config.SUPER_ADMIN_ID:
         ids.add(int(config.SUPER_ADMIN_ID))
+    ids -= EXCLUDE_USER_IDS
     return sorted(ids)
 
 

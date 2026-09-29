@@ -21,6 +21,11 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 MSK = ZoneInfo("Europe/Moscow")
 
+# Не кандидаты в «сестринский» пул (служебные / нетипичные топы)
+GREETER_POOL_EXCLUDE_USER_IDS = {
+    8552051262,  # Анастасия
+}
+
 
 def club_message_deep_link(
     *,
@@ -128,8 +133,112 @@ async def assign_greeter_for_newcomer(
     return aid
 
 
+async def sync_greeter_pool_licenses(*, user_storage) -> list[int]:
+    """Деактивировать встречающих без активной лицензии. Возвращает uid."""
+    removed = await user_storage.deactivate_greeters_without_active_license()
+    if removed:
+        logger.info(
+            "greeter pool: deactivated without license n=%s ids=%s",
+            len(removed),
+            removed,
+        )
+    return removed
+
+
+async def fetch_greeter_pool_candidates(
+    user_storage,
+    *,
+    limit: int = 20,
+    min_replies: int = 25,
+    min_msgs_30d: int = 5,
+    exclude_user_ids: Optional[list[int]] = None,
+) -> list[dict]:
+    """Кандидаты в пул: активная лицензия, в группе, ответы в клубе, не в пуле."""
+    from config import config as cfg
+
+    chat_id = int(cfg.CLUB_GROUP_ID)
+    exclude: set[int] = set(GREETER_POOL_EXCLUDE_USER_IDS)
+    exclude.update(int(x) for x in (exclude_user_ids or []))
+    try:
+        for row in await user_storage.list_telegram_admin_ids():
+            exclude.add(int(row["telegram_user_id"]))
+        if cfg.SUPER_ADMIN_ID:
+            exclude.add(int(cfg.SUPER_ADMIN_ID))
+        for g in await user_storage.list_club_greeters():
+            if g.get("active"):
+                exclude.add(int(g["user_id"]))
+    except Exception as e:
+        logger.warning("fetch_greeter_pool_candidates exclude: %s", e)
+
+    try:
+        async with user_storage.pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                WITH replies AS (
+                  SELECT m.user_id AS greeter_id, COUNT(*)::int AS n
+                  FROM messages m
+                  WHERE m.chat_id = $1
+                    AND m.chat_type IN ('group', 'supergroup')
+                    AND m.sender_type = 'user'
+                    AND m.created_at >= NOW() - INTERVAL '180 days'
+                    AND m.raw_data ? 'reply_to_message'
+                    AND (m.raw_data->'reply_to_message'->>'message_id') IS NOT NULL
+                    AND COALESCE((m.raw_data->>'message_thread_id')::bigint, -1)
+                        IS DISTINCT FROM
+                        (m.raw_data->'reply_to_message'->>'message_id')::bigint
+                    AND COALESCE(
+                        (m.raw_data->'reply_to_message'->>'message_id')::bigint, 0
+                    ) > 10
+                  GROUP BY m.user_id
+                ),
+                recent AS (
+                  SELECT m.user_id, COUNT(*)::int AS n30
+                  FROM messages m
+                  WHERE m.chat_id = $1
+                    AND m.chat_type IN ('group', 'supergroup')
+                    AND m.sender_type = 'user'
+                    AND m.created_at >= NOW() - INTERVAL '30 days'
+                  GROUP BY m.user_id
+                )
+                SELECT r.greeter_id AS user_id,
+                       r.n AS replies_180d,
+                       COALESCE(rc.n30, 0)::int AS msgs_30d,
+                       u.username,
+                       u.first_name,
+                       u.last_name,
+                       l.expires_at
+                FROM replies r
+                JOIN users u ON u.user_id = r.greeter_id
+                JOIN club_group_member_cache c ON c.user_id = r.greeter_id
+                JOIN license l ON l.user_id = r.greeter_id
+                  AND l.status = 'active' AND l.expires_at > NOW()
+                LEFT JOIN recent rc ON rc.user_id = r.greeter_id
+                WHERE NOT (r.greeter_id = ANY($2::bigint[]))
+                  AND u.bot_blocked_at IS NULL
+                  AND r.n >= $3
+                  AND COALESCE(rc.n30, 0) >= $4
+                ORDER BY r.n DESC, COALESCE(rc.n30, 0) DESC
+                LIMIT $5
+                """,
+                chat_id,
+                list(exclude) or [0],
+                min_replies,
+                min_msgs_30d,
+                limit,
+            )
+            return [dict(r) for r in rows]
+    except Exception as e:
+        logger.error("fetch_greeter_pool_candidates: %s", e, exc_info=True)
+        return []
+
+
 async def process_greeter_timeouts(*, user_storage, bot: "Bot") -> None:
-    """90 мин → reassign; 180 мин (attempt>=2 без ответа) → bot follow-up."""
+    """Синк лицензий + 90 мин → reassign; 180 мин → bot follow-up."""
+    try:
+        await sync_greeter_pool_licenses(user_storage=user_storage)
+    except Exception as e:
+        logger.exception("greeter license sync: %s", e)
+
     pending_90 = await user_storage.list_pending_greeter_assignments(
         older_than_minutes=90
     )
