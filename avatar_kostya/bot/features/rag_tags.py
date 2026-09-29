@@ -37,6 +37,14 @@ async def extract_content_tags(text: str, *, sample_max: int = 6000) -> str:
             max_tokens=150,
             temperature=0.25,
         )
+        try:
+            from bot.services.llm_usage_tracker import log_from_response
+
+            await log_from_response(
+                r, provider="openai", model=model, request_kind="rag_tags"
+            )
+        except Exception:
+            pass
         out = r.choices[0].message.content if r.choices else ""
         return (out or "").strip()[:500]
     except Exception as e:

@@ -145,6 +145,17 @@ async def plan_retrieval_async(
             temperature=0.2,
             response_format={"type": "json_object"},
         )
+        try:
+            from bot.services.llm_usage_tracker import log_from_response
+
+            await log_from_response(
+                r,
+                provider="openai",
+                model=tag_model,
+                request_kind="rag_retrieval_plan",
+            )
+        except Exception:
+            pass
         out = r.choices[0].message.content if r.choices else ""
         plan = _parse_planner_json(out or "")
         if plan:

@@ -145,6 +145,14 @@ async def extract_disk_material_metadata(
                 temperature=0.2,
                 response_format={"type": "json_object"},
             )
+            try:
+                from bot.services.llm_usage_tracker import log_from_response
+
+                await log_from_response(
+                    r, provider="openai", model=model, request_kind="yadisk_metadata"
+                )
+            except Exception:
+                pass
             out = r.choices[0].message.content if r.choices else ""
             meta = _parse_json(out or "")
             if meta:

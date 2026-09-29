@@ -16,6 +16,7 @@ from storage.db.admin_gift_codes import AdminGiftCodesMixin
 from storage.db.gifts import GiftsMixin
 from storage.db.gift_wave import GiftWaveMixin
 from storage.db.gift_application import GiftApplicationMixin
+from storage.db.greeter_meeting import GreeterMeetingMixin
 from storage.db.club_first_week import ClubFirstWeekMixin
 from storage.db.legacy_reactivation import LegacyReactivationMixin
 from storage.db.licenses import LicensesMixin
@@ -58,6 +59,7 @@ class Database(
     MemberOutreachMixin,
     ClubScheduleMixin,
     GiftWaveMixin,
+    GreeterMeetingMixin,
     GiftApplicationMixin,
     ClubFirstWeekMixin,
     PromoCampaignsMixin,

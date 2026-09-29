@@ -224,6 +224,14 @@ async def build_full_voice_caption_parts(
                 temperature=0.7,
                 response_format={"type": "json_object"},
             )
+            try:
+                from bot.services.llm_usage_tracker import log_from_response
+
+                await log_from_response(
+                    r, provider="openai", model=model, request_kind="full_voice_caption"
+                )
+            except Exception:
+                pass
             raw = r.choices[0].message.content if r.choices else ""
             m = re.search(r"\{[\s\S]*\}", raw or "")
             if m:

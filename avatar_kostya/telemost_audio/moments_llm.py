@@ -361,6 +361,14 @@ async def _pick_diverse_with_llm(
         ],
         max_tokens=800,
     )
+    try:
+        from bot.services.llm_usage_tracker import log_from_response
+
+        await log_from_response(
+            resp, provider="openai", model=model, request_kind="audio_moments_editor"
+        )
+    except Exception:
+        pass
     raw = (resp.choices[0].message.content or "").strip()
     m = re.search(r"\{[\s\S]*\}", raw)
     if not m:
@@ -464,6 +472,17 @@ async def pick_audio_moments(
                     temperature=temperature,
                     response_format={"type": "json_object"},
                 )
+                try:
+                    from bot.services.llm_usage_tracker import log_from_response
+
+                    await log_from_response(
+                        r,
+                        provider="openai",
+                        model=model,
+                        request_kind="audio_moments_extract",
+                    )
+                except Exception:
+                    pass
                 out = r.choices[0].message.content if r.choices else ""
                 clips = _parse_clips(
                     out or "",

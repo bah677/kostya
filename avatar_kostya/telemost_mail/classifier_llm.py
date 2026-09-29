@@ -143,6 +143,14 @@ async def classify_telemost_summary(
                 temperature=0.2,
                 response_format={"type": "json_object"},
             )
+            try:
+                from bot.services.llm_usage_tracker import log_from_response
+
+                await log_from_response(
+                    r, provider="openai", model=model, request_kind="telemost_classify"
+                )
+            except Exception:
+                pass
             out = r.choices[0].message.content if r.choices else ""
             parsed = _parse_json(out or "")
             if parsed:

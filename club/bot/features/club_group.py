@@ -29,8 +29,12 @@ from bot.services.club_removal_card import (
     REASON_NIGHTLY_AUDIT,
     build_club_removal_card_html,
 )
-from bot.utils.admin_channel import send_admin_html_message
+from bot.utils.admin_channel import (
+    resolve_admin_service_thread_id,
+    send_admin_html_message,
+)
 from bot.utils.club_welcome import send_club_member_welcome
+from bot.utils.telegram_send import call_with_flood_retry
 from bot.utils.user_ui import render_user_screen, with_main_menu
 from config import config
 from storage.user_storage import UserStorage
@@ -1148,6 +1152,33 @@ class ClubGroupFeature(BaseFeature):
                 e,
             )
 
+    async def _alert_invite_link_failed(self, user_id: int, error: BaseException) -> None:
+        """Критический алерт в админ-чат: ссылка не создана после retry."""
+        err_safe = html.escape(str(error)[:500])
+        text = (
+            "🚨 <b>Критическая ошибка: инвайт в клуб</b>\n\n"
+            f"Не удалось создать персональную ссылку для "
+            f"<code>{user_id}</code> после паузы и повторов.\n\n"
+            f"<code>{err_safe}</code>\n\n"
+            "Пользователю ссылка <b>не</b> отправлена — нужна ручная выдача "
+            "(/club или повторная отправка билета)."
+        )
+        try:
+            thread_id = resolve_admin_service_thread_id()
+            gift_topic = int(
+                getattr(config, "GIFT_CAMPAIGN_ADMIN_TOPIC_ID", 0) or 0
+            )
+            if gift_topic > 0:
+                thread_id = gift_topic
+            await send_admin_html_message(self.bot, text, thread_id=thread_id)
+        except Exception as alert_err:
+            logger.error(
+                "[%s] invite fail alert uid=%s: %s",
+                self.name,
+                user_id,
+                alert_err,
+            )
+
     async def _create_fresh_invite_link(self, user_id: int) -> Optional[str]:
         """Отозвать старые инвайты пользователя и создать новую одноразовую ссылку."""
         try:
@@ -1159,10 +1190,18 @@ class ClubGroupFeature(BaseFeature):
             await self._revoke_user_unused_invites(user_id)
 
             expire_date = datetime.now() + timedelta(hours=config.CLUB_INVITE_TTL_HOURS)
-            link_obj = await self.bot.create_chat_invite_link(
-                chat_id=config.CLUB_GROUP_ID,
-                member_limit=1,
-                expire_date=expire_date,
+
+            async def _create():
+                return await self.bot.create_chat_invite_link(
+                    chat_id=config.CLUB_GROUP_ID,
+                    member_limit=1,
+                    expire_date=expire_date,
+                )
+
+            link_obj = await call_with_flood_retry(
+                _create,
+                max_attempts=4,
+                log_prefix=f"club_invite uid={user_id}",
             )
             logger.info("✅ Fresh invite link created for user %s", user_id)
             try:
@@ -1176,6 +1215,7 @@ class ClubGroupFeature(BaseFeature):
             return link_obj.invite_link
         except Exception as e:
             logger.error("❌ Failed to create invite link for user %s: %s", user_id, e)
+            await self._alert_invite_link_failed(user_id, e)
             return None
 
     async def revoke_expired_links(self) -> None:

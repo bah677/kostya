@@ -107,8 +107,11 @@ async def deepseek_complete(
     max_tokens: int = 2048,
     thinking: Optional[str] = None,
     reasoning_effort: Optional[str] = None,
+    request_kind: str = "yt_prayer_compose",
 ) -> tuple[Optional[str], Optional[str]]:
-    """Возвращает (text, finish_reason)."""
+    """Возвращает (text, finish_reason). Usage → token_usage."""
+    import time
+
     client = _client()
     kwargs = {
         "model": "deepseek-v4-flash",
@@ -123,6 +126,7 @@ async def deepseek_complete(
         kwargs["reasoning_effort"] = reasoning_effort
     if thinking:
         kwargs["extra_body"] = {"thinking": {"type": thinking}}
+    t0 = time.monotonic()
     try:
         resp = await asyncio.wait_for(
             client.chat.completions.create(**kwargs),
@@ -139,6 +143,18 @@ async def deepseek_complete(
             exc_info=True,
         )
         return None, None
+    try:
+        from bot.services.llm_usage_tracker import log_from_response
+
+        await log_from_response(
+            resp,
+            provider="deepseek",
+            model=str(kwargs["model"]),
+            request_kind=request_kind,
+            duration_sec=int(time.monotonic() - t0),
+        )
+    except Exception as e:
+        logger.debug("deepseek_complete usage log: %s", e)
     choice = resp.choices[0] if resp.choices else None
     text = None
     finish = None

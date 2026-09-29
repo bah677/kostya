@@ -268,6 +268,14 @@ async def build_audio_captions(
                 temperature=0.65,
                 response_format={"type": "json_object"},
             )
+            try:
+                from bot.services.llm_usage_tracker import log_from_response
+
+                await log_from_response(
+                    r, provider="openai", model=model, request_kind="audio_captions"
+                )
+            except Exception:
+                pass
             out = r.choices[0].message.content if r.choices else ""
             parsed = _parse_caption_items(out or "", len(moments))
         except Exception as e:

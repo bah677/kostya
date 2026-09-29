@@ -234,6 +234,10 @@ class TelegramBotApp:
             if ledger is not None and hasattr(ledger, "start_background_tasks"):
                 await ledger.start_background_tasks()
 
+            llm_cost = self.feature_manager.get_optional("llm_cost_report")
+            if llm_cost is not None and hasattr(llm_cost, "start_background_tasks"):
+                await llm_cost.start_background_tasks()
+
         except Exception as e:
             logger.error(f"❌ Ошибка запуска фоновых задач: {e}")
 
@@ -259,6 +263,10 @@ class TelegramBotApp:
             if ledger is not None and hasattr(ledger, "stop_background_tasks"):
                 await ledger.stop_background_tasks()
 
+            llm_cost = self.feature_manager.get_optional("llm_cost_report")
+            if llm_cost is not None and hasattr(llm_cost, "stop_background_tasks"):
+                await llm_cost.stop_background_tasks()
+
             if self.payment_checker:
                 await self.payment_checker.stop()
                 logger.info("✅ PaymentChecker остановлен")
@@ -269,6 +277,13 @@ class TelegramBotApp:
     async def initialize(self) -> None:
         try:
             await self.user_storage.initialize()
+
+            from bot.services.llm_usage_tracker import configure as configure_llm_usage
+
+            configure_llm_usage(
+                self.user_storage,
+                default_user_id=int(getattr(config, "SUPER_ADMIN_ID", 0) or 0),
+            )
 
             from bot.integrations.rag_bridge import try_build_rag_stack
 

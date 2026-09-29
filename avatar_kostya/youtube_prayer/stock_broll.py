@@ -554,6 +554,16 @@ async def _openai_one_image(
                 dest.write_bytes(r.content)
         else:
             return None
+        try:
+            from bot.services.llm_usage_tracker import log_image_generation
+
+            await log_image_generation(
+                model=model,
+                request_kind="broll_image",
+                usage=getattr(resp, "usage", None),
+            )
+        except Exception:
+            pass
         return dest if dest.is_file() and dest.stat().st_size > 500 else None
     except Exception as e:
         logger.warning("OpenAI image failed (%s): %s", model, e)
@@ -578,6 +588,16 @@ async def _openai_one_image(
                     dest.write_bytes(r.content)
             else:
                 return None
+            try:
+                from bot.services.llm_usage_tracker import log_image_generation
+
+                await log_image_generation(
+                    model="dall-e-3",
+                    request_kind="broll_image",
+                    usage=getattr(resp, "usage", None),
+                )
+            except Exception:
+                pass
             return dest if dest.is_file() and dest.stat().st_size > 500 else None
         except Exception as e2:
             logger.warning("dall-e-3 fallback failed: %s", e2)

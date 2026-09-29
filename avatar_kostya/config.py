@@ -361,6 +361,10 @@ class AppConfig:
     # Дубль Shorts голосовыми в TG-канал (нативный voice) с той же отложкой, что премьеры.
     YT_SHORTS_TG_CHANNEL_ENABLED: bool = True
     YT_SHORTS_TG_CHANNEL_ID: int = -1003995394243  # @lubyashieboga
+    # Ежедневный отчёт расходов LLM → админ-группа клуба, топик «статистика»
+    LLM_COST_REPORT_ENABLED: bool = True
+    LLM_COST_REPORT_CHAT_ID: int = -1003415479914
+    LLM_COST_REPORT_TOPIC_ID: int = 436
     # Опционально: сток Pexels; без ключа — lavfi-фон.
     PEXELS_API_KEY: str = ""
 
@@ -1038,6 +1042,16 @@ def load_app_config() -> AppConfig:
         YT_SHORTS_TG_CHANNEL_ID=int(
             os.getenv("YT_SHORTS_TG_CHANNEL_ID", "-1003995394243")
             or -1003995394243
+        ),
+        LLM_COST_REPORT_ENABLED=_env_flag_true(
+            "LLM_COST_REPORT_ENABLED", default=True
+        ),
+        LLM_COST_REPORT_CHAT_ID=int(
+            os.getenv("LLM_COST_REPORT_CHAT_ID", "-1003415479914")
+            or -1003415479914
+        ),
+        LLM_COST_REPORT_TOPIC_ID=int(
+            os.getenv("LLM_COST_REPORT_TOPIC_ID", "436") or 436
         ),
         PEXELS_API_KEY=(os.getenv("PEXELS_API_KEY") or "").strip(),
     )

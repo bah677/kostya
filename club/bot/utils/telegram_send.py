@@ -15,10 +15,20 @@ from bot.utils.telegram_html import sanitize_telegram_html, split_telegram_html_
 logger = logging.getLogger(__name__)
 
 TELEGRAM_HTML_CHUNK_LEN = 3800
-_RETRY_AFTER_RE = re.compile(r"retry after (\d+)", re.IGNORECASE)
+_RETRY_AFTER_RE = re.compile(
+    r"retry (?:after|in)\s+(\d+)",
+    re.IGNORECASE,
+)
 
 
 def parse_telegram_retry_after(exc: BaseException) -> Optional[int]:
+    """Секунды ожидания из TelegramRetryAfter или текста Flood control."""
+    attr = getattr(exc, "retry_after", None)
+    if attr is not None:
+        try:
+            return max(1, int(attr))
+        except (TypeError, ValueError):
+            pass
     m = _RETRY_AFTER_RE.search(str(exc))
     if not m:
         return None

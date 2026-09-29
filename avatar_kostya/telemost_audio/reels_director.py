@@ -442,6 +442,17 @@ async def _call_openai_messages(
             resp = await client.chat.completions.create(**kwargs)
         else:
             raise
+    try:
+        from bot.services.llm_usage_tracker import log_from_response
+
+        await log_from_response(
+            resp,
+            provider="openai",
+            model=str(kwargs.get("model") or model),
+            request_kind="reels_openai",
+        )
+    except Exception as e:
+        logger.debug("reels openai usage: %s", e)
     choice = resp.choices[0] if resp.choices else None
     text = (
         (getattr(choice.message, "content", None) or "").strip() if choice else ""
@@ -991,9 +1002,10 @@ async def _call_deepseek_rubric(
         timeout=150.0,
         max_retries=2,
     )
+    review_model = _get_review_model()
     resp = await asyncio.wait_for(
         client.chat.completions.create(
-            model=_get_review_model(),
+            model=review_model,
             messages=[
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
@@ -1003,6 +1015,17 @@ async def _call_deepseek_rubric(
         ),
         timeout=120.0,
     )
+    try:
+        from bot.services.llm_usage_tracker import log_from_response
+
+        await log_from_response(
+            resp,
+            provider="deepseek",
+            model=str(review_model),
+            request_kind="reels_rubric",
+        )
+    except Exception as e:
+        logger.debug("reels rubric usage: %s", e)
     choice = resp.choices[0] if resp.choices else None
     text = (
         (getattr(choice.message, "content", None) or "").strip() if choice else ""

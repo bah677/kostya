@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
@@ -18,6 +19,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 MSK = ZoneInfo("Europe/Moscow")
+
+# Пауза между персональными инвайтами в батче — антифлуд Telegram CreateChatInviteLink
+_WAVE_INVITE_PAUSE_SEC = 1.5
 
 
 async def evaluate_wave_thresholds(
@@ -327,6 +331,7 @@ async def grant_wave_batch(
                 logger.error("wave invite uid=%s: %s", uid, e)
 
         if not invite_ok and not defer_license:
+            # Лицензия уже выдана; без кнопки в группу — только подсказка открыть /club
             try:
                 await bot.send_message(
                     uid,
@@ -341,19 +346,13 @@ async def grant_wave_batch(
             except Exception as e:
                 logger.error("wave DM uid=%s: %s", uid, e)
         elif not invite_ok and defer_license:
-            try:
-                from bot.texts import ru_gift_application as ga_txt
-
-                user = await user_storage.get_user(uid)
-                name = (user or {}).get("first_name")
-                await bot.send_message(
-                    uid,
-                    ga_txt.T16_HTML.format(name_line=ga_txt.t16_name_line(name)),
-                    parse_mode=ParseMode.HTML,
-                    disable_web_page_preview=True,
-                )
-            except Exception as e:
-                logger.error("wave T16 fallback uid=%s: %s", uid, e)
+            # Билет без кнопки не шлём: алерт уже ушёл из _create_fresh_invite_link
+            logger.error(
+                "wave gift ticket invite missing uid=%s wave=%s "
+                "(no T16 without button)",
+                uid,
+                wave_id,
+            )
 
         granted += 1
         try:
@@ -367,6 +366,8 @@ async def grant_wave_batch(
             )
         except Exception:
             pass
+
+        await asyncio.sleep(_WAVE_INVITE_PAUSE_SEC)
 
     await user_storage.touch_wave_last_batch(wave_id)
     remaining = await user_storage.list_queued_wave_members(wave_id, limit=1)

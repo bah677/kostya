@@ -156,6 +156,17 @@ async def _elevenlabs_mp3(
                 raise RuntimeError(f"ElevenLabs HTTP {resp.status}: {err}")
             if not raw:
                 raise RuntimeError("ElevenLabs empty body")
+            try:
+                from bot.services.llm_usage_tracker import log_elevenlabs_tts
+
+                await log_elevenlabs_tts(
+                    model_id=model_id,
+                    chars=len(body),
+                    voice_id=vid,
+                    request_kind="tts",
+                )
+            except Exception:
+                pass
             return raw
 
 
@@ -248,6 +259,17 @@ async def _elevenlabs_mp3_with_timings(
     mp3 = base64.b64decode(b64)
     alignment = data.get("normalized_alignment") or data.get("alignment") or {}
     timings = _words_from_char_alignment(alignment)
+    try:
+        from bot.services.llm_usage_tracker import log_elevenlabs_tts
+
+        await log_elevenlabs_tts(
+            model_id=model_id,
+            chars=len(body),
+            voice_id=vid,
+            request_kind="tts_with_timestamps",
+        )
+    except Exception:
+        pass
     return mp3, timings
 
 

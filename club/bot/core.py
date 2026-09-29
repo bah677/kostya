@@ -25,6 +25,7 @@ from bot.features.legal_consent import LegalConsentFeature
 from bot.features.gift_activation import GiftActivationFeature
 from bot.features.gift_application import GiftApplicationFeature
 from bot.features.gift_wave import GiftWaveFeature
+from bot.features.greeter_meeting import GreeterMeetingFeature
 from bot.features.mailing import MailingFeature
 from bot.features.media_id_helper import MediaIdHelperFeature
 from bot.features.member_gift_extension import MemberGiftExtensionFeature
@@ -173,6 +174,12 @@ class TelegramBot(TelegramBotApp):
             feature_manager=self.feature_manager,
         )
 
+        greeter_meeting_feature = GreeterMeetingFeature(
+            user_storage=self.user_storage,
+            bot=self.bot,
+            message_copier=self.message_copier,
+        )
+
         gift_application_feature = GiftApplicationFeature(
             user_storage=self.user_storage,
             bot=self.bot,
@@ -276,6 +283,7 @@ class TelegramBot(TelegramBotApp):
             club_topic_assist_feature,
             gift_activation_feature,
             gift_wave_feature,
+            greeter_meeting_feature,
             gift_application_feature,
             subscription_info_feature,
             mailing_feature,

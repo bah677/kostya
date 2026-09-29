@@ -144,6 +144,17 @@ async def _gen_cover_bg(
             kwargs["response_format"] = "b64_json"
         resp = await client.images.generate(**kwargs)
         if await _save_image_response_item(resp.data[0], dest):
+            try:
+                from bot.services.llm_usage_tracker import log_image_generation
+
+                await log_image_generation(
+                    model=model,
+                    request_kind="cover_image",
+                    usage=getattr(resp, "usage", None),
+                    metadata={"size": size, "vertical": bool(vertical)},
+                )
+            except Exception:
+                pass
             return True
     except Exception as e:
         logger.warning("cover bg gen failed model=%s: %s", model, e)
@@ -156,6 +167,16 @@ async def _gen_cover_bg(
                     size="1024x1792" if size != "1536x1024" else "1792x1024",
                 )
                 if await _save_image_response_item(resp.data[0], dest):
+                    try:
+                        from bot.services.llm_usage_tracker import log_image_generation
+
+                        await log_image_generation(
+                            model="dall-e-3",
+                            request_kind="cover_image",
+                            usage=getattr(resp, "usage", None),
+                        )
+                    except Exception:
+                        pass
                     return True
             except Exception as e2:
                 logger.warning("cover dall-e-3 failed: %s", e2)
