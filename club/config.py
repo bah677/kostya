@@ -222,6 +222,14 @@ class Config:
     #: Подарочная волна: партии + встречающие.
     GIFT_WAVE_ENABLED: bool = True
     GIFT_WAVE_LICENSE_DAYS: int = 30
+    #: Срок жизни билета волны и ссылки в группу (дни с момента выдачи).
+    GIFT_TICKET_TTL_DAYS: int = 7
+    #: Закрытый чат команды встречающих (t.me/c/4437284627 → -100…).
+    GREETER_CHAT_ID: int = -1004437284627
+    #: Основной топик в этом чате (ссылка t.me/c/…/3).
+    GREETER_CHAT_TOPIC_ID: int = 3
+    GREETER_CHAT_INVITE_TTL_HOURS: int = 48
+    GREETER_CHAT_ENABLED: bool = True
 
     #: Анкета подарочной волны (gift-2026-09).
     GIFT_CAMPAIGN_ENABLED: bool = True
@@ -776,6 +784,17 @@ def load_config() -> Config:
         GIFT_WAVE_LICENSE_DAYS=_safe_int_env(
             "GIFT_WAVE_LICENSE_DAYS", 30, min_v=1, max_v=365
         ),
+        GIFT_TICKET_TTL_DAYS=_safe_int_env(
+            "GIFT_TICKET_TTL_DAYS", 7, min_v=1, max_v=30
+        ),
+        GREETER_CHAT_ID=int(os.getenv("GREETER_CHAT_ID", "-1004437284627") or "0"),
+        GREETER_CHAT_TOPIC_ID=_safe_int_env(
+            "GREETER_CHAT_TOPIC_ID", 3, min_v=0, max_v=10_000_000
+        ),
+        GREETER_CHAT_INVITE_TTL_HOURS=_safe_int_env(
+            "GREETER_CHAT_INVITE_TTL_HOURS", 48, min_v=1, max_v=168
+        ),
+        GREETER_CHAT_ENABLED=_env_bool("GREETER_CHAT_ENABLED", True),
         GIFT_CAMPAIGN_ENABLED=_env_bool("GIFT_CAMPAIGN_ENABLED", True),
         GIFT_CAMPAIGN_TICKETS=_safe_int_env(
             "GIFT_CAMPAIGN_TICKETS", 150, min_v=1, max_v=1000

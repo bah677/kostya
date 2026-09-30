@@ -133,7 +133,9 @@ async def assign_greeter_for_newcomer(
     return aid
 
 
-async def sync_greeter_pool_licenses(*, user_storage) -> list[int]:
+async def sync_greeter_pool_licenses(
+    *, user_storage, bot: Optional["Bot"] = None
+) -> list[int]:
     """Деактивировать встречающих без активной лицензии. Возвращает uid."""
     removed = await user_storage.deactivate_greeters_without_active_license()
     if removed:
@@ -142,6 +144,14 @@ async def sync_greeter_pool_licenses(*, user_storage) -> list[int]:
             len(removed),
             removed,
         )
+        if bot is not None:
+            from bot.services.greeter_room_service import on_greeter_deactivated
+
+            for uid in removed:
+                try:
+                    await on_greeter_deactivated(bot, user_storage, uid)
+                except Exception as e:
+                    logger.warning("greeter room kick after license sync uid=%s: %s", uid, e)
     return removed
 
 
@@ -235,7 +245,7 @@ async def fetch_greeter_pool_candidates(
 async def process_greeter_timeouts(*, user_storage, bot: "Bot") -> None:
     """Синк лицензий + 90 мин → reassign; 180 мин → bot follow-up."""
     try:
-        await sync_greeter_pool_licenses(user_storage=user_storage)
+        await sync_greeter_pool_licenses(user_storage=user_storage, bot=bot)
     except Exception as e:
         logger.exception("greeter license sync: %s", e)
 
@@ -253,7 +263,18 @@ async def process_greeter_timeouts(*, user_storage, bot: "Bot") -> None:
         ).total_seconds() / 60.0
 
         if attempt == 1 and age_min >= 90:
-            await user_storage.mark_greeter_reassigned(aid)
+            deactivated = await user_storage.mark_greeter_reassigned(aid)
+            if deactivated:
+                try:
+                    from bot.services.greeter_room_service import on_greeter_deactivated
+
+                    await on_greeter_deactivated(bot, user_storage, int(deactivated))
+                except Exception as e:
+                    logger.warning(
+                        "greeter room kick after miss_streak uid=%s: %s",
+                        deactivated,
+                        e,
+                    )
             try:
                 await user_storage.log_interaction(
                     user_id=newcomer_id,

@@ -973,16 +973,42 @@ class ClubGroupFeature(BaseFeature):
             logger.error(f"❌ Admin gift invite message failed for user {user_id}: {e}")
             return False
 
-    async def send_gift_ticket_invite(self, user_id: int) -> bool:
-        """Т16: билет волны без даты окончания — лицензия активируется при входе."""
+    async def send_gift_ticket_invite(
+        self,
+        user_id: int,
+        *,
+        expire_at: Optional[datetime] = None,
+        message_html: Optional[str] = None,
+    ) -> bool:
+        """Т16: билет волны — лицензия при входе. Ссылка живёт до expire_at (по умолч. 7 дн.)."""
         from bot.texts import ru_gift_application as ga_txt
 
-        link = await self._create_fresh_invite_link(user_id)
+        ttl_days = int(getattr(config, "GIFT_TICKET_TTL_DAYS", 7) or 7)
+        if expire_at is None:
+            expire_at = datetime.now() + timedelta(days=ttl_days)
+        # Telegram: expire_date должен быть в будущем
+        if expire_at.tzinfo is not None:
+            now = datetime.now(expire_at.tzinfo)
+        else:
+            now = datetime.now()
+        if expire_at <= now + timedelta(minutes=5):
+            logger.warning(
+                "[%s] gift ticket invite skip uid=%s: expire_at too soon %s",
+                self.name,
+                user_id,
+                expire_at,
+            )
+            return False
+
+        link = await self._create_fresh_invite_link(user_id, expire_at=expire_at)
         if not link:
             return False
-        user = await self.user_storage.get_user(user_id)
-        name = (user or {}).get("first_name")
-        message_text = ga_txt.T16_HTML.format(name_line=ga_txt.t16_name_line(name))
+        if message_html:
+            message_text = message_html
+        else:
+            user = await self.user_storage.get_user(user_id)
+            name = (user or {}).get("first_name")
+            message_text = ga_txt.T16_HTML.format(name_line=ga_txt.t16_name_line(name))
         try:
             keyboard = InlineKeyboardMarkup(
                 inline_keyboard=[
@@ -1011,6 +1037,64 @@ class ClubGroupFeature(BaseFeature):
             return True
         except Exception as e:
             logger.error("❌ Gift ticket invite failed uid=%s: %s", user_id, e)
+            from bot.utils.telegram_errors import is_user_unreachable_error
+
+            if is_user_unreachable_error(e):
+                try:
+                    await self.user_storage.deactivate_user(user_id)
+                except Exception:
+                    pass
+                released = await self.user_storage.release_granted_gift_ticket(
+                    user_id, reason="bot_blocked"
+                )
+                if released:
+                    try:
+                        await self.user_storage.log_interaction(
+                            user_id=user_id,
+                            event_category="gift_application",
+                            event_type="gift_ticket_released",
+                            data={
+                                "wave_id": int(released["wave_id"]),
+                                "reason": "bot_blocked",
+                            },
+                            source="gift_application",
+                            outcome="success",
+                        )
+                    except Exception:
+                        pass
+                    logger.info(
+                        "[%s] gift ticket released (bot blocked) uid=%s wave=%s",
+                        self.name,
+                        user_id,
+                        released.get("wave_id"),
+                    )
+            return False
+
+    async def send_gift_ticket_expired_notice(self, user_id: int) -> bool:
+        """Билет сгорел: предложить снова заполнить анкету."""
+        from bot.texts import ru_gift_application as ga_txt
+
+        try:
+            keyboard = InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        InlineKeyboardButton(
+                            text=ga_txt.BTN_APPLY,
+                            callback_data=ga_txt.CB_APPLY,
+                        )
+                    ]
+                ]
+            )
+            await self.bot.send_message(
+                chat_id=user_id,
+                text=ga_txt.T16_EXPIRED_HTML,
+                reply_markup=keyboard,
+                parse_mode=ParseMode.HTML,
+                disable_web_page_preview=True,
+            )
+            return True
+        except Exception as e:
+            logger.error("gift ticket expired notice uid=%s: %s", user_id, e)
             return False
 
     async def send_wish_board_gift_invite(
@@ -1179,7 +1263,12 @@ class ClubGroupFeature(BaseFeature):
                 alert_err,
             )
 
-    async def _create_fresh_invite_link(self, user_id: int) -> Optional[str]:
+    async def _create_fresh_invite_link(
+        self,
+        user_id: int,
+        *,
+        expire_at: Optional[datetime] = None,
+    ) -> Optional[str]:
         """Отозвать старые инвайты пользователя и создать новую одноразовую ссылку."""
         try:
             if config.CLUB_GROUP_ID == 0:
@@ -1189,7 +1278,12 @@ class ClubGroupFeature(BaseFeature):
             await self._ensure_user_unbanned_for_invite(user_id)
             await self._revoke_user_unused_invites(user_id)
 
-            expire_date = datetime.now() + timedelta(hours=config.CLUB_INVITE_TTL_HOURS)
+            if expire_at is not None:
+                expire_date = expire_at
+            else:
+                expire_date = datetime.now() + timedelta(
+                    hours=config.CLUB_INVITE_TTL_HOURS
+                )
 
             async def _create():
                 return await self.bot.create_chat_invite_link(
@@ -1208,7 +1302,9 @@ class ClubGroupFeature(BaseFeature):
                 await self.user_storage.insert_club_invite(
                     user_id=user_id,
                     invite_link=link_obj.invite_link,
-                    expires_at=expire_date,
+                    expires_at=expire_date.replace(tzinfo=None)
+                    if getattr(expire_date, "tzinfo", None)
+                    else expire_date,
                 )
             except Exception as e:
                 logger.error("❌ Failed to save invite record for user %s: %s", user_id, e)

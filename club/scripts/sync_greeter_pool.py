@@ -121,6 +121,12 @@ async def main() -> None:
             logger.info("upsert greeter uid=%s ok=%s %s", uid, ok, _label(r))
             if ok:
                 added_ids.append(uid)
+                try:
+                    from bot.services.greeter_room_service import on_greeter_activated
+
+                    await on_greeter_activated(bot, storage, uid)
+                except Exception as e:
+                    logger.warning("greeter room invite uid=%s: %s", uid, e)
 
         if args.invite_meeting and added_ids:
             stats = await gm.blast_invite(

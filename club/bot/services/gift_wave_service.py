@@ -303,6 +303,16 @@ async def grant_wave_batch(
             )
             continue
 
+        profile = await user_storage.get_user(uid)
+        if profile and profile.get("bot_blocked_at"):
+            await user_storage.mark_wave_member_declined(
+                wave_id, uid, reason="bot_blocked"
+            )
+            logger.info(
+                "wave grant skip bot blocked uid=%s wave=%s", uid, wave_id
+            )
+            continue
+
         if not defer_license:
             result = await user_storage.grant_admin_gift_license(
                 uid,
@@ -346,7 +356,14 @@ async def grant_wave_batch(
             except Exception as e:
                 logger.error("wave DM uid=%s: %s", uid, e)
         elif not invite_ok and defer_license:
-            # Билет без кнопки не шлём: алерт уже ушёл из _create_fresh_invite_link
+            still = await user_storage.get_pending_gift_ticket(uid)
+            if not still:
+                logger.warning(
+                    "wave gift ticket released after invite fail uid=%s wave=%s",
+                    uid,
+                    wave_id,
+                )
+                continue
             logger.error(
                 "wave gift ticket invite missing uid=%s wave=%s "
                 "(no T16 without button)",

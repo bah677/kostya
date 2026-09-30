@@ -259,11 +259,29 @@ class GiftWaveFeature(BaseFeature):
                 from bot.services.club_greeter_service import sync_greeter_pool_licenses
 
                 removed = await sync_greeter_pool_licenses(
-                    user_storage=self.user_storage
+                    user_storage=self.user_storage, bot=self.bot
                 )
                 await message.answer(
                     f"Снято без лицензии: {len(removed)}"
                     + (f"\n<code>{removed}</code>" if removed else "")
+                )
+                return
+            if sub in ("room", "room-sync"):
+                from bot.services.greeter_room_service import (
+                    greeter_chat_configured,
+                    sync_greeter_chat_invites,
+                )
+
+                if not greeter_chat_configured():
+                    await message.answer("Чат встречающих не настроен (GREETER_CHAT_*).")
+                    return
+                await message.answer("Рассылаю инвайты в чат команды…")
+                stats = await sync_greeter_chat_invites(
+                    self.bot, self.user_storage, include_admins=True
+                )
+                await message.answer(
+                    f"Чат встречающих: ok={stats.get('ok')} "
+                    f"fail={stats.get('fail')} total={stats.get('total')}"
                 )
                 return
             if sub == "suggest":
@@ -290,13 +308,21 @@ class GiftWaveFeature(BaseFeature):
                 await message.answer("\n".join(lines), parse_mode=ParseMode.HTML)
                 return
             if sub == "add" and len(parts) >= 3:
+                from bot.services.greeter_room_service import on_greeter_activated
+
                 gid = int(parts[2].split()[0])
                 ok = await self.user_storage.upsert_club_greeter(gid, active=True)
+                if ok:
+                    await on_greeter_activated(self.bot, self.user_storage, gid)
                 await message.answer(f"{'✅' if ok else '❌'} greeter {gid}")
                 return
             if sub == "remove" and len(parts) >= 3:
+                from bot.services.greeter_room_service import on_greeter_deactivated
+
                 gid = int(parts[2].split()[0])
                 ok = await self.user_storage.set_greeter_active(gid, False)
+                if ok:
+                    await on_greeter_deactivated(self.bot, self.user_storage, gid)
                 await message.answer(f"{'✅' if ok else '❌'} greeter {gid} off")
                 return
 
@@ -308,7 +334,7 @@ class GiftWaveFeature(BaseFeature):
             "<code>/wave start|pause|stop ID</code>\n"
             "<code>/wave status [ID]</code>\n"
             "<code>/wave faster|slower ID</code>\n"
-            "<code>/wave greeter list|suggest|sync|add UID|remove UID</code>",
+            "<code>/wave greeter list|suggest|sync|room|add UID|remove UID</code>",
             parse_mode=ParseMode.HTML,
         )
 
@@ -354,8 +380,11 @@ class GiftWaveFeature(BaseFeature):
             pass
 
     async def _cb_greeter_leave(self, callback: CallbackQuery) -> None:
+        from bot.services.greeter_room_service import on_greeter_deactivated
+
         uid = callback.from_user.id if callback.from_user else 0
         await self.user_storage.set_greeter_active(uid, False)
+        await on_greeter_deactivated(self.bot, self.user_storage, uid)
         await callback.answer("Снял с пула")
         try:
             await callback.message.answer(txt.GREETER_LEFT_POOL_HTML)
@@ -363,8 +392,11 @@ class GiftWaveFeature(BaseFeature):
             pass
 
     async def _cb_greeter_invite_yes(self, callback: CallbackQuery) -> None:
+        from bot.services.greeter_room_service import on_greeter_activated
+
         uid = callback.from_user.id if callback.from_user else 0
         await self.user_storage.upsert_club_greeter(uid, active=True, capacity=3)
+        await on_greeter_activated(self.bot, self.user_storage, uid)
         await callback.answer("Спасибо!")
         try:
             await callback.message.answer(txt.GREETER_INVITE_ACCEPTED_HTML)
@@ -372,8 +404,11 @@ class GiftWaveFeature(BaseFeature):
             pass
 
     async def _cb_greeter_invite_no(self, callback: CallbackQuery) -> None:
+        from bot.services.greeter_room_service import on_greeter_deactivated
+
         uid = callback.from_user.id if callback.from_user else 0
         await self.user_storage.set_greeter_active(uid, False)
+        await on_greeter_deactivated(self.bot, self.user_storage, uid)
         await callback.answer("Хорошо")
         try:
             await callback.message.answer(txt.GREETER_INVITE_DECLINED_HTML)

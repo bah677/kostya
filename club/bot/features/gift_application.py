@@ -1157,7 +1157,10 @@ class GiftApplicationFeature(BaseFeature):
                     pass
 
             expired_tickets = await self.user_storage.expire_unactivated_gift_tickets(
-                days=7
+                days=int(getattr(config, "GIFT_TICKET_TTL_DAYS", 7) or 7)
+            )
+            club_group = (
+                self.feature_manager.get("club_group") if self.feature_manager else None
             )
             for t in expired_tickets:
                 try:
@@ -1171,6 +1174,16 @@ class GiftApplicationFeature(BaseFeature):
                     )
                 except Exception:
                     pass
+                if club_group and hasattr(club_group, "send_gift_ticket_expired_notice"):
+                    try:
+                        await club_group.send_gift_ticket_expired_notice(int(t["user_id"]))
+                    except Exception as ne:
+                        logger.warning(
+                            "[%s] expired ticket notice uid=%s: %s",
+                            self.name,
+                            t.get("user_id"),
+                            ne,
+                        )
 
             try:
                 alert_res = await run_gift_campaign_alerts(

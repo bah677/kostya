@@ -222,6 +222,40 @@ class GiftWaveMixin:
             )
             return False
 
+    async def release_granted_gift_ticket(
+        self, user_id: int, *, reason: str = "bot_blocked"
+    ) -> Optional[Dict[str, Any]]:
+        """Освободить неактивированный билет (granted → declined)."""
+        try:
+            async with self.get_connection() as conn:
+                row = await conn.fetchrow(
+                    """
+                    UPDATE gift_wave_member
+                    SET status = 'declined'
+                    WHERE user_id = $1 AND status = 'granted'
+                    RETURNING *
+                    """,
+                    user_id,
+                )
+                if row:
+                    logger.info(
+                        "release_granted_gift_ticket uid=%s wave=%s reason=%s",
+                        user_id,
+                        row["wave_id"],
+                        reason,
+                    )
+                    return dict(row)
+                return None
+        except Exception as e:
+            logger.error(
+                "release_granted_gift_ticket uid=%s reason=%s: %s",
+                user_id,
+                reason,
+                e,
+                exc_info=True,
+            )
+            return None
+
     async def activate_pending_gift_ticket(
         self, user_id: int, *, joined_at: Optional[datetime] = None
     ) -> Optional[Dict[str, Any]]:
@@ -644,7 +678,10 @@ class GiftWaveMixin:
             logger.error("mark_greeter_replied: %s", e)
             return False
 
-    async def mark_greeter_reassigned(self, assignment_id: int) -> bool:
+    async def mark_greeter_reassigned(self, assignment_id: int) -> Optional[int]:
+        """Помечает reassigned; если miss_streak≥5 — снимает с пула.
+        Возвращает greeter_id при авто-деактивации, иначе None.
+        """
         try:
             async with self.get_connection() as conn:
                 await conn.execute(
@@ -665,7 +702,7 @@ class GiftWaveMixin:
                     """,
                     assignment_id,
                 )
-                if row and int(row["miss_streak"]) >= 3:
+                if row and int(row["miss_streak"]) >= 5:
                     await conn.execute(
                         """
                         UPDATE club_greeter
@@ -674,10 +711,11 @@ class GiftWaveMixin:
                         """,
                         int(row["user_id"]),
                     )
-                return True
+                    return int(row["user_id"])
+                return None
         except Exception as e:
             logger.error("mark_greeter_reassigned: %s", e)
-            return False
+            return None
 
     async def mark_greeter_bot_followup(self, assignment_id: int) -> bool:
         try:
