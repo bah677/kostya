@@ -49,6 +49,9 @@ class MessageCopier:
             user_id = message.from_user.id
             chat_type = _resolve_chat_type(message.chat, message.chat.id)
 
+            # Профиль из Telegram: неизменен только user_id (группа тоже).
+            await self.user_storage.sync_user_identity_from_telegram(message.from_user)
+
             message_type = self._get_message_type(message)
             subtype = self._get_subtype(message)
 
@@ -379,6 +382,10 @@ class MessageCopier:
     ) -> Optional[int]:
         """Сохраняет нажатие кнопки как сообщение."""
         try:
+            if callback_query.from_user:
+                await self.user_storage.sync_user_identity_from_telegram(
+                    callback_query.from_user
+                )
             cb_message = callback_query.message
             chat = cb_message.chat if cb_message else None
             chat_id = chat.id if chat else None

@@ -44,19 +44,29 @@ class UserStorage(Database):
     # Удобные обёртки с историческими именами
     # =====================================================
 
+    @staticmethod
+    def _identity_from_telegram_user(user) -> dict:
+        return {
+            "user_id": user.id,
+            "username": user.username,
+            "first_name": user.first_name,
+            "last_name": user.last_name,
+            "language_code": user.language_code,
+            "is_premium": getattr(user, "is_premium", False),
+        }
+
     async def save_user_from_message(self, message) -> bool:
-        """Создаёт/обновляет пользователя из объекта `aiogram.types.Message`."""
+        """Онбординг / личка: профиль + снятие bot_blocked."""
         user = message.from_user
-        return await self.add_or_update_user(
-            {
-                "user_id": user.id,
-                "username": user.username,
-                "first_name": user.first_name,
-                "last_name": user.last_name,
-                "language_code": user.language_code,
-                "is_premium": getattr(user, "is_premium", False),
-            }
-        )
+        if user is None or getattr(user, "is_bot", False):
+            return False
+        return await self.add_or_update_user(self._identity_from_telegram_user(user))
+
+    async def sync_user_identity_from_telegram(self, user) -> bool:
+        """Любой inbound (группа/личка/callback): обновить профиль, user_id неизменен."""
+        if user is None or getattr(user, "is_bot", False):
+            return False
+        return await self.sync_user_identity(self._identity_from_telegram_user(user))
 
     async def get_thread_id(self, user_id: int) -> Optional[str]:
         """openai_thread_id пользователя (если есть)."""

@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 class AdminGiftCodesMixin:
@@ -59,7 +63,9 @@ class AdminGiftCodesMixin:
         now: Optional[datetime] = None,
     ) -> Optional[Dict[str, Any]]:
         """Атомарно помечает код used. None — уже использован / истёк / нет."""
-        ts = now or datetime.now()
+        ts = now or _utcnow()
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
         try:
             async with self.get_connection() as conn:
                 row = await conn.fetchrow(

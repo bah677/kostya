@@ -21,12 +21,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 MSK = ZoneInfo("Europe/Moscow")
 
-# Не кандидаты в «сестринский» пул (служебные / нетипичные топы)
-GREETER_POOL_EXCLUDE_USER_IDS = {
-    8552051262,  # Анастасия
-}
-
-
 def club_message_deep_link(
     *,
     chat_id: int,
@@ -167,8 +161,7 @@ async def fetch_greeter_pool_candidates(
     from config import config as cfg
 
     chat_id = int(cfg.CLUB_GROUP_ID)
-    exclude: set[int] = set(GREETER_POOL_EXCLUDE_USER_IDS)
-    exclude.update(int(x) for x in (exclude_user_ids or []))
+    exclude: set[int] = set(int(x) for x in (exclude_user_ids or []))
     try:
         for row in await user_storage.list_telegram_admin_ids():
             exclude.add(int(row["telegram_user_id"]))

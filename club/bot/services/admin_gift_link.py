@@ -5,7 +5,7 @@ from __future__ import annotations
 import html as html_mod
 import logging
 import secrets
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from aiogram.enums import ParseMode
@@ -19,6 +19,17 @@ logger = logging.getLogger(__name__)
 
 _CLUB_NAME = "Любящие Бога"
 START_PREFIX = "agift_"
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _as_aware_utc(dt: datetime) -> datetime:
+    """Postgres timestamptz приходит aware; naive считаем UTC."""
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
 
 
 def _format_admin_label(admin: User) -> str:
@@ -47,7 +58,7 @@ async def create_admin_gift_link(
     link_days = int(getattr(config, "GIFT_LINK_VALIDITY_DAYS", 30) or 30)
     link_days = max(1, min(3650, link_days))
     gift_code = secrets.token_hex(8).upper()
-    expires_at = datetime.now() + timedelta(days=link_days)
+    expires_at = _utcnow() + timedelta(days=link_days)
 
     row = await user_storage.create_admin_gift_code(
         gift_code=gift_code,
@@ -142,15 +153,17 @@ async def activate_admin_gift_link(
         return
 
     expires_at = existing.get("expires_at")
-    if expires_at and expires_at < datetime.now():
+    if expires_at and _as_aware_utc(expires_at) < _utcnow():
         await message.answer(
             f"⏰ <b>Срок ссылки истёк</b>\n\n"
-            f"Она была активна до {expires_at.strftime('%d.%m.%Y')}.",
+            f"Она была активна до {_as_aware_utc(expires_at).strftime('%d.%m.%Y')}.",
             parse_mode=ParseMode.HTML,
         )
         return
 
-    claimed = await user_storage.claim_admin_gift_code(code, activated_by=user_id)
+    claimed = await user_storage.claim_admin_gift_code(
+        code, activated_by=user_id, now=_utcnow()
+    )
     if not claimed:
         # гонка или истечение между проверкой и claim
         again = await user_storage.get_admin_gift_code(code)

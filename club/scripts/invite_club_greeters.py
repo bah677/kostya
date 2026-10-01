@@ -32,10 +32,6 @@ from storage.user_storage import UserStorage
 logger = logging.getLogger("invite_club_greeters")
 
 DEFAULT_PROD_ENV = "/home/appuser/club/.env"
-# Высокочастотные аккаунты / не кандидаты в «сестринский» пул
-EXCLUDE_USER_IDS = {
-    8552051262,  # Анастасия — служебный/нетипичный топ
-}
 
 
 def _load_config(env_file: str):
@@ -58,7 +54,7 @@ async def fetch_top_greeter_candidates(
                 "SELECT telegram_user_id FROM admins WHERE telegram_user_id IS NOT NULL"
             )
         ]
-        exclude = set(admin_ids) | EXCLUDE_USER_IDS | {int(config.SUPER_ADMIN_ID or 0)}
+        exclude = set(admin_ids) | {int(config.SUPER_ADMIN_ID or 0)}
         rows = await conn.fetch(
             """
             WITH replies AS (

@@ -103,7 +103,47 @@ class UsersMixin:
     # Базовый CRUD пользователей
     # =====================================================
 
+    async def sync_user_identity(self, user_data: Dict[str, Any]) -> bool:
+        """Создаёт/обновляет профиль из Telegram. Неизменен только ``user_id``.
+
+        Не трогает ``is_active`` / ``bot_blocked_at``: сообщение в группе
+        не означает, что пользователь разблокировал бота.
+        """
+        try:
+            async with self.get_connection() as conn:
+                await conn.execute(
+                    """
+                    INSERT INTO users
+                    (user_id, username, first_name, last_name, language_code, is_premium, last_activity)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7)
+                    ON CONFLICT (user_id)
+                    DO UPDATE SET
+                        username = EXCLUDED.username,
+                        first_name = EXCLUDED.first_name,
+                        last_name = EXCLUDED.last_name,
+                        language_code = EXCLUDED.language_code,
+                        is_premium = EXCLUDED.is_premium,
+                        last_activity = EXCLUDED.last_activity
+                    """,
+                    user_data["user_id"],
+                    user_data.get("username"),
+                    user_data.get("first_name"),
+                    user_data.get("last_name"),
+                    user_data.get("language_code"),
+                    user_data.get("is_premium", False),
+                    datetime.now(),
+                )
+                return True
+        except Exception as e:
+            logger.error(
+                "❌ Failed to sync user identity %s: %s",
+                user_data.get("user_id"),
+                e,
+            )
+            return False
+
     async def add_or_update_user(self, user_data: Dict[str, Any]) -> bool:
+        """Онбординг / явный контакт в личке: профиль + снятие bot_blocked."""
         try:
             async with self.get_connection() as conn:
                 await conn.execute(
