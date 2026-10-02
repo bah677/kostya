@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import bisect
 import json
 import logging
 import random
 import re
 import time
 from dataclasses import dataclass
-from typing import List, Sequence
+from typing import List, Optional, Sequence
 
 from telemost_mail.timestamped_speech import SpeechSegment
 
@@ -27,6 +28,9 @@ class MomentsUnavailableError(RuntimeError):
 
 _MIN_CLIP_SEC = 45.0
 _MAX_CLIP_SEC = 120.0  # 2 мин
+# Короче этого клип не выпускаем даже после подгонки к паузе: слушать нечего.
+# Раньше такой кусок добивали до _MIN_CLIP_SEC чужой речью — см. _clamp_moment.
+_HARD_MIN_CLIP_SEC = 25.0
 # Сколько знаков расшифровки отдаём модели за одно окно.
 _WINDOW_CHARS = 18_000
 
@@ -178,23 +182,76 @@ def _segments_for_prompt(
     return "\n".join(lines)
 
 
+class _Pauses:
+    """Где в записи реально есть пауза — границы реплик.
+
+    Нужен, чтобы клип начинался и заканчивался на паузе, а не на произвольной
+    секунде. Реплики короткие, поэтому пауз много и подгонка почти не смещает
+    выбранные моделью границы.
+    """
+
+    def __init__(self, segments: Sequence[SpeechSegment]) -> None:
+        self.starts = sorted({float(s.start_sec) for s in segments})
+        self.ends = sorted({float(s.end_sec) for s in segments})
+
+    def snap_start(self, t: float) -> float:
+        """Начало реплики на уровне t или раньше — чтобы не срезать первое слово."""
+        if not self.starts:
+            return max(0.0, t)
+        i = bisect.bisect_right(self.starts, t + 0.75) - 1
+        return self.starts[i] if i >= 0 else self.starts[0]
+
+    def snap_end(self, target: float, *, limit: float) -> Optional[float]:
+        """Ближайший к target конец реплики, но не позже limit."""
+        if not self.ends:
+            return None
+        last = bisect.bisect_right(self.ends, limit + 0.01) - 1
+        if last < 0:
+            return None
+        j = bisect.bisect_left(self.ends, target)
+        best: Optional[float] = None
+        for k in (j - 1, j, last):
+            if 0 <= k <= last:
+                e = self.ends[k]
+                if best is None or abs(e - target) < abs(best - target):
+                    best = e
+        return best
+
+
 def _clamp_moment(
     m: AudioClipMoment,
     *,
-    min_sec: float,
     max_sec: float,
     max_end: float,
-) -> AudioClipMoment:
-    start = max(0.0, float(m.start_sec))
-    end = min(float(m.end_sec), max_end)
-    if end <= start:
-        end = min(start + max_sec, max_end)
-    dur = end - start
-    if dur > max_sec:
-        end = start + max_sec
-        dur = end - start
-    if dur < min_sec and end < max_end:
-        end = min(start + min_sec, max_end)
+    pauses: _Pauses,
+) -> Optional[AudioClipMoment]:
+    """Подгоняет границы клипа к паузам в речи.
+
+    Модель ставит end там, где мысль смыслово закончилась. Раньше это значение
+    тут же затирала арифметика: короткую мысль растягивали до min_sec, длинную
+    рубили ровно на max_sec. Оба конца попадали куда придётся — чаще всего в
+    середину слова уже следующего эпизода. Отсюда и брался типичный дефект:
+    клип прихватывал соседнюю мысль и обрывался на её середине.
+
+    Теперь конец клипа может стоять только там, где в записи есть пауза.
+    Законченная короткая мысль остаётся короткой, а совсем куцый кандидат
+    отбрасывается — добивать его чужой речью хуже, чем потерять: кандидатов
+    на отбор приходит несколько десятков.
+    """
+    start = pauses.snap_start(max(0.0, float(m.start_sec)))
+    limit = min(start + max_sec, max_end)
+    target = float(m.end_sec)
+    if target <= start:
+        target = limit
+    end = pauses.snap_end(min(target, limit), limit=limit)
+    if end is None or (end - start) < _HARD_MIN_CLIP_SEC:
+        logger.debug(
+            "moment отброшен: %.0f–%.0f с, после подгонки к паузе короче %.0f с",
+            float(m.start_sec),
+            float(m.end_sec),
+            _HARD_MIN_CLIP_SEC,
+        )
+        return None
     hook = (m.hook or m.title or "").strip()
     if hook.count(".") > 1:
         hook = hook.split(".")[0].strip() + "."
@@ -214,9 +271,9 @@ def _clamp_moment(
 def _parse_clips(
     raw: str,
     *,
-    min_sec: float,
     max_sec: float,
     max_end: float,
+    pauses: _Pauses,
 ) -> List[AudioClipMoment]:
     text = (raw or "").strip()
     m = re.search(r"\{[\s\S]*\}", text)
@@ -243,11 +300,11 @@ def _parse_clips(
                 score=float(item.get("score") or 0.0),
                 theme=str(item.get("theme") or "").strip(),
             )
-            out.append(
-                _clamp_moment(
-                    cm, min_sec=min_sec, max_sec=max_sec, max_end=max_end
-                )
+            fixed = _clamp_moment(
+                cm, max_sec=max_sec, max_end=max_end, pauses=pauses
             )
+            if fixed is not None:
+                out.append(fixed)
         except (TypeError, ValueError):
             continue
     return out
@@ -397,6 +454,7 @@ async def pick_audio_moments(
     max_sec = float(max(_MIN_CLIP_SEC, min(_MAX_CLIP_SEC, int(max_duration_sec))))
     min_sec = _MIN_CLIP_SEC
     max_end = max(s.end_sec for s in segments) + 5.0
+    pauses = _Pauses(segments)
     hint = (philosophy_hint or "").strip()
     title = (meeting_title or "Эфир").strip()
     variation = int(time.time()) % 10_000
@@ -458,7 +516,10 @@ async def pick_audio_moments(
                     model=model,
                     messages=[
                         {"role": "system", "content": sys_prompt},
-                        {"role": "user", "content": user[:12000]},
+                        # Без обрезки: окно уже собрано по бюджету _WINDOW_CHARS.
+                        # Раньше тут стоял user[:12000] и срезал треть каждого
+                        # окна — причём с хвоста, где лежит сама расшифровка.
+                        {"role": "user", "content": user},
                     ],
                     max_tokens=2200,
                     temperature=temperature,
@@ -467,9 +528,9 @@ async def pick_audio_moments(
                 out = r.choices[0].message.content if r.choices else ""
                 clips = _parse_clips(
                     out or "",
-                    min_sec=min_sec,
                     max_sec=max_sec,
                     max_end=max_end,
+                    pauses=pauses,
                 )
                 all_candidates.extend(clips)
                 logger.info(
