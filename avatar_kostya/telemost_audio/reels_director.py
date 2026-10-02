@@ -49,7 +49,6 @@ _HOOK_N_DEFAULT = 6
 _BODY_N_DEFAULT = 2
 _REVIEW_ROUNDS_DEFAULT = 2
 _RUBRIC_AXIS_MIN = 7.0
-_VERBATIM_MIN_HITS = 2
 _REF_ALPHABET = string.ascii_lowercase + string.digits
 
 CB_REELS_FB = "rlsfb:"  # rlsfb:{action}:{uuid}  action=ok|no|gen
@@ -79,28 +78,70 @@ _SYSTEM_EXTRACT = """Ты — редактор контента. В куске �
 
 Если сильных мыслей нет — {"ideas":[]}. Пиши по-русски."""
 
+_SYSTEM_DISTILL = """Ты — аналитик. Твоя работа — выпарить из куска эфира ОДНУ мысль.
+
+Тебе дают дословную речь Кости. В ней мысль живёт в своём контексте: своя
+аудитория, свой повод, свои примеры, свой порядок изложения. Всё это — упаковка
+того разговора. Тебе нужно то, что останется, если упаковку убрать.
+
+ЧТО ВЫПАРИТЬ.
+insight — одно утверждение о том, как устроена жизнь. Не «Костя говорит, что
+надо прощать», а само утверждение: «непрощение бьёт не по тому, кого ты не
+простил, а по твоим детям».
+  - Никаких примеров и историй — ни Костиных, ни своих.
+  - Никаких упоминаний эфира, клуба, участников, вопроса из зала.
+  - Не «важно помнить, что…» — это не утверждение, а вода.
+  - Проверка: это можно сказать незнакомому человеку на улице, и он поймёт.
+
+common_belief — как человек думает по умолчанию, то есть ровно то, чему insight
+противоречит. Если противоречия нет, мысль для рилса слабая — так и напиши.
+
+stakes — чем незнание оборачивается в обычной жизни. Конкретно: что ломается,
+где болит, что человек делает не так, сам того не замечая.
+
+voice — 3–6 характерных оборотов Кости из этого куска. Это СЛОВАРЬ ИНТОНАЦИИ, а
+не цитаты для вставки: как он строит фразу, какими словами называет вещи. Коротко.
+
+Верни ТОЛЬКО JSON:
+{
+  "insight": "...",
+  "common_belief": "...",
+  "stakes": "...",
+  "voice": ["...", "..."]
+}
+Пиши по-русски."""
+
 _SYSTEM_PLAN = """Ты — режиссёр коротких видео. НЕ пиши готовый текст рилса.
 
-По мысли и дословной расшифровке окна составь скрытый план виральности.
+Тебе дают ОДНУ мысль — уже очищенную от эфира. Расшифровки у тебя нет: она не
+нужна, из неё всё взяли. Твоя работа — придумать, как эту мысль показать за
+минуту человеку, который тебя не знает.
+
+scene — САМОЕ ВАЖНОЕ ПОЛЕ. Одна конкретная бытовая сцена, в которой зритель
+узнает себя. Её ты придумываешь сам, под мысль. Не «человек испытывает обиду»,
+а «ты листаешь ленту, видишь его фото — и большой палец сам останавливается».
+Сцена должна быть массовой: её проживали десятки тысяч людей, а не один
+участник клуба. Проверка: в ней есть что увидеть глазами.
+
 Тип хука выбери один: accusation | confession | direct_question | paradox.
 
 Верни ТОЛЬКО JSON:
 {
   "hook_type": "paradox",
+  "scene": "конкретная бытовая сцена для зрителя",
   "first_3_sec_promise": "что зритель получает в первые 3 секунды",
   "tension": "где напряжение",
-  "turn": "где поворот",
+  "turn": "где поворот — что переворачивает привычное понимание",
   "loop_close": "чем закрывается петля",
-  "cta": "club|bot|channel|soft_none",
-  "must_use_phrases": ["дословная фраза 1 из окна", "фраза 2", "фраза 3"]
+  "cta": "club|bot|channel|soft_none"
 }
-
-must_use_phrases — 2–3 короткие дословные фразы из окна (как сказал Костя).
 Пиши по-русски в значениях JSON."""
 
 _SYSTEM_HOOKS = """Ты копирайтер Reels. Дай варианты ТОЛЬКО первой фразы (хук на 3 секунды).
 
-Каждая строка — отдельный хук, 5–14 слов, разговорный голос Кости.
+Каждая строка — отдельный хук, 5–14 слов, разговорный голос.
+Хук открывает петлю: называет то, что человек прячет, или говорит то, с чем он
+мгновенно не согласен. «Сегодня поговорим о прощении» — петля не открыта.
 Без таймингов, без пояснений.
 
 Верни ТОЛЬКО JSON:
@@ -111,60 +152,89 @@ _SYSTEM_JUDGE_HOOKS = """Выбери лучший хук для досмотр�
 
 _SYSTEM_RENDER = """Ты — сценарист Reels. Ниша: духовное развитие. Пишешь текст, который человек досматривает до конца и пересылает.
 
-ТЫ ПИШЕШЬ СЦЕНАРИЙ, А НЕ ПЕРЕСКАЗЫВАЕШЬ РАСШИФРОВКУ.
-Окно расшифровки — сырьё: живая речь со сбоями, повторами, оборванными фразами и ошибками распознавания. Копировать её подряд нельзя. Так делать НЕЛЬЗЯ:
-  «И я скажу видел. Видел чудеса, как люди меняются. Как меняются те. Кого простили? Не способен дьявол.»
-Это не сценарий, это стенограмма. Из неё надо собрать связную речь.
+ЧТО У ТЕБЯ НА РУКАХ — И ЧЕГО НЕТ.
+У тебя есть одна мысль и план. Расшифровки эфира нет, и это сделано нарочно.
 
-ДОСЛОВНОСТЬ — ТОЧЕЧНАЯ.
-Возьми 2–3 КОРОТКИЕ фразы Кости, каждая НЕ ДЛИННЕЕ 12 СЛОВ. Это самое сильное, что он сказал, — вставь без изменений, они держат голос. Всё остальное пиши сам.
+Эфир — сырьё, из него уже всё взяли. Там мысль жила в своём контексте: своя
+аудитория, свой повод, свои примеры, свой порядок изложения. В рилс переносится
+только смысл; всё остальное было упаковкой того разговора.
 
-Длинную цитату брать нельзя. Так НЕЛЬЗЯ:
-  «Ты не сможешь Богу, не получится такого, что ты можешь Богу сказать, слушай, я свои обязательства выполнил, мое сердце чистое и непорочно, но продолжает происходить какая-то дичь»
-Это 30 слов сырой речи с оборванным началом. Из неё берётся ядро:
-  «продолжает происходить какая-то дичь в адрес меня»
-Если сильная фраза оборвана или бессвязна — вытащи из неё чистое ядро, остальное перескажи своими словами.
+Это не пересказ, это другая работа. Из нефти делают бензин: состав меняется,
+свойство остаётся. Если на выходе получилась та же последовательность, в которой
+рассуждал Костя, только другими словами, — работа не сделана.
+
+ПРИМЕР В РИЛСЕ — ТВОЙ.
+В плане есть scene — конкретная бытовая сцена, написанная для зрителя.
+Разворачивай её. Примеры и истории из эфира сюда не переносятся: они были нужны
+тем людям в том разговоре, а твой зритель их не слышал и контекста не имеет.
+Если в тексте появилось «один человек рассказывал» или «мне тут написали» —
+ты вернулся к пересказу.
+
+ГОЛОС.
+В поле voice — обороты, как говорит Костя. Это СЛОВАРЬ ИНТОНАЦИИ: по нему ты
+сверяешь тон, а не берёшь текст. Вставлять эти обороты в сценарий нельзя — они
+выдернуты из живой речи, бывают оборванными и с ошибками распознавания, и в
+готовом тексте читаются как сбой («вылази из мозгов»).
+
+Голос — это короткие предложения, прямое «ты», отсутствие церковного канцелярита,
+спокойная прямота без нажима и без придыхания.
 
 ДЛИНА — СКОЛЬКО НУЖНО МЫСЛИ.
-Считать слова не надо. Правило одно: ни одного лишнего слова. Если фразу можно убрать и ничего не потеряется — убери. Сильная мысль на сорок слов лучше растянутой на полтораста.
+Считать слова не надо. Правило одно: ни одного лишнего слова. Если фразу можно
+убрать и ничего не потеряется — убери. Сильная мысль на сорок слов лучше
+растянутой на полтораста.
 
 ЧТО ДЕЛАЕТ РИЛС ВИРУСНЫМ. Это главное, остальное — детали.
 
-Первые три секунды решают всё. Хук должен открыть петлю, которую невозможно оставить незакрытой: назвать то, что человек прячет, или сказать то, с чем он мгновенно не согласен. «Сегодня поговорим о прощении» — петля не открыта, человек ушёл.
+Первые три секунды решают всё. Хук должен открыть петлю, которую невозможно
+оставить незакрытой: назвать то, что человек прячет, или сказать то, с чем он
+мгновенно не согласен.
 
-Дальше напряжение только растёт. Не объясняй сразу — сначала сделай больно узнаванием. Человек должен подумать «откуда он про меня знает».
+Дальше напряжение только растёт. Не объясняй сразу — сначала сделай больно
+узнаванием. Человек должен подумать «откуда он про меня знает».
 
-Поворот должен быть неочевидным. Если вывод можно было предсказать с первой секунды, рилс не перешлют. Ищи в окне то, что переворачивает привычное: не «надо прощать», а почему непрощение бьёт по деньгам и детям.
+Поворот должен быть неочевидным. Если вывод можно было предсказать с первой
+секунды, рилс не перешлют. Переворачивай привычное: не «надо прощать», а почему
+непрощение бьёт по деньгам и детям.
 
-Финальная фраза — то, что человек процитирует другу. Ради неё и пересылают. Она должна работать отдельно от всего остального.
+Финальная фраза — то, что человек процитирует другу. Ради неё и пересылают.
+Она должна работать отдельно от всего остального.
 
 Говори с одним человеком, а не с аудиторией. «Ты», а не «мы» и не «друзья».
 
 СТРОЕНИЕ ТЕКСТА.
 1. Первая фраза — выбранный хук, слово в слово.
-2. Узнавание: конкретная ситуация, в которой человек себя видит.
-3. Поворот: то, чего он не ждал. Здесь и стоят дословные фразы Кости.
-4. Финал: фраза, которую уносят с собой. Её ты пишешь САМ — из расшифровки финал не берётся. Костя в эфире говорит дальше, и его переход к следующей теме («подготовлю эфир об этом», «слушай полный эфир») в рилсе звучит как оборванная запись. Закрой мысль сам. Без «подписывайтесь».
+2. Сцена из плана: разверни её так, чтобы зритель увидел себя.
+3. Поворот: то, чего он не ждал. Здесь и живёт сама мысль.
+4. Финал: фраза, которую уносят с собой. Закрытая мысль, без «подписывайтесь».
 
-НЕ ПОВТОРЯЙСЯ. Одна и та же мысль дважды («я видел, как это работает» — и снова «я видел») съедает секунды, которых и так мало.
+НЕ ПОВТОРЯЙСЯ. Одна и та же мысль дважды съедает секунды, которых и так мало.
 
 ЯЗЫК.
-Короткие предложения. Обращение на «ты». Никакой воды и общих слов вроде «важно помнить». Конкретика: не «трудности», а то, что реально происходит с человеком.
+Короткие предложения. Обращение на «ты». Никакой воды и общих слов вроде
+«важно помнить». Конкретика: не «трудности», а то, что реально происходит
+с человеком.
 
 ЗАПРЕЩЕНО в выводе:
 - тайминги, таймкоды, «хук на 3 секунде», «захват внимания»;
 - указания на паузы, интонации, планы, музыку, монтаж;
-- объяснения структуры и любые пометки от себя.
+- объяснения структуры и любые пометки от себя;
+- ссылки на эфир: «как говорил Костя», «в эфире разбирали», «один человек»;
+- «мы», «у нас», «на нашем языке» — зритель пока не внутри, он никого не знает;
+- кривые обороты из voice, вставленные дословно.
 
-ОПИСАНИЯ ПОД РИЛС — ровно ТРИ варианта, все три обязательны, по 1–2 предложения. Каждый ведёт в своё место и цепляется за тему ролика, а не за общие слова. Схлопывать их в один нельзя.
+ОПИСАНИЯ ПОД РИЛС — ровно ТРИ варианта, все три обязательны, по 1–2 предложения.
+Каждый ведёт в своё место и цепляется за тему ролика, а не за общие слова.
+Схлопывать их в один нельзя.
 
-CTA живёт только в описаниях. В «Тексте рилса» никаких «полный эфир в клубе» и «подписывайся» — там только сама мысль.
+CTA живёт только в описаниях. В «Тексте рилса» никаких «полный эфир в клубе»
+и «подписывайся» — там только сама мысль.
 
 Формат — СТРОГО:
 
 Обложка: [3–5 слов, крючок]
 
-Текст рилса: [90–140 слов]
+Текст рилса: [текст]
 
 Описание под рилс:
 — Вариант 1 (на клуб): [текст]
@@ -179,11 +249,17 @@ _SYSTEM_JUDGE_BODIES = """Сравни варианты сценария Reels. 
 
 _SYSTEM_RUBRIC = """Ты — редактор коротких видео. Перекрёстная проверка сценария Reels.
 
-Оцени по 5 осям 0..10:
+Сценарий написан ПО МЫСЛИ, а не по расшифровке. Дословных цитат из эфира тут
+быть не должно — это не недостаток, а требование.
+
+Оцени по 6 осям 0..10:
 - hook_3s — сила первых 3 секунд;
 - specificity — конкретность vs вода;
 - kostya_voice — голос Кости (живой, не ChatGPT);
-- air_fidelity — опора на реальный эфир (есть дословные куски);
+- idea_fidelity — мысль передана без искажения и не выхолощена до банальности;
+- own_scene — сцена написана для зрителя. Снижай балл за пересказ эфира:
+  «один человек рассказывал», «мне написали», истории про участников клуба,
+  ссылки на разговор, которого зритель не слышал;
 - cta_fit — уместность CTA.
 
 Правки (edits) — ТОЛЬКО по осям строго ниже порога {axis_min}. Если все оси ≥ порога — edits=[].
@@ -191,7 +267,7 @@ _SYSTEM_RUBRIC = """Ты — редактор коротких видео. Пе�
 
 Верни ТОЛЬКО JSON:
 {{
-  "scores": {{"hook_3s":0,"specificity":0,"kostya_voice":0,"air_fidelity":0,"cta_fit":0}},
+  "scores": {{"hook_3s":0,"specificity":0,"kostya_voice":0,"idea_fidelity":0,"own_scene":0,"cta_fit":0}},
   "total": 0,
   "edits": ["замени…", "усиль…"]
 }}"""
@@ -224,6 +300,7 @@ class ScenarioBundle:
     rubric: Dict[str, Any] = field(default_factory=dict)
     window: str = ""
     idea: Optional[ReelIdea] = None
+    distilled: Dict[str, Any] = field(default_factory=dict)
 
 
 # ── Публичный API ────────────────────────────────────────────────────────────
@@ -612,6 +689,36 @@ def _expert_text_for_extract(
     return "\n\n".join(out)
 
 
+def _fake_segments(transcript: str, *, chars_per_sec: float = 14.0) -> List[SpeechSegment]:
+    """Запасной разбор, когда речь не размечена по говорящим.
+
+    Раньше весь эфир заворачивали в ОДИН SpeechSegment с обрезкой до 8–12 тысяч
+    знаков — на часовой записи это опять было только её начало. И окно вокруг
+    мысли не работало: сегмент один, границ внутри нет.
+
+    Теперь текст режется на куски по словам, а время оценивается по скорости
+    речи. Таймкоды приблизительные, но окна и якоря снова имеют смысл, и ничего
+    не выбрасывается.
+    """
+    text = (transcript or "").strip()
+    if not text:
+        return []
+    size = 1000
+    out: List[SpeechSegment] = []
+    pos = 0
+    while pos < len(text):
+        end = min(len(text), pos + size)
+        if end < len(text):
+            sp = text.rfind(" ", pos + size // 2, end)
+            if sp > pos:
+                end = sp
+        out.append(
+            SpeechSegment(pos / chars_per_sec, text[pos:end].strip(), end / chars_per_sec)
+        )
+        pos = end
+    return [seg for seg in out if seg.text]
+
+
 async def _extract_ideas_map_reduce(
     client: Any,
     *,
@@ -689,58 +796,77 @@ def _norm_text(s: str) -> str:
     return re.sub(r"\s+", " ", t).strip()
 
 
-def _reel_body(scenario: str) -> str:
-    m = re.search(
-        r"Текст рилса:\s*(.+?)(?:\n\s*Описание под рилс:|\Z)",
-        scenario or "",
-        flags=re.S | re.I,
-    )
-    return (m.group(1) if m else scenario or "").strip()
-
-
-def _verbatim_hits(scenario: str, window: str, *, min_words: int = 4) -> List[str]:
-    body = _norm_text(_reel_body(scenario))
-    win = _norm_text(window)
-    if not body or not win:
-        return []
-    words = body.split()
-    hits: List[str] = []
-    seen: set[str] = set()
-    i = 0
-    while i < len(words):
-        found = None
-        for length in range(min(12, len(words) - i), min_words - 1, -1):
-            phrase = " ".join(words[i : i + length])
-            if len(phrase) < 12:
-                continue
-            if phrase in win:
-                found = phrase
-                break
-        if found and found not in seen:
-            hits.append(found)
-            seen.add(found)
-            i += max(min_words, len(found.split()))
-        else:
-            i += 1
-    return hits
-
-
 # ── Сценарий: план → хуки → тела → рубрика ───────────────────────────────────
 
-async def _build_plan(
+async def _distill_idea(
     client: Any,
     *,
     idea: ReelIdea,
     window: str,
+    model: str,
+) -> Dict[str, Any]:
+    """Шаг «нефть → сырьё для бензина»: из куска эфира — одна голая мысль.
+
+    Нужен, потому что без него сценарий получался пересказом. Раньше окно
+    расшифровки лежало перед моделью на каждом шаге — план, хуки, тело, правка —
+    и она неизбежно тащила за собой Костину последовательность: его посылка, его
+    пример, его вывод. Другими словами, но то же самое.
+
+    Здесь мысль один раз отделяется от разговора, в котором прозвучала, и дальше
+    окно не передаётся никуда. Сценарий пишется от утверждения, а сцена для него
+    придумывается своя.
+    """
+    user = (
+        f"Мысль, которую надо выпарить: {idea.display()}\n"
+        f"Почему её выбрали: {idea.reason}\n\n"
+        f"Дословная речь Кости:\n{window}"
+    )
+    raw = await _call_openai(
+        client,
+        model=model,
+        system=_SYSTEM_DISTILL,
+        user=user,
+        max_tokens=1200,
+        temperature=0.4,
+        response_json=True,
+    )
+    dist = _parse_json_obj(raw)
+    insight = str(dist.get("insight") or "").strip()
+    if not insight:
+        # Без утверждения писать не от чего — берём заголовок мысли как есть.
+        logger.warning("telemost_reels_brief: дистилляция пустая, идея=%r", idea.title)
+        dist["insight"] = idea.display()
+    voice = dist.get("voice")
+    if not isinstance(voice, list):
+        dist["voice"] = []
+    return dist
+
+
+def _distilled_block(dist: Dict[str, Any]) -> str:
+    """Мысль для всех шагов после дистилляции. Расшифровки тут нет намеренно."""
+    lines = [f"МЫСЛЬ: {dist.get('insight') or ''}"]
+    if dist.get("common_belief"):
+        lines.append(f"Как думают обычно: {dist['common_belief']}")
+    if dist.get("stakes"):
+        lines.append(f"Чем оборачивается: {dist['stakes']}")
+    voice = [str(v).strip() for v in (dist.get("voice") or []) if str(v).strip()]
+    if voice:
+        lines.append("Словарь интонации Кости (не цитаты): " + " / ".join(voice[:6]))
+    return "\n".join(lines)
+
+
+async def _build_plan(
+    client: Any,
+    *,
+    dist: Dict[str, Any],
     title: str,
     kind_label: str,
     model: str,
 ) -> Dict[str, Any]:
     user = (
-        f"Тип: {kind_label}\nЭфир: {title}\n\n"
-        f"Мысль: {idea.display()}\n"
-        f"score={idea.score:.0f}. {idea.reason}\n\n"
-        f"Дословное окно речи Кости:\n{window}"
+        f"Тип записи-источника: {kind_label}\n\n"
+        f"{_distilled_block(dist)}\n\n"
+        "Придумай сцену и план рилса."
     )
     raw = await _call_openai(
         client,
@@ -748,32 +874,26 @@ async def _build_plan(
         system=_SYSTEM_PLAN,
         user=user,
         max_tokens=1200,
-        temperature=0.5,
+        temperature=0.6,
         response_json=True,
     )
     plan = _parse_json_obj(raw)
-    phrases = plan.get("must_use_phrases") or []
-    if not isinstance(phrases, list) or len(phrases) < 2:
-        # fallback из quote
-        plan["must_use_phrases"] = [
-            p for p in [idea.quote] if p
-        ][:3]
+    if not str(plan.get("scene") or "").strip():
+        logger.warning("telemost_reels_brief: план без сцены — рилс будет абстрактным")
     return plan
 
 
 async def _compete_hooks(
     client: Any,
     *,
-    idea: ReelIdea,
+    dist: Dict[str, Any],
     plan: Dict[str, Any],
-    window: str,
     model: str,
 ) -> Tuple[str, List[str]]:
     n = _hook_n()
     user = (
-        f"Мысль: {idea.display()}\n"
+        f"{_distilled_block(dist)}\n\n"
         f"План: {json.dumps(plan, ensure_ascii=False)}\n\n"
-        f"Окно речи:\n{window[:3500]}\n\n"
         f"Дай ровно {n} вариантов первой фразы."
     )
     raw = await _call_openai(
@@ -791,7 +911,7 @@ async def _compete_hooks(
         if str(h).strip()
     ]
     if not hooks:
-        hooks = [idea.title]
+        hooks = [str(dist.get("insight") or "").strip() or "Ты и сам это знаешь."]
     if len(hooks) == 1:
         return hooks[0], []
     listed = "\n".join(f"{i}. {h}" for i, h in enumerate(hooks))
@@ -830,22 +950,20 @@ def _few_shot_block(rows: Sequence[Dict[str, Any]]) -> str:
 async def _render_one_body(
     client: Any,
     *,
-    idea: ReelIdea,
+    dist: Dict[str, Any],
     plan: Dict[str, Any],
-    window: str,
     hook: str,
-    title: str,
-    kind_label: str,
     model: str,
     max_tokens: int,
     few_shot: str = "",
 ) -> str:
+    # Окно расшифровки сюда не передаётся. Это главное изменение: пока оно лежало
+    # перед моделью, она переписывала эфир своими словами вместо того, чтобы
+    # собрать рилс заново из одной мысли.
     user = (
-        f"Тип: {kind_label}\nЭфир: {title}\n\n"
-        f"Мысль: {idea.display()}\n"
+        f"{_distilled_block(dist)}\n\n"
         f"Выбранный хук (начни Текст рилса с него): {hook}\n"
         f"План (не цитируй в выводе): {json.dumps(plan, ensure_ascii=False)}\n\n"
-        f"Дословное окно:\n{window}\n\n"
         f"Описание проекта:\n{_project_description()}\n"
     )
     if few_shot:
@@ -857,19 +975,16 @@ async def _render_one_body(
         system=_SYSTEM_RENDER,
         user=user,
         max_tokens=min(3500, max_tokens),
-        temperature=0.7,
+        temperature=0.8,
     )
 
 
 async def _compete_bodies(
     client: Any,
     *,
-    idea: ReelIdea,
+    dist: Dict[str, Any],
     plan: Dict[str, Any],
-    window: str,
     hook: str,
-    title: str,
-    kind_label: str,
     model: str,
     max_tokens: int,
     few_shot: str,
@@ -880,12 +995,9 @@ async def _compete_bodies(
         drafts.append(
             await _render_one_body(
                 client,
-                idea=idea,
+                dist=dist,
                 plan=plan,
-                window=window,
                 hook=hook,
-                title=title,
-                kind_label=kind_label,
                 model=model,
                 max_tokens=max_tokens,
                 few_shot=few_shot,
@@ -900,7 +1012,7 @@ async def _compete_bodies(
         client,
         model=model,
         system=_SYSTEM_JUDGE_BODIES,
-        user=listed[:12000],
+        user=listed,
         max_tokens=400,
         temperature=0.2,
         response_json=True,
@@ -910,50 +1022,27 @@ async def _compete_bodies(
     return drafts[idx]
 
 
-async def _ensure_verbatim(
-    client: Any,
-    *,
-    draft: str,
-    idea: ReelIdea,
-    plan: Dict[str, Any],
-    window: str,
-    hook: str,
-    title: str,
-    kind_label: str,
-    model: str,
-    max_tokens: int,
-    few_shot: str,
-) -> str:
-    hits = _verbatim_hits(draft, window)
-    if len(hits) >= _VERBATIM_MIN_HITS:
-        return draft
-    logger.info(
-        "telemost_reels_brief: verbatim miss hits=%s — regenerate", len(hits)
-    )
-    must = plan.get("must_use_phrases") or []
-    extra = (
-        "ПЕРЕГЕНЕРАЦИЯ: в прошлом варианте почти не было дословных фраз из эфира. "
-        "Вставь минимум 2 дословные фразы из must_use_phrases / окна.\n"
-        f"must_use_phrases: {json.dumps(must, ensure_ascii=False)}"
-    )
-    user_plan = dict(plan)
-    user_plan["_regen_note"] = extra
-    return await _render_one_body(
-        client,
-        idea=idea,
-        plan=user_plan,
-        window=window,
-        hook=hook,
-        title=title,
-        kind_label=kind_label,
-        model=model,
-        max_tokens=max_tokens,
-        few_shot=few_shot,
-    )
+# _ensure_verbatim удалён намеренно.
+#
+# Он перегенерировал сценарий, пока в нём не наберётся две дословные фразы из
+# эфира (_VERBATIM_MIN_HITS). То есть копирование исходника было не побочным
+# эффектом, а требованием, которое код проверял и добивался. Вместе с
+# must_use_phrases в плане и осью air_fidelity в рубрике это держало сценарий
+# пересказом: три механизма из разных мест тянули текст обратно в эфир.
+#
+# Теперь точность проверяется по смыслу — ось idea_fidelity, — а дословность
+# не требуется и не поощряется.
 
 
 def _rubric_total(scores: Dict[str, Any]) -> float:
-    keys = ("hook_3s", "specificity", "kostya_voice", "air_fidelity", "cta_fit")
+    keys = (
+        "hook_3s",
+        "specificity",
+        "kostya_voice",
+        "idea_fidelity",
+        "own_scene",
+        "cta_fit",
+    )
     vals = []
     for k in keys:
         try:
@@ -966,8 +1055,7 @@ def _rubric_total(scores: Dict[str, Any]) -> float:
 async def _call_deepseek_rubric(
     *,
     draft: str,
-    idea: ReelIdea,
-    window: str,
+    dist: Dict[str, Any],
     title: str,
     kind_label: str,
 ) -> Dict[str, Any]:
@@ -978,10 +1066,12 @@ async def _call_deepseek_rubric(
         raise RuntimeError("DEEPSEEK_API_KEY не задан")
     axis_min = _RUBRIC_AXIS_MIN
     system = _SYSTEM_RUBRIC.format(axis_min=axis_min)
+    # Расшифровку рецензенту не даём: он сверяет сценарий с мыслью, а не с
+    # исходником. Пока окно сюда приходило, ось «опора на эфир» вознаграждала
+    # как раз то, от чего уходим.
     user = (
-        f"Тип: {kind_label}\nЭфир: {title}\n\n"
-        f"Мысль: {idea.display()}\n\n"
-        f"Окно дословной речи:\n{window[:6000]}\n\n"
+        f"Тип записи-источника: {kind_label}\nЭфир: {title}\n\n"
+        f"{_distilled_block(dist)}\n\n"
         f"Проект:\n{_project_description()}\n\n"
         f"Сценарий:\n{draft.strip()}"
     )
@@ -1037,9 +1127,8 @@ async def _rubric_revise(
     client: Any,
     *,
     draft: str,
-    idea: ReelIdea,
+    dist: Dict[str, Any],
     plan: Dict[str, Any],
-    window: str,
     hook: str,
     title: str,
     kind_label: str,
@@ -1059,8 +1148,7 @@ async def _rubric_revise(
         try:
             rubric = await _call_deepseek_rubric(
                 draft=current,
-                idea=idea,
-                window=window,
+                dist=dist,
                 title=title,
                 kind_label=kind_label,
             )
@@ -1084,10 +1172,9 @@ async def _rubric_revise(
             {
                 "role": "user",
                 "content": (
-                    f"Тип: {kind_label}\nЭфир: {title}\n"
-                    f"Мысль: {idea.display()}\nХук: {hook}\n"
-                    f"План: {json.dumps(plan, ensure_ascii=False)}\n"
-                    f"Окно:\n{window}\n\n{few_shot}"
+                    f"Тип записи-источника: {kind_label}\n"
+                    f"{_distilled_block(dist)}\nХук: {hook}\n"
+                    f"План: {json.dumps(plan, ensure_ascii=False)}\n\n{few_shot}"
                 ),
             },
             {"role": "assistant", "content": current},
@@ -1111,8 +1198,7 @@ async def _rubric_revise(
         try:
             rubric2 = await _call_deepseek_rubric(
                 draft=revised,
-                idea=idea,
-                window=window,
+                dist=dist,
                 title=title,
                 kind_label=kind_label,
             )
@@ -1140,6 +1226,11 @@ async def _rubric_revise(
     return best, best_rubric
 
 
+def _tidy_output(text: str) -> str:
+    """Хвостовые пробелы в конце строк — модель ставит их как markdown-перенос."""
+    return "\n".join(line.rstrip() for line in (text or "").strip().splitlines())
+
+
 async def _build_scenario_bundle(
     client: Any,
     *,
@@ -1153,38 +1244,23 @@ async def _build_scenario_bundle(
 ) -> ScenarioBundle:
     window = _window_for_idea(segments, idea, pad_sec=_window_pad())
     few_shot = _few_shot_block(few_shot_rows)
+
+    # Единственный шаг, который видит расшифровку. Дальше работаем с мыслью.
+    dist = await _distill_idea(client, idea=idea, window=window, model=model)
+    logger.info(
+        "telemost_reels_brief: мысль выпарена — %s",
+        str(dist.get("insight") or "")[:160],
+    )
+
     plan = await _build_plan(
-        client,
-        idea=idea,
-        window=window,
-        title=title,
-        kind_label=kind_label,
-        model=model,
+        client, dist=dist, title=title, kind_label=kind_label, model=model
     )
-    hook, alts = await _compete_hooks(
-        client, idea=idea, plan=plan, window=window, model=model
-    )
+    hook, alts = await _compete_hooks(client, dist=dist, plan=plan, model=model)
     draft = await _compete_bodies(
         client,
-        idea=idea,
+        dist=dist,
         plan=plan,
-        window=window,
         hook=hook,
-        title=title,
-        kind_label=kind_label,
-        model=model,
-        max_tokens=max_tokens,
-        few_shot=few_shot,
-    )
-    draft = await _ensure_verbatim(
-        client,
-        draft=draft,
-        idea=idea,
-        plan=plan,
-        window=window,
-        hook=hook,
-        title=title,
-        kind_label=kind_label,
         model=model,
         max_tokens=max_tokens,
         few_shot=few_shot,
@@ -1192,9 +1268,8 @@ async def _build_scenario_bundle(
     final, rubric = await _rubric_revise(
         client,
         draft=draft,
-        idea=idea,
+        dist=dist,
         plan=plan,
-        window=window,
         hook=hook,
         title=title,
         kind_label=kind_label,
@@ -1203,12 +1278,13 @@ async def _build_scenario_bundle(
         few_shot=few_shot,
     )
     return ScenarioBundle(
-        text=final.strip(),
+        text=_tidy_output(final),
         plan=plan,
         hooks_alt=alts,
         rubric=rubric,
         window=window,
         idea=idea,
+        distilled=dist,
     )
 
 
@@ -1245,10 +1321,10 @@ def _format_scenario_message(idx: int, bundle: ScenarioBundle) -> str:
         parts.append("")
         parts.append("Альтернативные хуки:")
         parts.append(alts)
-    hits = _verbatim_hits(bundle.text, bundle.window)
-    if hits:
+    insight = str((bundle.distilled or {}).get("insight") or "").strip()
+    if insight:
         parts.append("")
-        parts.append("Дословные опоры: " + " | ".join(hits[:3]))
+        parts.append(f"Мысль в основе: {insight}")
     return "\n".join(parts)
 
 
@@ -1307,10 +1383,7 @@ async def _run_reels_brief(
             client,
             title=title_str,
             kind_label=kind_label,
-            segments=segments
-            or [
-                SpeechSegment(0.0, transcript[:8000], float(len(transcript) / 14.0))
-            ],
+            segments=segments or _fake_segments(transcript),
             model=model,
             max_tokens=max_tokens,
         )
@@ -1331,7 +1404,7 @@ async def _run_reels_brief(
 
         header = (
             f"🎬 <b>Reels-сценарии</b> · {kind_label}: {title_str}\n"
-            f"(топ {len(ideas)} мыслей из эфира, с дословными окнами)"
+            f"(топ {len(ideas)} мыслей из эфира)"
         )
         await bot.send_message(chat_id, header, parse_mode="HTML", **kwargs)
         await asyncio.sleep(0.4)
@@ -1341,12 +1414,7 @@ async def _run_reels_brief(
                 bundle = await _build_scenario_bundle(
                     client,
                     idea=idea,
-                    segments=segments
-                    or [
-                        SpeechSegment(
-                            0.0, transcript[:12000], float(len(transcript) / 14.0)
-                        )
-                    ],
+                    segments=segments or _fake_segments(transcript),
                     title=title_str,
                     kind_label=kind_label,
                     model=model,
