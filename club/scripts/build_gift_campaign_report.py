@@ -13,15 +13,16 @@ import argparse
 import html
 import os
 import re
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Any, Dict, List, Sequence, Set, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 from zoneinfo import ZoneInfo
 
 import asyncpg
 
 MSK = ZoneInfo("Europe/Moscow")
 CAMPAIGN = "gift-2026-09"
+TICKET_CAP = 150
 DEFAULT_OUT = Path(
     "/home/appuser/www/reports/45537a5b39cd8c302855/6fc916b25071/54f1f46d2d/index.html"
 )
@@ -129,6 +130,12 @@ async def collect() -> Dict[str, Any]:
             SELECT
               COUNT(*) FILTER (WHERE submitted_at IS NOT NULL)::int AS submitted,
               COUNT(*) FILTER (WHERE status IN ('queued', 'submitted'))::int AS in_queue,
+              COUNT(*) FILTER (
+                WHERE status = 'submitted' AND COALESCE(verdict, '') = 'review'
+              )::int AS waiting_review,
+              COUNT(*) FILTER (
+                WHERE status = 'queued' AND verdict = 'pass'
+              )::int AS ready_draw,
               COUNT(*) FILTER (WHERE status = 'draft')::int AS draft,
               COUNT(*) FILTER (WHERE status = 'expired')::int AS expired,
               COUNT(*) FILTER (WHERE status = 'cancelled')::int AS cancelled,
@@ -138,6 +145,93 @@ async def collect() -> Dict[str, Any]:
             """,
             CAMPAIGN,
             admin_list,
+        )
+
+        queue_ops = await conn.fetchrow(
+            """
+            SELECT
+              COUNT(*) FILTER (
+                WHERE ga.status = 'submitted'
+                  AND COALESCE(ga.verdict, '') = 'review'
+              )::int AS waiting_review,
+              COUNT(*) FILTER (
+                WHERE ga.status = 'queued' AND ga.verdict = 'pass'
+              )::int AS ready_draw,
+              COUNT(*) FILTER (
+                WHERE ga.status IN ('selected', 'drawn')
+                  AND (
+                    gwm.status IS NULL
+                    OR gwm.status IN ('queued', 'expired', 'declined')
+                  )
+              )::int AS selected_no_ticket,
+              COUNT(*) FILTER (
+                WHERE gwm.status = 'queued'
+              )::int AS wave_queued,
+              COUNT(*) FILTER (
+                WHERE gwm.status = 'granted'
+              )::int AS ticket_holding,
+              COUNT(*) FILTER (
+                WHERE gwm.status IN (
+                  'granted', 'activated', 'joined', 'spoke'
+                )
+              )::int AS tickets_occupied
+            FROM gift_application ga
+            LEFT JOIN gift_wave_member gwm ON gwm.application_id = ga.id
+            LEFT JOIN gift_wave w
+              ON w.id = gwm.wave_id AND w.campaign = ga.campaign
+            WHERE ga.campaign = $1
+              AND ga.user_id != ALL($2::bigint[])
+            """,
+            CAMPAIGN,
+            admin_list,
+        )
+
+        tickets_hold_all = await conn.fetchrow(
+            """
+            SELECT
+              COUNT(*) FILTER (WHERE gwm.status = 'granted')::int AS holding,
+              COUNT(*) FILTER (
+                WHERE gwm.status IN (
+                  'granted', 'activated', 'joined', 'spoke'
+                )
+              )::int AS occupied
+            FROM gift_wave_member gwm
+            JOIN gift_wave w ON w.id = gwm.wave_id
+            WHERE w.campaign = $1
+              AND gwm.user_id != ALL($2::bigint[])
+            """,
+            CAMPAIGN,
+            admin_list,
+        )
+
+        ttl_days = 7
+        try:
+            from config import config as _cfg
+
+            ttl_days = int(getattr(_cfg, "GIFT_TICKET_TTL_DAYS", 7) or 7)
+        except Exception:
+            pass
+
+        free_rows = await conn.fetch(
+            """
+            SELECT
+              (
+                (gwm.granted_at + ($3 || ' days')::interval)
+                AT TIME ZONE 'Europe/Moscow'
+              )::date AS free_day,
+              COUNT(*)::int AS n
+            FROM gift_wave_member gwm
+            JOIN gift_wave w ON w.id = gwm.wave_id
+            WHERE w.campaign = $1
+              AND gwm.user_id != ALL($2::bigint[])
+              AND gwm.status = 'granted'
+              AND gwm.granted_at IS NOT NULL
+            GROUP BY 1
+            ORDER BY 1
+            """,
+            CAMPAIGN,
+            admin_list,
+            str(ttl_days),
         )
 
         waves = await conn.fetch(
@@ -479,6 +573,25 @@ async def collect() -> Dict[str, Any]:
         finally:
             await bconn.close()
 
+    today = datetime.now(MSK).date()
+    free_by_offset: Dict[int, int] = {i: 0 for i in range(0, 8)}
+    for r in free_rows:
+        fd = r["free_day"]
+        if fd is None:
+            continue
+        if isinstance(fd, datetime):
+            fd = fd.date()
+        offset = (fd - today).days
+        if offset < 0:
+            offset = 0
+        if offset > 7:
+            continue
+        free_by_offset[offset] = free_by_offset.get(offset, 0) + int(r["n"] or 0)
+
+    occupied = int((tickets_hold_all or {}).get("occupied") or 0)
+    holding = int((tickets_hold_all or {}).get("holding") or 0)
+    slots_free = max(0, TICKET_CAP - occupied)
+
     return {
         "admins_n": len(admins),
         "admin_in_waves": int(admin_in_waves or 0),
@@ -487,6 +600,25 @@ async def collect() -> Dict[str, Any]:
         "b1_day": b1_day,
         "apps_days": [dict(r) for r in apps_days],
         "apps": dict(apps_tot) if apps_tot else {},
+        "queue_ops": dict(queue_ops) if queue_ops else {},
+        "tickets": {
+            "cap": TICKET_CAP,
+            "occupied": occupied,
+            "holding": holding,
+            "free_now": slots_free,
+            "ttl_days": ttl_days,
+            "free_by_day": [
+                {
+                    "offset": i,
+                    "label": _free_day_label(i, today),
+                    "n": int(free_by_offset.get(i) or 0),
+                }
+                for i in range(0, 8)
+            ],
+            "free_7d_total": sum(
+                int(free_by_offset.get(i) or 0) for i in range(0, 8)
+            ),
+        },
         "waves": [dict(r) for r in waves],
         "entered": [dict(r) for r in entered],
         "greeter": [dict(r) for r in greeter],
@@ -500,6 +632,18 @@ async def collect() -> Dict[str, Any]:
         "entered_no_greeter": int(entered_no_greeter or 0),
         "generated_at": datetime.now(MSK),
     }
+
+
+def _free_day_label(offset: int, today: date) -> str:
+    d = today + timedelta(days=offset)
+    ds = d.strftime("%d.%m")
+    if offset == 0:
+        return f"сегодня ({ds})"
+    if offset == 1:
+        return f"завтра ({ds})"
+    if offset == 2:
+        return f"послезавтра ({ds})"
+    return f"через {offset} дн. ({ds})"
 
 
 def _msg_buckets(entered: Sequence[Dict[str, Any]]) -> List[Tuple[str, int]]:
@@ -535,6 +679,8 @@ def render(data: Dict[str, Any], *, live: bool = True) -> str:
     waves = data["waves"]
     entered = data["entered"]
     t1 = data["t1_days"]
+    qops = data.get("queue_ops") or {}
+    tickets = data.get("tickets") or {}
     submitted = int(apps.get("submitted") or 0)
     won = sum(int(w["won"]) for w in waves)
     entered_n = sum(int(w["entered"]) for w in waves)
@@ -542,10 +688,31 @@ def render(data: Dict[str, Any], *, live: bool = True) -> str:
     t1_sent = sum(int(r["sent"]) for r in t1)
     t1_blocked = sum(int(r["blocked"]) for r in t1)
     invites = t1_sent + int(data["b1_sent"])
-    left = max(0, 150 - won)
+    free_now = int(tickets.get("free_now") or max(0, TICKET_CAP - won))
+    holding = int(tickets.get("holding") or 0)
+    occupied = int(tickets.get("occupied") or 0)
+    waiting_review = int(qops.get("waiting_review") or apps.get("waiting_review") or 0)
+    ready_draw = int(qops.get("ready_draw") or apps.get("ready_draw") or 0)
+    selected_no_ticket = int(qops.get("selected_no_ticket") or 0)
+    wave_queued = int(qops.get("wave_queued") or 0)
     gen_dt = data["generated_at"]
     gen = gen_dt.strftime("%d.%m.%Y %H:%M МСК")
     gen_iso = gen_dt.isoformat(timespec="seconds")
+
+    free_days = tickets.get("free_by_day") or []
+    max_free = max((int(x.get("n") or 0) for x in free_days), default=1) or 1
+    free_bars = "".join(
+        _bar_row(str(x["label"]), int(x.get("n") or 0), max_free)
+        for x in free_days
+    )
+    free_table_rows = "".join(
+        f"<tr><td>{html.escape(str(x['label']))}</td>"
+        f"<td class='num'>{_fmt(int(x.get('n') or 0))}</td></tr>"
+        for x in free_days
+    )
+    free_7d = int(tickets.get("free_7d_total") or 0)
+    ttl_days = int(tickets.get("ttl_days") or 7)
+
     refresh_ui = ""
     if live:
         refresh_ui = f"""
@@ -555,16 +722,22 @@ def render(data: Dict[str, Any], *, live: bool = True) -> str:
     <time id="snap-time" datetime="{html.escape(gen_iso)}">{html.escape(gen)}</time>
     <span class="snap-hint">цифры из БД на этот момент; сами не обновляются</span>
   </div>
-  <button type="button" class="snap-btn" id="snap-refresh">Обновить снимок</button>
+  <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center">
+    <button type="button" class="snap-btn" id="snap-refresh">Обновить снимок</button>
+    <button type="button" class="snap-btn snap-btn-draw" id="snap-draw">🎲 Провести розыгрыш</button>
+  </div>
   <span class="snap-status" id="snap-status" hidden></span>
 </div>
 <script>
 (function(){{
-  var btn = document.getElementById('snap-refresh');
   var st = document.getElementById('snap-status');
-  if (!btn) return;
-  btn.addEventListener('click', async function(){{
-    btn.disabled = true;
+  function setBusy(btn, on) {{
+    if (btn) btn.disabled = !!on;
+  }}
+  var refreshBtn = document.getElementById('snap-refresh');
+  if (refreshBtn) refreshBtn.addEventListener('click', async function(){{
+    setBusy(refreshBtn, true);
+    setBusy(document.getElementById('snap-draw'), true);
     st.hidden = false;
     st.textContent = 'Считаю из базы…';
     try {{
@@ -574,12 +747,36 @@ def render(data: Dict[str, Any], *, live: bool = True) -> str:
         headers: {{'Accept': 'application/json'}}
       }});
       var body = await r.json().catch(function(){{ return {{}}; }});
-      if (!r.ok) throw new Error(body.error || ('HTTP ' + r.status));
+      if (!r.ok) throw new Error(body.detail || body.error || ('HTTP ' + r.status));
       st.textContent = 'Готово, перезагружаю…';
       location.reload();
     }} catch (e) {{
       st.textContent = 'Не удалось обновить: ' + (e && e.message ? e.message : e);
-      btn.disabled = false;
+      setBusy(refreshBtn, false);
+      setBusy(document.getElementById('snap-draw'), false);
+    }}
+  }});
+  var drawBtn = document.getElementById('snap-draw');
+  if (drawBtn) drawBtn.addEventListener('click', async function(){{
+    if (!confirm('Запустить розыгрыш / выдачу партии сейчас?')) return;
+    setBusy(drawBtn, true);
+    setBusy(refreshBtn, true);
+    st.hidden = false;
+    st.textContent = 'Розыгрыш…';
+    try {{
+      var r = await fetch('api/draw', {{
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {{'Accept': 'application/json'}}
+      }});
+      var body = await r.json().catch(function(){{ return {{}}; }});
+      if (!r.ok) throw new Error(body.detail || body.error || ('HTTP ' + r.status));
+      st.textContent = (body.message || 'Готово') + ' — обновляю снимок…';
+      location.reload();
+    }} catch (e) {{
+      st.textContent = 'Розыгрыш не удался: ' + (e && e.message ? e.message : e);
+      setBusy(drawBtn, false);
+      setBusy(refreshBtn, false);
     }}
   }});
 }})();
@@ -893,6 +1090,7 @@ td .sub{{font-size:12px;color:var(--ink-faint);margin-top:2px}}
   border:1px solid var(--accent);background:var(--accent);color:#fff;cursor:pointer}}
 .snap-btn:hover{{filter:brightness(1.06)}}
 .snap-btn:disabled{{opacity:.55;cursor:wait}}
+.snap-btn-draw{{background:var(--hot);border-color:var(--hot)}}
 .snap-status{{font-family:"IBM Plex Mono",monospace;font-size:12.5px;color:var(--ink-soft)}}
 .foot{{margin-top:50px;padding-top:20px;border-top:2px solid var(--ink);font-size:13px;color:var(--ink-faint)}}
 .foot p{{margin:0 0 6px;max-width:none;font-size:13px}}
@@ -915,10 +1113,45 @@ td .sub{{font-size:12px;color:var(--ink-faint);margin-top:2px}}
 </header>
 {refresh_ui}
 
+<section class="sec" style="margin-top:28px;padding-top:0;border-top:none">
+  <p class="kick">Очередь и билеты</p>
+  <h2>Кто ждёт и когда освободятся слоты</h2>
+  <div class="kpis">
+    <div class="kpi"><div class="n">{_fmt(waiting_review)}</div><div class="l">анкеты на проверке</div><div class="s">submitted · review</div></div>
+    <div class="kpi"><div class="n">{_fmt(ready_draw)}</div><div class="l">готовы к розыгрышу</div><div class="s">queued · pass</div></div>
+    <div class="kpi"><div class="n">{_fmt(selected_no_ticket)}</div><div class="l">отобраны, билета нет</div><div class="s">expired / declined / в пуле волны</div></div>
+    <div class="kpi"><div class="n">{_fmt(holding)}</div><div class="l">билет на руках</div><div class="s">ещё не вошли · TTL {ttl_days} дн.</div></div>
+    <div class="kpi"><div class="n">{_fmt(free_now)}</div><div class="l">свободно слотов сейчас</div><div class="s">занято {_fmt(occupied)} из {TICKET_CAP}</div></div>
+  </div>
+  <div class="note">
+    <span class="lbl">Как читать</span>
+    <p><strong>На проверке</strong> — анкета отправлена, ждёт скоринг. <strong>Готовы к розыгрышу</strong> — прошли проверку и ждут кнопку «Провести розыгрыш». <strong>Отобраны, билета нет</strong> — уже выиграли в волне, но билет сгорел / отклонили / ещё в очереди выдачи волны ({_fmt(wave_queued)} в очереди волны).</p>
+    <p><strong>Билет на руках</strong> — ссылка у человека, слот занят, пока не войдёт или не истечёт TTL ({ttl_days} дней с выдачи). После истечения слот снова свободен для новой волны.</p>
+  </div>
+  <div class="grid2">
+    <div>
+      <h3 style="font-size:17px;font-weight:600;margin:8px 0 10px">Освобождение билетов · 7 дней</h3>
+      <div class="bars">{free_bars or '<p style="color:var(--ink-faint)">нет ожидающих билетов</p>'}</div>
+      <p style="font-size:13.5px;color:var(--ink-faint);margin-top:8px">
+        Сумма за горизонт: <strong>{_fmt(free_7d)}</strong>
+        (если никто из держателей не активирует раньше).
+      </p>
+    </div>
+    <div>
+      <div class="tscroll" style="margin-top:8px">
+        <table>
+          <thead><tr><th>Когда</th><th class="num">Слотов</th></tr></thead>
+          <tbody>{free_table_rows or '<tr><td colspan="2">нет данных</td></tr>'}</tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</section>
+
 <div class="kpis">
   <div class="kpi"><div class="n">{_fmt(invites)}</div><div class="l">приглашений доставлено</div><div class="s">Т1 {_fmt(t1_sent)} + B1 {_fmt(int(data['b1_sent']))}</div></div>
-  <div class="kpi"><div class="n">{_fmt(submitted)}</div><div class="l">анкет отправлено</div><div class="s">в очереди {_fmt(int(apps.get('in_queue') or 0))}</div></div>
-  <div class="kpi"><div class="n">{_fmt(won)}</div><div class="l">выиграли билет</div><div class="s">осталось ~{_fmt(left)} из 150</div></div>
+  <div class="kpi"><div class="n">{_fmt(submitted)}</div><div class="l">анкет отправлено</div><div class="s">на проверке {_fmt(waiting_review)} · к розыгрышу {_fmt(ready_draw)}</div></div>
+  <div class="kpi"><div class="n">{_fmt(won)}</div><div class="l">выиграли билет</div><div class="s">свободно {_fmt(free_now)} · на руках {_fmt(holding)}</div></div>
   <div class="kpi"><div class="n">{_fmt(entered_n)}</div><div class="l">вошли в группу</div><div class="s">{_pct(entered_n, won)} от выигравших</div></div>
   <div class="kpi"><div class="n">{_fmt(wrote_n)}</div><div class="l">написали в чат</div><div class="s">{_pct(wrote_n, entered_n)} от вошедших</div></div>
 </div>
@@ -974,7 +1207,7 @@ td .sub{{font-size:12px;color:var(--ink-faint);margin-top:2px}}
       <div class="kpi" style="margin-bottom:12px"><div class="n">{_fmt(submitted)}</div><div class="l">отправлено</div>
         <div class="s">черновики {_fmt(int(apps.get('draft') or 0))} · expired {_fmt(int(apps.get('expired') or 0))} · отмены {_fmt(int(apps.get('cancelled') or 0))}</div>
       </div>
-      <p style="font-size:14.5px;color:var(--ink-soft);margin:0">Сейчас в работе (submitted + queued): <strong>{_fmt(int(apps.get('in_queue') or 0))}</strong></p>
+      <p style="font-size:14.5px;color:var(--ink-soft);margin:0">На проверке: <strong>{_fmt(waiting_review)}</strong> · готовы к розыгрышу: <strong>{_fmt(ready_draw)}</strong> · отобраны без билета: <strong>{_fmt(selected_no_ticket)}</strong></p>
     </div>
   </div>
 </section>

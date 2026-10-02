@@ -201,7 +201,13 @@ class SupportMixin:
         reply_text: str,
         admin_id: int,
     ) -> Optional[Dict[str, Any]]:
-        """Закрывает открытый тикет ответом админа (как legacy admin support_topic)."""
+        """Записывает ответ админа в тикет.
+
+        Первый ответ закрывает цепочку через статус ``answered`` (далее
+        вызывающий ставит ``closed`` после успешной доставки). Повторные
+        ответы в уже закрытый / answered тикет тоже разрешены — статус
+        снова ``answered``, пока доставка не подтвердит ``closed``.
+        """
         ticket_number = (ticket_number or "").strip().upper()
         try:
             async with self.get_connection() as conn:
@@ -214,8 +220,10 @@ class SupportMixin:
                            status = 'answered',
                            updated_at = NOW()
                      WHERE ticket_number = $1
-                       AND status IN ('open', 'delivery_failed')
-                 RETURNING ticket_id, user_id
+                       AND status IN (
+                           'open', 'delivery_failed', 'answered', 'closed'
+                       )
+                 RETURNING ticket_id, user_id, ticket_number
                     """,
                     ticket_number,
                     reply_text,

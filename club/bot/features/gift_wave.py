@@ -322,7 +322,12 @@ class GiftWaveFeature(BaseFeature):
                 gid = int(parts[2].split()[0])
                 ok = await self.user_storage.set_greeter_active(gid, False)
                 if ok:
-                    await on_greeter_deactivated(self.bot, self.user_storage, gid)
+                    await on_greeter_deactivated(
+                        self.bot,
+                        self.user_storage,
+                        gid,
+                        reason="снят с пула командой /wave greeter remove",
+                    )
                 await message.answer(f"{'✅' if ok else '❌'} greeter {gid} off")
                 return
 
@@ -384,7 +389,12 @@ class GiftWaveFeature(BaseFeature):
 
         uid = callback.from_user.id if callback.from_user else 0
         await self.user_storage.set_greeter_active(uid, False)
-        await on_greeter_deactivated(self.bot, self.user_storage, uid)
+        await on_greeter_deactivated(
+            self.bot,
+            self.user_storage,
+            uid,
+            reason="сам вышел из пула кнопкой «Выйти»",
+        )
         await callback.answer("Снял с пула")
         try:
             await callback.message.answer(txt.GREETER_LEFT_POOL_HTML)
@@ -408,7 +418,12 @@ class GiftWaveFeature(BaseFeature):
 
         uid = callback.from_user.id if callback.from_user else 0
         await self.user_storage.set_greeter_active(uid, False)
-        await on_greeter_deactivated(self.bot, self.user_storage, uid)
+        await on_greeter_deactivated(
+            self.bot,
+            self.user_storage,
+            uid,
+            reason="отклонил приглашение в пул встречающих",
+        )
         await callback.answer("Хорошо")
         try:
             await callback.message.answer(txt.GREETER_INVITE_DECLINED_HTML)

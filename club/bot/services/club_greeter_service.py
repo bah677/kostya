@@ -143,9 +143,16 @@ async def sync_greeter_pool_licenses(
 
             for uid in removed:
                 try:
-                    await on_greeter_deactivated(bot, user_storage, uid)
+                    await on_greeter_deactivated(
+                        bot,
+                        user_storage,
+                        uid,
+                        reason="нет активной лицензии клуба",
+                    )
                 except Exception as e:
-                    logger.warning("greeter room kick after license sync uid=%s: %s", uid, e)
+                    logger.warning(
+                        "greeter room notice after license sync uid=%s: %s", uid, e
+                    )
     return removed
 
 
@@ -261,10 +268,15 @@ async def process_greeter_timeouts(*, user_storage, bot: "Bot") -> None:
                 try:
                     from bot.services.greeter_room_service import on_greeter_deactivated
 
-                    await on_greeter_deactivated(bot, user_storage, int(deactivated))
+                    await on_greeter_deactivated(
+                        bot,
+                        user_storage,
+                        int(deactivated),
+                        reason="серия пропусков встреч (miss_streak ≥ 5)",
+                    )
                 except Exception as e:
                     logger.warning(
-                        "greeter room kick after miss_streak uid=%s: %s",
+                        "greeter room notice after miss_streak uid=%s: %s",
                         deactivated,
                         e,
                     )

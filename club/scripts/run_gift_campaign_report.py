@@ -20,6 +20,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import uvicorn
+from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse
 
@@ -31,6 +32,7 @@ from build_gift_campaign_report import (  # noqa: E402
 
 MSK = ZoneInfo("Europe/Moscow")
 logger = logging.getLogger("gift_campaign_report")
+DEFAULT_PROD_ENV = "/home/appuser/club/.env"
 
 _lock = asyncio.Lock()
 _cache_html: Optional[str] = None
@@ -63,7 +65,126 @@ async def _rebuild(*, persist: bool = True) -> Dict[str, Any]:
         return dict(_cache_meta)
 
 
+class _FeatureBag:
+    def __init__(self, club_group) -> None:
+        self._club_group = club_group
+
+    def get(self, name: str):
+        if name == "club_group":
+            return self._club_group
+        raise KeyError(name)
+
+
+async def _run_draw_action() -> Dict[str, Any]:
+    """Тот же сценарий, что кнопка в админ-топике: draw или grant."""
+    load_dotenv(DEFAULT_PROD_ENV, override=True)
+    from aiogram import Bot
+
+    from bot.features.club_group import ClubGroupFeature
+    from bot.services.gift_application_alerts import resolve_campaign_wave_button
+    from bot.services.gift_application_select import (
+        ensure_campaign_wave,
+        select_applications_for_wave,
+    )
+    from bot.services.gift_wave_service import grant_wave_batch
+    from bot.texts import ru_gift_application as ga_txt
+    from config import load_config
+    from storage.user_storage import UserStorage
+
+    cfg = load_config()
+    storage = UserStorage(cfg.database_url)
+    await storage.connect()
+    bot = Bot(token=cfg.MIRON_BOT_TOKEN)
+    try:
+        btn = await resolve_campaign_wave_button(storage)
+        if not btn:
+            # почему недоступно — для понятного ответа на странице
+            from bot.services.gift_application_eligibility import count_remaining_tickets
+
+            left = await count_remaining_tickets(storage)
+            by_src = await storage.count_queued_by_source()
+            ready = sum(int(v) for v in (by_src or {}).values())
+            async with storage.get_connection() as conn:
+                review = await conn.fetchval(
+                    """
+                    SELECT COUNT(*)::int FROM gift_application
+                    WHERE campaign = 'gift-2026-09'
+                      AND status = 'submitted'
+                      AND COALESCE(verdict, '') = 'review'
+                    """
+                )
+            reasons = []
+            if left <= 0:
+                reasons.append("нет свободных слотов билетов")
+            if ready <= 0:
+                reasons.append(
+                    f"нет анкет в статусе queued+pass (на проверке сейчас {int(review or 0)})"
+                )
+            elif ready < 15:
+                reasons.append(f"мало готовых анкет к розыгрышу ({ready})")
+            if not reasons:
+                reasons.append("кампания на паузе или завершена")
+            return {
+                "ok": False,
+                "error": "Сейчас розыгрыш недоступен: " + "; ".join(reasons) + ".",
+            }
+
+        idx = int(btn["wave_index"])
+        mode = str(btn.get("mode") or "draw")
+        wave = await ensure_campaign_wave(storage, wave_index=idx)
+        if not wave:
+            return {"ok": False, "error": f"Не удалось создать/найти волну {idx}"}
+        wid = int(wave["id"])
+
+        club_group = ClubGroupFeature(user_storage=storage, bot=bot)
+        fm = _FeatureBag(club_group)
+
+        select_res = None
+        if mode == "draw":
+            select_res = await select_applications_for_wave(
+                storage, wave_id=wid, wave_index=idx
+            )
+        await storage.set_gift_wave_status(wid, "running")
+        grant_res = await grant_wave_batch(
+            user_storage=storage,
+            bot=bot,
+            feature_manager=fm,
+            wave_id=wid,
+        )
+        html_msg = ga_txt.format_wave_admin_result_html(
+            wave_index=idx,
+            mode=mode,
+            select=select_res,
+            grant=grant_res,
+        )
+        # короткий plaintext для JSON
+        plain = (
+            html_msg.replace("<b>", "")
+            .replace("</b>", "")
+            .replace("<code>", "")
+            .replace("</code>", "")
+            .replace("<br>", "\n")
+        )
+        import re
+
+        plain = re.sub(r"<[^>]+>", "", plain)
+        return {
+            "ok": True,
+            "mode": mode,
+            "wave_index": idx,
+            "wave_id": wid,
+            "select": select_res,
+            "grant": grant_res,
+            "message": plain.strip().replace("\n", " · "),
+            "html": html_msg,
+        }
+    finally:
+        await bot.session.close()
+        await storage.close()
+
+
 def create_app() -> FastAPI:
+    load_dotenv(DEFAULT_PROD_ENV, override=True)
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 
     @app.on_event("startup")
@@ -94,6 +215,25 @@ def create_app() -> FastAPI:
         except Exception as e:
             logger.exception("refresh failed")
             raise HTTPException(status_code=500, detail=str(e)) from e
+
+    @app.post("/api/draw")
+    async def draw() -> JSONResponse:
+        try:
+            # не держим _lock на время Telegram-выдачи (минуты)
+            result = await _run_draw_action()
+        except Exception as e:
+            logger.exception("draw failed")
+            raise HTTPException(status_code=500, detail=str(e)) from e
+        if not result.get("ok"):
+            raise HTTPException(
+                status_code=409,
+                detail=result.get("error") or "розыгрыш недоступен",
+            )
+        try:
+            await _rebuild(persist=True)
+        except Exception:
+            logger.exception("rebuild after draw failed")
+        return JSONResponse(result)
 
     return app
 

@@ -105,7 +105,11 @@ async def _send(bot, text: str) -> bool:
 
 
 async def _next_wave_index(user_storage) -> Tuple[int, Optional[Dict[str, Any]]]:
-    """Следующая волна 1..6, которую ещё не запускали (нет running/done)."""
+    """Следующая волна для отбора/выдачи.
+
+    Волны 1..6 — плановые этапы кампании. Если они закрыты, а билеты ещё
+    есть — открываем 7, 8, … с тем же механизмом отбора.
+    """
     async with user_storage.get_connection() as conn:
         rows = await conn.fetch(
             """
@@ -121,7 +125,9 @@ async def _next_wave_index(user_storage) -> Tuple[int, Optional[Dict[str, Any]]]
         idx = int(r["wave_index"])
         if idx not in by_idx:
             by_idx[idx] = dict(r)
-    for i in range(1, 7):
+
+    max_planned = max([6] + list(by_idx.keys()))
+    for i in range(1, max_planned + 2):
         w = by_idx.get(i)
         if not w:
             return i, None

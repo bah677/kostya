@@ -2050,23 +2050,10 @@ class AdminConsoleFeature(BaseFeature):
         if not row:
             return f"Тикет {ticket_number} не найден в базе."
         status = str(row.get("status") or "")
-        if status == "closed":
-            updated = row.get("updated_at")
-            when = (
-                updated.strftime("%d.%m.%Y %H:%M")
-                if hasattr(updated, "strftime")
-                else "—"
-            )
-            return (
-                f"Тикет {ticket_number} уже закрыт ({when}). "
-                "Ответ был записан и отправлен пользователю — повторный ответ в этот тикет невозможен."
-            )
-        if status == "answered":
-            return (
-                f"Тикет {ticket_number}: ответ уже записан, доставка пользователю в очереди. "
-                "Подождите или проверьте личку пользователя."
-            )
-        return f"Тикет {ticket_number} в статусе «{status}» — ответ сейчас принять нельзя."
+        return (
+            f"Тикет {ticket_number} в статусе «{status}» — "
+            "ответ сейчас принять нельзя."
+        )
 
     def _extract_target_user_id(self, text: str) -> Optional[int]:
         if not text:
