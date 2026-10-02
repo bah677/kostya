@@ -270,6 +270,9 @@ async def _run_full_voice_pipeline(
                 transcript_excerpt=_transcript_spread(transcript),
                 recording_kind=recording_kind,
                 philosophy_hint=philosophy,
+                # Полная расшифровка — для карты записи: первый проход читает
+                # её целиком кусками и решает, сборник это или одна мысль.
+                transcript=transcript,
             )
             prefix = f"📻 Полная запись · {kind_label}\n\n"
             if caption and not caption.startswith("📻"):
