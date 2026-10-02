@@ -37,16 +37,23 @@ def date_label(d: date) -> str:
 
 
 def md_to_html_body(md: str) -> str:
-    """Минимальный markdown → HTML (заголовки, списки, абзацы, bold/italic/links)."""
+    """Минимальный markdown → HTML (заголовки, списки, цитаты, абзацы, bold/italic/links)."""
     lines = md.replace("\r\n", "\n").split("\n")
     out: list[str] = []
     in_ul = False
+    in_bq = False
 
     def close_ul() -> None:
         nonlocal in_ul
         if in_ul:
             out.append("</ul>")
             in_ul = False
+
+    def close_bq() -> None:
+        nonlocal in_bq
+        if in_bq:
+            out.append("</blockquote>")
+            in_bq = False
 
     def inline(s: str) -> str:
         s = html.escape(s)
@@ -63,7 +70,19 @@ def md_to_html_body(md: str) -> str:
         line = raw.rstrip()
         if not line.strip():
             close_ul()
+            close_bq()
             continue
+        # Цитаты: ими в заметках показывают примеры «вот что получилось».
+        if line.startswith(">"):
+            close_ul()
+            if not in_bq:
+                out.append("<blockquote>")
+                in_bq = True
+            inner = line[1:].strip()
+            if inner:
+                out.append(f"<p>{inline(inner)}</p>")
+            continue
+        close_bq()
         if line.startswith("### "):
             close_ul()
             out.append(f"<h3>{inline(line[4:].strip())}</h3>")
@@ -84,6 +103,7 @@ def md_to_html_body(md: str) -> str:
             close_ul()
             out.append(f"<p>{inline(line)}</p>")
     close_ul()
+    close_bq()
     return "\n".join(out)
 
 
