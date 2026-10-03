@@ -84,8 +84,15 @@ def display_name(user: Optional[Dict[str, Any]], user_id: int) -> str:
     return f"админ {str(user_id)[-4:]}"
 
 
+def _has_profile_name(user: Optional[Dict[str, Any]]) -> bool:
+    row = user or {}
+    return any(
+        str(row.get(k) or "").strip() for k in ("first_name", "last_name", "username")
+    )
+
+
 async def _name_from_telegram(bot_app, user_id: int) -> Optional[Dict[str, Any]]:
-    """Имя для списка входа, если в users его ещё нет: спрашиваем у Telegram."""
+    """Имя из Telegram getChat; при успехе обновляем users."""
     bot = getattr(bot_app, "bot", None)
     if bot is None:
         return None
@@ -102,11 +109,27 @@ async def _name_from_telegram(bot_app, user_id: int) -> Optional[Dict[str, Any]]
     }
     if not (data["first_name"] or data["last_name"] or data["username"]):
         return None
-    try:
-        await bot_app.user_storage.add_or_update_user(data)
-    except Exception as e:
-        logger.debug("add_or_update_user %s: %s", user_id, e)
+    stor = getattr(bot_app, "user_storage", None)
+    if stor is not None:
+        try:
+            await stor.add_or_update_user(data)
+        except Exception as e:
+            logger.debug("add_or_update_user %s: %s", user_id, e)
     return data
+
+
+async def resolve_profile_user(bot_app, user_id: int) -> Optional[Dict[str, Any]]:
+    """Профиль для отображения: БД, иначе getChat из Telegram."""
+    stor = getattr(bot_app, "user_storage", None)
+    user = None
+    if stor is not None:
+        try:
+            user = await stor.get_user(int(user_id))
+        except Exception as e:
+            logger.warning("resolve_profile_user get_user %s: %s", user_id, e)
+    if _has_profile_name(user):
+        return user
+    return await _name_from_telegram(bot_app, int(user_id)) or user
 
 
 async def admin_list(bot_app) -> List[AdminRef]:
@@ -123,16 +146,7 @@ async def admin_list(bot_app) -> List[AdminRef]:
             ids.append(int(uid))
     out: List[AdminRef] = []
     for uid in ids:
-        user = None
-        try:
-            user = await stor.get_user(uid)
-        except Exception as e:  # pragma: no cover
-            logger.debug("get_user %s: %s", uid, e)
-        has_name = any(
-            str((user or {}).get(k) or "").strip() for k in ("first_name", "last_name", "username")
-        )
-        if not has_name and hasattr(bot_app, "bot"):
-            user = await _name_from_telegram(bot_app, uid) or user
+        user = await resolve_profile_user(bot_app, uid)
         out.append(AdminRef(user_id=uid, ref=admin_ref(uid), name=display_name(user, uid)))
     return out
 
@@ -203,11 +217,7 @@ async def verify_code(bot_app, *, ref: str, code: str, user_agent: str = "", ip:
         ip=ip,
         ttl_days=SESSION_TTL_DAYS,
     )
-    user = None
-    try:
-        user = await stor.get_user(user_id)
-    except Exception:
-        pass
+    user = await resolve_profile_user(bot_app, user_id)
     return {
         "token": token,
         "user": {"name": display_name(user, user_id), "ref": admin_ref(user_id)},

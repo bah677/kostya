@@ -38,6 +38,7 @@ from web.auth import (
     hash_token,
     login_with_init_data,
     request_code,
+    resolve_profile_user,
     session_user_id,
     verify_code,
 )
@@ -224,11 +225,8 @@ def create_app(bot_app) -> FastAPI:
 
     @app.get("/api/me")
     async def me(uid: int = Depends(auth)):
-        user = None
-        try:
-            user = await _stor().get_user(uid)
-        except Exception:
-            pass
+        # Имя из users; если пусто — getChat по токену бота (как в профиле TG).
+        user = await resolve_profile_user(bot_app, uid)
         return {"name": display_name(user, uid)}
 
     @app.post("/api/logout")
