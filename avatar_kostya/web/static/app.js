@@ -338,12 +338,54 @@ async function boot() {
   renderLlmSummary();
   renderTree();
   renderChats();
-  if (state.chats.length) {
+  const deepChat = chatIdFromUrl();
+  if (deepChat) {
+    try {
+      // свежее дерево: объект эфира только что мог попасть в RAG
+      const sync = await api("/api/sync", { method: "POST", body: "{}" });
+      if (sync?.tree) {
+        state.tree = sync.tree;
+        state.names = collectNames(sync.tree);
+        renderTree();
+      }
+    } catch (err) {
+      /* дерево из bootstrap уже есть */
+    }
+    try {
+      await openChat(deepChat);
+      clearChatIdFromUrl();
+    } catch (err) {
+      toast(`Чат из ссылки не открылся: ${err.message || err}`, "bad");
+      if (state.chats.length) await openChat(state.chats[0].id);
+      else await newChat();
+    }
+  } else if (state.chats.length) {
     await openChat(state.chats[0].id);
   } else {
     await newChat();
   }
   loadQueue();
+}
+
+function chatIdFromUrl() {
+  try {
+    const u = new URL(window.location.href);
+    return (u.searchParams.get("chat") || "").trim();
+  } catch (err) {
+    return "";
+  }
+}
+
+function clearChatIdFromUrl() {
+  try {
+    const u = new URL(window.location.href);
+    if (!u.searchParams.has("chat")) return;
+    u.searchParams.delete("chat");
+    const next = u.pathname + (u.searchParams.toString() ? `?${u.searchParams}` : "") + u.hash;
+    history.replaceState({}, "", next);
+  } catch (err) {
+    /* ignore */
+  }
 }
 
 function collectNames(tree) {

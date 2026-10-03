@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 import uuid
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -64,6 +65,16 @@ def _slug_id(title: str, used: set[str]) -> str:
 
 def decode_stages(raw: Any) -> List[Dict[str, str]]:
     """Сырое значение content_settings → список этапов."""
+    if isinstance(raw, (bytes, memoryview)):
+        raw = bytes(raw).decode("utf-8")
+    if isinstance(raw, str):
+        text = raw.strip()
+        if not text:
+            return []
+        try:
+            raw = json.loads(text)
+        except json.JSONDecodeError:
+            return []
     rows: List[Any]
     if isinstance(raw, list):
         rows = raw

@@ -112,7 +112,7 @@ class StyleMixin:
             )
         if not row:
             return None
-        return row["value"]
+        return _decode_jsonb_value(row["value"])
 
     async def set_content_setting(
         self, product_id: str, key: str, value: Any
@@ -130,3 +130,18 @@ class StyleMixin:
                 key,
                 json.dumps(value, ensure_ascii=False),
             )
+
+
+def _decode_jsonb_value(raw: Any) -> Any:
+    """asyncpg часто отдаёт jsonb как str — поднимаем в list/dict."""
+    if isinstance(raw, (bytes, memoryview)):
+        raw = bytes(raw).decode("utf-8")
+    if isinstance(raw, str):
+        text = raw.strip()
+        if not text:
+            return raw
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            return raw
+    return raw

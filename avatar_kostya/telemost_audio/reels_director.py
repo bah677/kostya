@@ -1,12 +1,12 @@
-"""Параллельно с нарезкой: готовые тексты Reels по полной расшифровке → топик.
+"""После индексации телемоста: чат в Контент заводе под сценарий Reels.
 
-Пайплайн (ТЗ):
-  1. Map-reduce по кускам речи Кости → JSON-идеи с anchor_sec + score → топ-N.
-  2. Для идеи: окно дословной речи ±pad сек.
-  3. Скрытый JSON-план (режиссура) → конкуренция хуков → 2–3 тела → судья.
-  4. Рендер в шаблон + пост-проверка дословных фраз.
-  5. Рубрика DeepSeek (с окном расшифровки), до 2 раундов, принимать только рост.
-  6. Сохранение в БД + кнопки (оценка / сгенерить Short в топик YouTube).
+Вместо генерации 5 вариантов в TG-топик:
+  1. Создаём web-чат (format=reels) с выбранным объектом эфира.
+  2. Кладём задание «напиши сценарий… по мотивам этого эфира».
+  3. В прежний TG-топик — короткая ссылка на студию ``?chat=<id>``.
+
+Ниже в файле остаются хелперы ручной/старой генерации сценариев (few-shot, рубрика),
+если ими пользуются другие команды.
 """
 
 from __future__ import annotations
@@ -1353,6 +1353,97 @@ def _format_scenario_message(idx: int, bundle: ScenarioBundle) -> str:
 
 # ── Оркестратор ──────────────────────────────────────────────────────────────
 
+_PROMPT_REELS = "напиши сценарий для вирусного reels. по мотивам этого эфира"
+
+
+def _source_label(meta: Dict[str, Any], row: Dict[str, Any], title: str) -> str:
+    """Тот же source, что уходит в Chroma при индексации (до 80 символов)."""
+    raw = (
+        str(meta.get("source") or "").strip()
+        or str(title or "").strip()
+        or str(row.get("subject") or "").strip()
+        or "Телемост"
+    )
+    return raw[:80]
+
+
+def _facet_for_kind(recording_kind: str) -> str:
+    kind = (recording_kind or "").strip().lower()
+    if kind in ("efir", "molitva", "pokayanie", "qa"):
+        return kind
+    return "efir"
+
+
+def _studio_chat_url(chat_id: uuid.UUID) -> str:
+    from bot.features.content_factory_feature import factory_web_url
+
+    base = factory_web_url().rstrip("/")
+    if not base:
+        return ""
+    return f"{base}/?chat={chat_id}"
+
+
+async def _create_reels_studio_chat(
+    bot_app: Any,
+    *,
+    title: str,
+    source: str,
+    recording_kind: str,
+    prompt: str,
+) -> Optional[uuid.UUID]:
+    """Создать чат студии: format=reels, объект эфира, задание в истории."""
+    storage = getattr(bot_app, "user_storage", None)
+    if storage is None or not hasattr(storage, "create_web_chat"):
+        logger.warning("telemost_reels_brief: нет user_storage / create_web_chat")
+        return None
+
+    from course.products import active_product_id
+    from course.stories_cycle import load_stages, normalize_stage
+    from web.objects import build_tree, material_id
+
+    facet = _facet_for_kind(recording_kind)
+    mat_id = material_id(facet, source)
+    try:
+        await build_tree(bot_app)
+    except Exception as e:
+        logger.warning("telemost_reels_brief: build_tree: %s", e)
+
+    pid = active_product_id()
+    stages = await load_stages(storage)
+    stage_raw = await storage.get_content_setting(pid, "stories_cycle_stage")
+    stage = normalize_stage(
+        stage_raw if isinstance(stage_raw, str) else "", stages
+    )
+    focus_raw = await storage.get_content_setting(pid, "focus")
+    focus = str(focus_raw or "") if isinstance(focus_raw, str) else ""
+    created_by = int(getattr(config, "SUPER_ADMIN_ID", 0) or 0) or None
+
+    chat_title = f"Reels · {title}"[:200]
+    cid = await storage.create_web_chat(
+        product_id=pid,
+        title=chat_title,
+        format="reels",
+        stage=stage,
+        focus=focus,
+        context={"objects": [mat_id]},
+        created_by=created_by,
+    )
+    if not cid:
+        return None
+    await storage.insert_web_chat_message(
+        chat_id=cid,
+        role="user",
+        text=prompt,
+    )
+    logger.info(
+        "telemost_reels_brief: studio chat %s mat=%s source=%r",
+        cid,
+        mat_id,
+        source[:60],
+    )
+    return cid
+
+
 async def _run_reels_brief(
     bot_app: Any,
     pending_id: uuid.UUID,
@@ -1361,158 +1452,69 @@ async def _run_reels_brief(
     *,
     recording_kind: str,
 ) -> None:
-    from openai import AsyncOpenAI
-
     pid = str(pending_id)
     chat_id, topic_id = _target_topic()
     bot = getattr(bot_app, "bot", None)
-    storage = getattr(bot_app, "user_storage", None)
     title = (
         meta.get("topic_title")
         or meta.get("source")
         or row.get("subject")
         or "Эфир"
     )
-    kind_label = KIND_LABELS.get(recording_kind, "Эфир")
-    transcript = (row.get("transcript_text") or "").strip()
+    title_str = str(title).strip() or "Эфир"
+    source = _source_label(meta if isinstance(meta, dict) else {}, row, title_str)
+    prompt = f"{_PROMPT_REELS} «{title_str}»"
 
     try:
         if not bot or not chat_id or not topic_id:
             logger.warning("telemost_reels_brief: no chat/bot/topic")
             return
-        if len(transcript) < 200:
-            logger.warning(
-                "telemost_reels_brief: transcript too short pending=%s", pid
-            )
-            return
 
-        key = (config.OPENAI_API_KEY or "").strip()
-        if not key:
-            raise RuntimeError("OPENAI_API_KEY не задан")
-        model = _get_openai_model()
-        max_tokens = _get_max_tokens()
-        client = AsyncOpenAI(api_key=key, timeout=240.0, max_retries=1)
-        kwargs = {"message_thread_id": int(topic_id)}
-        title_str = str(title)
-
-        segments = parse_expert_segments(transcript, _speaker_names())
-        if not segments:
-            logger.warning(
-                "telemost_reels_brief: no expert segments pending=%s — fallback raw",
-                pid,
-            )
-
-        ideas = await _extract_ideas_map_reduce(
-            client,
+        studio_id = await _create_reels_studio_chat(
+            bot_app,
             title=title_str,
-            kind_label=kind_label,
-            segments=segments or _fake_segments(transcript),
-            model=model,
-            max_tokens=max_tokens,
+            source=source,
+            recording_kind=recording_kind,
+            prompt=prompt,
         )
-        if not ideas:
+        url = _studio_chat_url(studio_id) if studio_id else ""
+        kwargs = {"message_thread_id": int(topic_id)}
+
+        if not studio_id or not url:
             await bot.send_message(
                 chat_id,
-                f"🎬 Reels: не нашёл сильных мыслей в «{title_str}».",
+                f"🎬 Не удалось создать чат студии для «{title_str}». "
+                f"Проверьте WEB_ENABLED / WEB_DOMAIN.",
                 **kwargs,
             )
             return
 
-        few_shot_rows: List[Dict[str, Any]] = []
-        if storage and hasattr(storage, "list_top_reels_few_shot"):
-            try:
-                few_shot_rows = await storage.list_top_reels_few_shot(8)
-            except Exception as e:
-                logger.debug("few-shot load: %s", e)
-
-        header = (
-            f"🎬 <b>Reels-сценарии</b> · {kind_label}: {title_str}\n"
-            f"(топ {len(ideas)} мыслей из эфира)"
+        text = (
+            f"готов новый сценарий reels по мотивам «{title_str}»\n\n"
+            f"{url}"
         )
-        await bot.send_message(chat_id, header, parse_mode="HTML", **kwargs)
-        await asyncio.sleep(0.4)
-
-        for idx, idea in enumerate(ideas, 1):
-            try:
-                bundle = await _build_scenario_bundle(
-                    client,
-                    idea=idea,
-                    segments=segments or _fake_segments(transcript),
-                    title=title_str,
-                    kind_label=kind_label,
-                    model=model,
-                    max_tokens=max_tokens,
-                    few_shot_rows=few_shot_rows,
-                )
-            except Exception as e:
-                logger.exception(
-                    "telemost_reels_brief: scenario failed idea=%r: %s",
-                    idea.title,
-                    e,
-                )
-                await bot.send_message(
-                    chat_id,
-                    f"#{idx} · {idea.title[:100]}\n\n⛔ Ошибка генерации: {e}",
-                    **kwargs,
-                )
-                continue
-
-            full_text = _format_scenario_message(idx, bundle)
-            ref = _new_ref_code()
-            scenario_id: Optional[uuid.UUID] = None
-            if storage and hasattr(storage, "insert_reels_scenario"):
-                try:
-                    scenario_id = await storage.insert_reels_scenario(
-                        pending_id=pending_id
-                        if isinstance(pending_id, uuid.UUID)
-                        else None,
-                        ref_code=ref,
-                        air_title=title_str,
-                        idea_title=idea.title,
-                        idea_score=idea.score,
-                        anchor_sec=idea.anchor_sec,
-                        scenario_text=bundle.text,
-                        transcript_window=bundle.window,
-                        hook_alternatives="\n".join(bundle.hooks_alt),
-                        plan_json=bundle.plan,
-                        rubric_json=bundle.rubric,
-                        chat_id=chat_id,
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="Открыть в Контент заводе",
+                        url=url,
                     )
-                except Exception as e:
-                    logger.warning("insert_reels_scenario: %s", e)
-
-            parts = _chunks(full_text)
-            first_msg_id = 0
-            for pi, part in enumerate(parts):
-                kb = None
-                if pi == len(parts) - 1 and scenario_id:
-                    kb = feedback_keyboard(scenario_id)
-                msg = await bot.send_message(
-                    chat_id,
-                    part[:4096],
-                    reply_markup=kb,
-                    **kwargs,
-                )
-                if pi == 0:
-                    first_msg_id = int(getattr(msg, "message_id", 0) or 0)
-                await asyncio.sleep(0.35)
-
-            if (
-                scenario_id
-                and storage
-                and hasattr(storage, "update_reels_scenario_message")
-                and first_msg_id
-            ):
-                await storage.update_reels_scenario_message(
-                    scenario_id, chat_id=chat_id, message_id=first_msg_id
-                )
-            await asyncio.sleep(0.5)
-
+                ]
+            ]
+        )
+        await bot.send_message(
+            chat_id,
+            text[:4000],
+            reply_markup=kb,
+            disable_web_page_preview=False,
+            **kwargs,
+        )
         logger.info(
-            "telemost_reels_brief sent pending=%s kind=%s ideas=%d",
+            "telemost_reels_brief studio link pending=%s kind=%s chat=%s",
             pid,
             recording_kind,
-            len(ideas),
+            studio_id,
         )
     except Exception as e:
         logger.exception("telemost_reels_brief failed pending=%s: %s", pid, e)
