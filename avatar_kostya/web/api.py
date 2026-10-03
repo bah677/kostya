@@ -78,9 +78,32 @@ def create_app(bot_app) -> FastAPI:
     from config import config
 
     app = FastAPI(title="Контент завод", docs_url=None, redoc_url=None, openapi_url=None)
+    _bot_username_cache: Dict[str, str] = {"value": ""}
 
     def _stor():
         return bot_app.user_storage
+
+    async def _avatar_bot_username() -> str:
+        """Username аватара для deep link — только getMe по токену бота."""
+        cached = (_bot_username_cache.get("value") or "").strip()
+        if cached:
+            return cached
+        from bot.utils.telegram_identity import resolve_bot_username
+
+        un = ""
+        try:
+            tg = getattr(bot_app, "bot", None)
+            tok = str(getattr(config, "BIBLIA_BOT_TOKEN", "") or "").strip()
+            un = (await resolve_bot_username(tg, token=tok) or "").strip()
+        except Exception as e:
+            logger.warning("avatar bot username: %s", e)
+        un = un.lstrip("@")
+        if un:
+            _bot_username_cache["value"] = un
+        return un
+
+    def _passport_fill_url(kind: str, bot_username: str = "") -> str:
+        return passport_fill_deeplink(kind, bot_username=bot_username)
 
     async def auth(
         request: Request,
@@ -230,6 +253,7 @@ def create_app(bot_app) -> FastAPI:
         stages = await load_stages(_stor())
         formats = await list_format_skills(_stor())
         passports = await list_passports(_stor())
+        bot_un = await _avatar_bot_username()
         return {
             "product": {"id": pid, "name": product_display_name(pid)},
             "formats": [
@@ -257,7 +281,7 @@ def create_app(bot_app) -> FastAPI:
                     "filled": p["filled"],
                     "total": p["total"],
                     "done": p["done"],
-                    "fill_url": passport_fill_deeplink(p["kind"]),
+                    "fill_url": _passport_fill_url(p["kind"], bot_un),
                 }
                 for p in passports
             ],
@@ -274,8 +298,9 @@ def create_app(bot_app) -> FastAPI:
     @app.get("/api/passports")
     async def get_passports(uid: int = Depends(auth)):
         rows = await list_passports(_stor())
+        un = await _avatar_bot_username()
         for p in rows:
-            p["fill_url"] = passport_fill_deeplink(p["kind"])
+            p["fill_url"] = _passport_fill_url(p["kind"], un)
         return {"passports": rows}
 
     @app.get("/api/passports/{kind}")
@@ -283,7 +308,7 @@ def create_app(bot_app) -> FastAPI:
         if kind not in PASSPORT_KINDS:
             raise HTTPException(status_code=404, detail="неизвестный паспорт")
         out = await load_passport(_stor(), kind)
-        out["fill_url"] = passport_fill_deeplink(kind)
+        out["fill_url"] = _passport_fill_url(kind, await _avatar_bot_username())
         return out
 
     @app.put("/api/passports/{kind}")

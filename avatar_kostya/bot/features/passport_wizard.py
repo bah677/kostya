@@ -42,17 +42,15 @@ class PassportWizardStates(StatesGroup):
     talking = State()
 
 
-def passport_fill_deeplink(kind: str) -> str:
-    """https://t.me/<bot>?start=passport_<kind>"""
-    from config import config
+def passport_fill_deeplink(kind: str, *, bot_username: str = "") -> str:
+    """https://t.me/<avatar_bot>?start=passport_<kind>
 
+    ``bot_username`` должен прийти из getMe по токену аватара (см. web/api).
+    """
     k = (kind or "").strip()
     if k not in PASSPORT_KINDS:
         return ""
-    un = (
-        str(getattr(config, "TELEGRAM_BOT_USERNAME", "") or "").strip()
-        or str(getattr(config, "BIBLIA_BOT_USERNAME", "") or "").strip()
-    ).lstrip("@")
+    un = (bot_username or "").strip().lstrip("@")
     if not un:
         return ""
     return f"https://t.me/{un}?start={START_PREFIX}{k}"

@@ -1,13 +1,16 @@
-"""Имя бота в Telegram (username) для ссылок без хардкода."""
+"""Имя бота в Telegram (username) для ссылок — из getMe по токену, без хардкода."""
+
+from __future__ import annotations
 
 import logging
-from typing import Optional
+from typing import Dict, Optional
 
 from aiogram import Bot
 
-from config import config
-
 logger = logging.getLogger(__name__)
+
+# token → username (без @)
+_USERNAME_BY_TOKEN: Dict[str, str] = {}
 
 
 def _normalize_bot_username(raw: Optional[str]) -> Optional[str]:
@@ -17,30 +20,53 @@ def _normalize_bot_username(raw: Optional[str]) -> Optional[str]:
     return u or None
 
 
-async def resolve_telegram_bot_username(bot: Bot) -> Optional[str]:
+async def resolve_bot_username(
+    bot: Optional[Bot] = None,
+    *,
+    token: str = "",
+) -> Optional[str]:
     """
-    Username бота для ссылок ``https://t.me/<username>``.
+    Username бота для ``https://t.me/<username>``.
 
-    Сначала ``get_me()``; при ошибке или пустом поле — опционально
-    ``config.TELEGRAM_BOT_USERNAME`` (без ``@``), из окружения.
+    Берём только из Telegram API (``getMe``) по живому ``Bot`` или по ``token``.
+    Результат кэшируется на процесс.
     """
+    tok = (token or "").strip()
+    if bot is not None and not tok:
+        tok = (getattr(bot, "token", None) or "").strip()
+    if tok and tok in _USERNAME_BY_TOKEN:
+        return _USERNAME_BY_TOKEN[tok]
+
+    own_session = False
+    client = bot
+    if client is None:
+        if not tok:
+            return None
+        client = Bot(token=tok)
+        own_session = True
+
     try:
-        me = await bot.get_me()
-        name = (getattr(me, "username", None) or "").strip()
-        if name:
-            return name
+        me = await client.get_me()
+        name = _normalize_bot_username(getattr(me, "username", None))
+        if name and tok:
+            _USERNAME_BY_TOKEN[tok] = name
+        return name
     except Exception as e:
-        logger.error("❌ resolve_telegram_bot_username: get_me failed: %s", e)
+        logger.error("resolve_bot_username getMe failed: %s", e)
+        return None
+    finally:
+        if own_session and client is not None:
+            await client.session.close()
 
-    fallback = _normalize_bot_username(getattr(config, "TELEGRAM_BOT_USERNAME", None))
-    if fallback:
-        logger.warning("Using TELEGRAM_BOT_USERNAME from config as bot username fallback")
-    return fallback
+
+async def resolve_telegram_bot_username(bot: Bot) -> Optional[str]:
+    """Username основного бота (аватар) через getMe."""
+    return await resolve_bot_username(bot)
 
 
 async def resolve_telegram_bot_display_name(bot: Bot) -> str:
     """
-    Отображаемое имя бота (поле <b>Name</b> в BotFather), не @username.
+    Отображаемое имя бота (поле Name в BotFather), не @username.
 
     ``User.first_name`` в ответе ``getMe()`` для бота — это как раз bot name.
     """

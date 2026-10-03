@@ -613,8 +613,19 @@ class ShortsMailWizardFeature(BaseFeature):
 
         if action == "url" and st == ShortsMailStates.biblia_url_mode.state:
             if value == "gen":
+                from bot.utils.telegram_identity import resolve_bot_username
+
                 token = secrets.token_hex(4)
-                un = (getattr(config, "BIBLIA_BOT_USERNAME", "") or "otvet_iz_biblii_bot").lstrip("@")
+                un = await resolve_bot_username(
+                    self._biblia_bot,
+                    token=(getattr(config, "BIBLIA_MAIL_BOT_TOKEN", "") or "").strip(),
+                )
+                if not un:
+                    await query.answer(
+                        "Не удалось узнать @username библия-бота по токену",
+                        show_alert=True,
+                    )
+                    return
                 url = f"https://t.me/{un}?start=short_{token}"
                 await state.update_data(
                     cta_url=url,

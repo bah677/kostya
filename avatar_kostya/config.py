@@ -294,7 +294,8 @@ class AppConfig:
     BIBLIA_MAIL_DB_NAME: str = ""
     BIBLIA_MAIL_DB_USER: str = ""
     BIBLIA_MAIL_DB_PASSWORD: str = ""
-    BIBLIA_BOT_USERNAME: str = "otvet_iz_biblii_bot"
+    # Deprecated: username брать через getMe (bot.utils.telegram_identity), не из env.
+    BIBLIA_BOT_USERNAME: str = ""
 
     # Админская группа RAG: уведомления, догрузка, публичность источников (формат: -1003756916561 / 3756916561).
     RAG_ADMIN_CHAT_ID: int = 0
@@ -980,9 +981,7 @@ def load_app_config() -> AppConfig:
         BIBLIA_MAIL_DB_NAME=(os.getenv("BIBLIA_MAIL_DB_NAME") or "").strip(),
         BIBLIA_MAIL_DB_USER=(os.getenv("BIBLIA_MAIL_DB_USER") or "").strip(),
         BIBLIA_MAIL_DB_PASSWORD=os.getenv("BIBLIA_MAIL_DB_PASSWORD") or "",
-        BIBLIA_BOT_USERNAME=(
-            os.getenv("BIBLIA_BOT_USERNAME") or "otvet_iz_biblii_bot"
-        ).strip().lstrip("@"),
+        BIBLIA_BOT_USERNAME=(os.getenv("BIBLIA_BOT_USERNAME") or "").strip().lstrip("@"),
         RAG_SOURCE_VISIBILITY_CHAT_ID=_normalize_supergroup_chat_id(
             int(os.getenv("RAG_SOURCE_VISIBILITY_CHAT_ID", "0") or 0)
         ),
