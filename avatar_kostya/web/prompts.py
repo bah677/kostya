@@ -147,11 +147,12 @@ def context_block(
     lesson_passports: str,
     raw_full: str,
     golden: str = "",
+    stage_texts: dict | None = None,
 ) -> str:
     parts: list[str] = ["# Контекст задачи"]
     if (focus or "").strip():
         parts.append(f"## Фокус\n{focus.strip()}")
-    parts.append(f"## Этап\n{stage_prompt(stage_id)}")
+    parts.append(f"## Этап\n{stage_prompt(stage_id, stage_texts)}")
     if objects_summary:
         parts.append(f"## Выбранные объекты\n{objects_summary}")
     if (notes or "").strip():

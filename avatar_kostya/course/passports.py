@@ -16,7 +16,7 @@ PASSPORT_SPEC: Dict[str, Dict[str, Any]] = {
         "store_product": EXPERT_PRODUCT_ID,
         "setting_key": "passport_expert",
         "slots": {
-            "who": "кто она, роль, подход, ценности — своими словами",
+            "who": "кто эксперт, роль, подход, ценности — своими словами",
             "audience": "с кем говорит, какой у этих людей язык",
             "tone": "как звучит в сторис: темп, тепло, жёсткость, юмор",
             "taboo": "чего не обещает, какие слова и позы запретны",
@@ -32,7 +32,7 @@ PASSPORT_SPEC: Dict[str, Dict[str, Any]] = {
             "for_whom": "для кого продукт и кому не подходит",
             "result": "какой результат обещает — только то, что эксперт подтвердил",
             "format": "формат: длительность, живое/записи, практики",
-            "price": "цены, рассрочка, что входит — если сказала",
+            "price": "цены, рассрочка, что входит — если эксперт подтвердил",
             "cta": "куда вести из сторис: слово в Direct, ссылка, квиз",
         },
         "rag_query": "о продукте программа аудитория результат цена CTA",
@@ -51,6 +51,25 @@ PASSPORT_SPEC: Dict[str, Dict[str, Any]] = {
         },
         "rag_query": "запуск набор поток продажи оффер даты CTA",
     },
+}
+
+# Короткие подписи слотов для UI студии.
+SLOT_LABELS: Dict[str, str] = {
+    "who": "Кто эксперт",
+    "audience": "Аудитория",
+    "tone": "Тон",
+    "taboo": "Табу",
+    "direct": "Директ / CTA",
+    "for_whom": "Для кого",
+    "result": "Результат",
+    "format": "Формат",
+    "price": "Цена",
+    "cta": "CTA",
+    "dates": "Даты",
+    "offer": "Оффер",
+    "objections": "Возражения",
+    "proof": "Соцдоказ",
+    "forbidden": "Нельзя обещать",
 }
 
 
@@ -132,11 +151,29 @@ async def load_passport(stor, kind: str) -> Dict[str, Any]:
     raw = await stor.get_content_setting(pid, spec["setting_key"])
     data = decode_setting(raw)
     slots = merge_slots(kind, data.get("slots") or {}, {})
+    filled, total = filled_count(slots)
     return {
+        "kind": kind,
+        "title": spec["title"],
         "slots": slots,
+        "slot_meta": [
+            {
+                "key": key,
+                "label": SLOT_LABELS.get(key, key),
+                "hint": hint,
+            }
+            for key, hint in spec["slots"].items()
+        ],
         "text": (data.get("text") or "").strip(),
         "done": bool(data.get("done")),
+        "filled": filled,
+        "total": total,
+        "updated_at": str(data.get("updated_at") or ""),
     }
+
+
+async def list_passports(stor) -> List[Dict[str, Any]]:
+    return [await load_passport(stor, kind) for kind in PASSPORT_KINDS]
 
 
 async def save_passport(

@@ -602,3 +602,44 @@ textarea.field { resize: vertical; line-height: 1.5; }
 }
 .node:hover .src, .node.picked .src { opacity: 1; }
 .node .src:hover { color: var(--accent-text); background: var(--rule); }
+
+/* Паспорта и правка этапов */
+.passport-list { display: grid; gap: 8px; }
+.passport-card {
+  display: grid; grid-template-columns: 1fr auto; gap: 6px 10px; align-items: center;
+  padding: 10px 12px; border: 1px solid var(--rule); border-radius: var(--radius-sm);
+  background: var(--surface-2); cursor: pointer; text-align: left; width: 100%;
+  color: inherit; font: inherit;
+}
+.passport-card:hover { border-color: var(--rule-strong); background: var(--surface-3); }
+.passport-card .t { font-weight: 600; font-size: .92rem; }
+.passport-card .h { grid-column: 1 / -1; color: var(--muted); font-size: .78rem; line-height: 1.35; }
+.passport-card .fill {
+  font-size: .72rem; font-weight: 600; color: var(--muted);
+  border: 1px solid var(--rule); border-radius: 999px; padding: 2px 8px;
+}
+.passport-card .fill.ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 35%, var(--rule)); }
+
+.edit-dialog {
+  border: 0; padding: 0; max-width: min(720px, 96vw); width: 100%;
+  background: transparent; color: var(--ink);
+}
+.edit-dialog::backdrop { background: rgba(0,0,0,.55); }
+.edit-sheet {
+  display: grid; gap: 12px; background: var(--surface); border: 1px solid var(--rule);
+  border-radius: 16px; padding: 16px 16px 12px; max-height: min(88vh, 960px);
+}
+.edit-fields {
+  display: grid; gap: 14px; overflow: auto; min-height: 120px; max-height: min(62vh, 640px);
+  padding-right: 2px;
+}
+.edit-field { display: grid; gap: 6px; }
+.edit-field label { font-size: .78rem; font-weight: 600; color: var(--ink-2); }
+.edit-field .hint { font-size: .72rem; color: var(--muted); line-height: 1.35; }
+.edit-field .field { width: 100%; min-height: 72px; }
+.edit-stage {
+  display: grid; gap: 10px; padding: 12px; border: 1px solid var(--rule);
+  border-radius: var(--radius-sm); background: var(--surface-2);
+}
+.edit-stage h3 { margin: 0; font-size: .95rem; }
+.edit-stage .field.tiny { min-height: 0; height: 38px; resize: none; }

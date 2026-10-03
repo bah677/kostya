@@ -4,6 +4,7 @@ const state = {
   product: null,
   formats: [],
   stages: [],
+  passports: [],
   tree: null,
   names: {},          // id объекта → имя
   chats: [],
@@ -11,6 +12,7 @@ const state = {
   polling: null,
   search: "",
   open: {},
+  passportKind: "",
 };
 
 const $ = (sel) => document.querySelector(sel);
@@ -300,6 +302,7 @@ async function boot() {
   state.product = data.product;
   state.formats = data.formats || [];
   state.stages = data.stages || [];
+  state.passports = data.passports || [];
   state.tree = data.tree;
   state.names = collectNames(data.tree);
   state.chats = data.chats || [];
@@ -320,6 +323,7 @@ async function boot() {
   }
   renderFormats();
   renderStages();
+  renderPassports();
   renderTree();
   renderChats();
   if (state.chats.length) {
@@ -1076,10 +1080,15 @@ function nodeRow(item, sel, level) {
   }
   const at = el("button", "at", "@");
   at.type = "button";
-  at.title = "Вставить название в сообщение";
-  at.addEventListener("click", (e) => {
+  at.title = selectable
+    ? "Вставить название в сообщение и добавить в контекст"
+    : "Вставить название в сообщение";
+  at.addEventListener("click", async (e) => {
     e.preventDefault();
     insertName(item.name);
+    if (selectable) {
+      await toggleObject(item.id, true);
+    }
   });
   let srcBtn = null;
   if (item.kind === "mat" || item.has_source) {
@@ -1302,6 +1311,193 @@ function renderStages() {
     );
   });
 }
+
+function renderPassports() {
+  const box = $("#passports");
+  if (!box) return;
+  box.textContent = "";
+  (state.passports || []).forEach((p) => {
+    const btn = el("button", "passport-card");
+    btn.type = "button";
+    const fill = el(
+      "span",
+      "fill" + (p.done || (p.filled && p.filled >= p.total) ? " ok" : ""),
+      `${p.filled || 0}/${p.total || 0}`
+    );
+    btn.append(el("span", "t", p.title || p.kind), fill);
+    btn.append(
+      el(
+        "span",
+        "h",
+        p.done ? "Готов — попадает в генерацию" : "Нажмите, чтобы заполнить слоты"
+      )
+    );
+    btn.addEventListener("click", () => openPassportEditor(p.kind));
+    box.append(btn);
+  });
+}
+
+async function openPassportEditor(kind) {
+  const dlg = $("#passport-dialog");
+  if (!dlg) return;
+  state.passportKind = kind;
+  $("#passport-title").textContent = "Загрузка…";
+  $("#passport-meta").textContent = "";
+  $("#passport-slots").textContent = "Загрузка…";
+  $("#passport-done").checked = false;
+  if (typeof dlg.showModal === "function") dlg.showModal();
+  else dlg.setAttribute("open", "");
+  try {
+    const data = await api(`/api/passports/${encodeURIComponent(kind)}`);
+    $("#passport-title").textContent = data.title || kind;
+    $("#passport-meta").textContent = data.updated_at
+      ? `Обновлён: ${String(data.updated_at).replace("T", " ").slice(0, 16)}`
+      : "Ещё не сохраняли";
+    $("#passport-done").checked = Boolean(data.done);
+    const box = $("#passport-slots");
+    box.textContent = "";
+    (data.slot_meta || []).forEach((slot) => {
+      const wrap = el("div", "edit-field");
+      wrap.append(el("label", null, slot.label || slot.key));
+      if (slot.hint) wrap.append(el("div", "hint", slot.hint));
+      const ta = document.createElement("textarea");
+      ta.className = "field";
+      ta.rows = 3;
+      ta.dataset.key = slot.key;
+      ta.value = (data.slots && data.slots[slot.key]) || "";
+      wrap.append(ta);
+      box.append(wrap);
+    });
+  } catch (err) {
+    $("#passport-title").textContent = "Ошибка";
+    $("#passport-slots").textContent = err.message || String(err);
+  }
+}
+
+$("#passport-save")?.addEventListener("click", async () => {
+  const kind = state.passportKind;
+  if (!kind) return;
+  const slots = {};
+  $("#passport-slots").querySelectorAll("textarea[data-key]").forEach((ta) => {
+    slots[ta.dataset.key] = ta.value;
+  });
+  const btn = $("#passport-save");
+  btn.disabled = true;
+  try {
+    const saved = await api(`/api/passports/${encodeURIComponent(kind)}`, {
+      method: "PUT",
+      body: JSON.stringify({ slots, done: $("#passport-done").checked }),
+    });
+    const brief = state.passports.find((p) => p.kind === kind);
+    if (brief) {
+      brief.filled = saved.filled;
+      brief.total = saved.total;
+      brief.done = saved.done;
+      brief.title = saved.title || brief.title;
+    } else {
+      state.passports.push({
+        kind: saved.kind,
+        title: saved.title,
+        filled: saved.filled,
+        total: saved.total,
+        done: saved.done,
+      });
+    }
+    renderPassports();
+    toast("Паспорт сохранён");
+    const dlg = $("#passport-dialog");
+    if (dlg?.open) dlg.close();
+  } catch (err) {
+    toast(`Не сохранилось: ${err.message}`, "bad");
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+async function openStagesEditor() {
+  const dlg = $("#stages-dialog");
+  if (!dlg) return;
+  const box = $("#stages-editor");
+  box.textContent = "Загрузка…";
+  if (typeof dlg.showModal === "function") dlg.showModal();
+  else dlg.setAttribute("open", "");
+  try {
+    const data = await api("/api/stages");
+    const stages = data.stages || [];
+    box.textContent = "";
+    stages.forEach((stage) => {
+      const card = el("div", "edit-stage");
+      card.dataset.id = stage.id;
+      card.append(el("h3", null, stage.id));
+      const titleWrap = el("div", "edit-field");
+      titleWrap.append(el("label", null, "Название"));
+      const title = document.createElement("textarea");
+      title.className = "field tiny";
+      title.rows = 1;
+      title.dataset.field = "title";
+      title.value = stage.title || "";
+      titleWrap.append(title);
+      card.append(titleWrap);
+      const hintWrap = el("div", "edit-field");
+      hintWrap.append(el("label", null, "Описание для UI и плана"));
+      const hint = document.createElement("textarea");
+      hint.className = "field";
+      hint.rows = 3;
+      hint.dataset.field = "hint";
+      hint.value = stage.hint || "";
+      hintWrap.append(hint);
+      card.append(hintWrap);
+      const rulesWrap = el("div", "edit-field");
+      rulesWrap.append(el("label", null, "Правила для генерации сторис"));
+      const rules = document.createElement("textarea");
+      rules.className = "field";
+      rules.rows = 4;
+      rules.dataset.field = "rules";
+      rules.value = stage.rules || "";
+      rulesWrap.append(rules);
+      card.append(rulesWrap);
+      box.append(card);
+    });
+  } catch (err) {
+    box.textContent = err.message || String(err);
+  }
+}
+
+$("#btn-edit-stages")?.addEventListener("click", () => {
+  focusPane("pane-right", "#stages");
+  openStagesEditor();
+});
+
+$("#stages-save")?.addEventListener("click", async () => {
+  const payload = {};
+  $("#stages-editor").querySelectorAll(".edit-stage").forEach((card) => {
+    const id = card.dataset.id;
+    if (!id) return;
+    const row = {};
+    card.querySelectorAll("textarea[data-field]").forEach((ta) => {
+      row[ta.dataset.field] = ta.value;
+    });
+    payload[id] = row;
+  });
+  const btn = $("#stages-save");
+  btn.disabled = true;
+  try {
+    const data = await api("/api/stages", {
+      method: "PUT",
+      body: JSON.stringify({ stages: payload }),
+    });
+    state.stages = data.stages || [];
+    renderStages();
+    renderContext();
+    toast("Этапы сохранены");
+    const dlg = $("#stages-dialog");
+    if (dlg?.open) dlg.close();
+  } catch (err) {
+    toast(`Не сохранилось: ${err.message}`, "bad");
+  } finally {
+    btn.disabled = false;
+  }
+});
 
 let focusTimer = null;
 let savedTimer = null;

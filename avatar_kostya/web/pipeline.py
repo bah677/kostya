@@ -31,7 +31,12 @@ from course.passports import load_passport
 from course.paths import source_dir
 from course.products import EXPERT_PRODUCT_ID, active_product_id
 from course.speech import segments_from_dicts
-from course.stories_cycle import normalize_stage, stage_title, writer_stories_rules
+from course.stories_cycle import (
+    load_stage_texts,
+    normalize_stage,
+    stage_title,
+    writer_stories_rules,
+)
 from openai_client.content_prompts import writer_static_prefix
 from rag.scope import scope_from_stack
 from web.objects import (
@@ -160,6 +165,7 @@ async def plan_retrieval(
     focus: str,
     history_tail: Sequence[str],
     user_id: int,
+    stage_texts: Optional[Dict[str, Dict[str, str]]] = None,
 ) -> Tuple[List[Search], str, str, bool, str]:
     """→ (searches, distill_focus, notes, is_revision, model)"""
     from config import config
@@ -169,7 +175,7 @@ async def plan_retrieval(
         request=user_text,
         objects=object_names,
         format_title=format_title,
-        stage_title=stage_title(stage_id),
+        stage_title=stage_title(stage_id, stage_texts),
         focus=focus,
         history_tail=history_tail,
     )
@@ -603,6 +609,7 @@ async def run_turn(
     focus = str(chat.get("focus") or "")
     fmt = get_format(str(chat.get("format") or "")) or get_format("stories")
     names = object_names or {}
+    stage_texts = await load_stage_texts(stor)
     trace: Dict[str, Any] = {"stages": [], "objects": [], "rag": {}, "mode": "none"}
 
     # Объекты Кости: тип (facet) и/или конкретные записи (mat)
@@ -655,6 +662,7 @@ async def run_turn(
         focus=focus,
         history_tail=history_tail,
         user_id=user_id,
+        stage_texts=stage_texts,
     )
     trace["stages"].append(
         {
@@ -855,7 +863,7 @@ async def run_turn(
 
     format_block = format_prompt_block(fmt)
     if fmt.id == "stories":
-        format_block += "\n" + writer_stories_rules(stage_id)
+        format_block += "\n" + writer_stories_rules(stage_id, stage_texts)
 
     static_prefix = WEB_CHAT_ROLE + "\n\n" + writer_static_prefix(
         expert_info=(expert_p.get("text") or "")[:info_max],
@@ -874,6 +882,7 @@ async def run_turn(
         lesson_passports=lesson_passports,
         raw_full=parts.get("raw_full") or "",
         golden=parts.get("golden") or "",
+        stage_texts=stage_texts,
     )
 
     messages: List[Dict[str, str]] = [

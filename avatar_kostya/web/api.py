@@ -18,7 +18,20 @@ from fastapi.staticfiles import StaticFiles
 from course.formats import FORMATS
 from course.paths import source_dir
 from course.products import active_product_id, product_display_name
-from course.stories_cycle import STAGES, normalize_stage
+from course.passports import (
+    PASSPORT_KINDS,
+    list_passports,
+    load_passport,
+    merge_slots,
+    save_passport,
+    spec_for,
+)
+from course.stories_cycle import (
+    load_stage_texts,
+    normalize_stage,
+    resolved_stages,
+    save_stage_texts,
+)
 from web.auth import (
     AuthError,
     admin_list,
@@ -216,12 +229,24 @@ def create_app(bot_app) -> FastAPI:
         chats = await _stor().list_web_chats(pid)
         focus = await _stor().get_content_setting(pid, "focus")
         stage = await _stor().get_content_setting(pid, "stories_cycle_stage")
+        stage_texts = await load_stage_texts(_stor())
+        passports = await list_passports(_stor())
         return {
             "product": {"id": pid, "name": product_display_name(pid)},
             "formats": [
                 {"id": f.id, "title": f.title, "platform": f.platform} for f in FORMATS.values()
             ],
-            "stages": [{"id": s[0], "title": s[1], "hint": s[2]} for s in STAGES],
+            "stages": resolved_stages(stage_texts),
+            "passports": [
+                {
+                    "kind": p["kind"],
+                    "title": p["title"],
+                    "filled": p["filled"],
+                    "total": p["total"],
+                    "done": p["done"],
+                }
+                for p in passports
+            ],
             "defaults": {
                 "focus": str(focus or "") if isinstance(focus, str) else "",
                 "stage": normalize_stage(stage if isinstance(stage, str) else ""),
@@ -229,6 +254,51 @@ def create_app(bot_app) -> FastAPI:
             "tree": tree,
             "chats": [_chat_brief(c) for c in chats],
         }
+
+    @app.get("/api/passports")
+    async def get_passports(uid: int = Depends(auth)):
+        return {"passports": await list_passports(_stor())}
+
+    @app.get("/api/passports/{kind}")
+    async def get_passport(kind: str, uid: int = Depends(auth)):
+        if kind not in PASSPORT_KINDS:
+            raise HTTPException(status_code=404, detail="неизвестный паспорт")
+        return await load_passport(_stor(), kind)
+
+    @app.put("/api/passports/{kind}")
+    async def put_passport(
+        kind: str, payload: Dict[str, Any] = Body(default={}), uid: int = Depends(auth)
+    ):
+        if kind not in PASSPORT_KINDS:
+            raise HTTPException(status_code=404, detail="неизвестный паспорт")
+        try:
+            spec_for(kind)
+        except ValueError:
+            raise HTTPException(status_code=404, detail="неизвестный паспорт")
+        current = await load_passport(_stor(), kind)
+        slots = merge_slots(kind, current.get("slots") or {}, payload.get("slots") or {})
+        # Пустые значения из формы тоже сохраняем (явная очистка слота).
+        for key in list(slots.keys()):
+            if key in (payload.get("slots") or {}):
+                slots[key] = str((payload.get("slots") or {}).get(key) or "").strip()
+        done = bool(payload.get("done")) if "done" in payload else bool(current.get("done"))
+        saved = await save_passport(_stor(), kind, slots, done=done, user_id=uid)
+        out = await load_passport(_stor(), kind)
+        out["saved"] = True
+        out["updated_at"] = str(saved.get("updated_at") or out.get("updated_at") or "")
+        return out
+
+    @app.get("/api/stages")
+    async def get_stages(uid: int = Depends(auth)):
+        texts = await load_stage_texts(_stor())
+        return {"stages": resolved_stages(texts)}
+
+    @app.put("/api/stages")
+    async def put_stages(payload: Dict[str, Any] = Body(default={}), uid: int = Depends(auth)):
+        body = payload.get("stages") if isinstance(payload.get("stages"), dict) else payload
+        await save_stage_texts(_stor(), body or {}, user_id=uid)
+        texts = await load_stage_texts(_stor())
+        return {"stages": resolved_stages(texts)}
 
     @app.get("/api/tree")
     async def tree(uid: int = Depends(auth)):
