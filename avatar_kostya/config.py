@@ -424,6 +424,9 @@ class AppConfig:
     WEB_DISTILL_CHUNK_CHARS: int = 24_000
     WEB_DISTILL_MAX_CHUNKS: int = 12
     WEB_RAG_MAX_CHUNKS: int = 14
+    # ИИ-мастер паспортов в Telegram (один раз на паспорт)
+    PASSPORT_WIZARD_MODEL: str = "gpt-4.1"
+    PASSPORT_WIZARD_MAX_TURNS: int = 12
 
     @property
     def video_host_priority_list(self) -> tuple:
@@ -1218,6 +1221,13 @@ def load_app_config() -> AppConfig:
         ),
         WEB_DISTILL_MAX_CHUNKS=_safe_int_env("WEB_DISTILL_MAX_CHUNKS", 12, min_v=1, max_v=60),
         WEB_RAG_MAX_CHUNKS=_safe_int_env("WEB_RAG_MAX_CHUNKS", 14, min_v=1, max_v=50),
+        PASSPORT_WIZARD_MODEL=(
+            os.getenv("PASSPORT_WIZARD_MODEL") or "gpt-4.1"
+        ).strip()
+        or "gpt-4.1",
+        PASSPORT_WIZARD_MAX_TURNS=_safe_int_env(
+            "PASSPORT_WIZARD_MAX_TURNS", 12, min_v=4, max_v=30
+        ),
     )
 
 

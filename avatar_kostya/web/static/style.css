@@ -606,12 +606,17 @@ textarea.field { resize: vertical; line-height: 1.5; }
 /* Паспорта и правка этапов */
 .passport-list { display: grid; gap: 8px; }
 .passport-card {
-  display: grid; grid-template-columns: 1fr auto; gap: 6px 10px; align-items: center;
+  display: grid; gap: 8px;
   padding: 10px 12px; border: 1px solid var(--rule); border-radius: var(--radius-sm);
-  background: var(--surface-2); cursor: pointer; text-align: left; width: 100%;
+  background: var(--surface-2); text-align: left; width: 100%;
   color: inherit; font: inherit;
 }
 .passport-card:hover { border-color: var(--rule-strong); background: var(--surface-3); }
+.passport-card-main {
+  display: grid; grid-template-columns: 1fr auto; gap: 6px 10px; align-items: center;
+  background: transparent; border: 0; padding: 0; margin: 0; cursor: pointer;
+  text-align: left; width: 100%; color: inherit; font: inherit;
+}
 .passport-card .t { font-weight: 600; font-size: .92rem; }
 .passport-card .h { grid-column: 1 / -1; color: var(--muted); font-size: .78rem; line-height: 1.35; }
 .passport-card .fill {
@@ -619,6 +624,9 @@ textarea.field { resize: vertical; line-height: 1.5; }
   border: 1px solid var(--rule); border-radius: 999px; padding: 2px 8px;
 }
 .passport-card .fill.ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 35%, var(--rule)); }
+.passport-fill-btn {
+  justify-self: start; text-decoration: none; font-size: .8rem;
+}
 
 .edit-dialog {
   border: 0; padding: 0; max-width: min(720px, 96vw); width: 100%;

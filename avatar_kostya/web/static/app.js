@@ -1346,23 +1346,34 @@ function renderPassports() {
   if (!box) return;
   box.textContent = "";
   (state.passports || []).forEach((p) => {
-    const btn = el("button", "passport-card");
-    btn.type = "button";
+    const card = el("div", "passport-card");
+    const head = el("button", "passport-card-main");
+    head.type = "button";
     const fill = el(
       "span",
       "fill" + (p.done || (p.filled && p.filled >= p.total) ? " ok" : ""),
       `${p.filled || 0}/${p.total || 0}`
     );
-    btn.append(el("span", "t", p.title || p.kind), fill);
-    btn.append(
+    head.append(el("span", "t", p.title || p.kind), fill);
+    head.append(
       el(
         "span",
         "h",
-        p.done ? "Готов — попадает в генерацию" : "Нажмите, чтобы заполнить слоты"
+        p.done ? "Готов — попадает в генерацию" : "Открыть слоты вручную"
       )
     );
-    btn.addEventListener("click", () => openPassportEditor(p.kind));
-    box.append(btn);
+    head.addEventListener("click", () => openPassportEditor(p.kind));
+    card.append(head);
+    if (p.fill_url) {
+      const fillBtn = el("a", "btn passport-fill-btn");
+      fillBtn.href = p.fill_url;
+      fillBtn.target = "_blank";
+      fillBtn.rel = "noopener";
+      fillBtn.textContent = "Заполнить паспорт";
+      fillBtn.title = "Открыть ИИ-мастер в Telegram";
+      card.append(fillBtn);
+    }
+    box.append(card);
   });
 }
 
@@ -1374,6 +1385,11 @@ async function openPassportEditor(kind) {
   $("#passport-meta").textContent = "";
   $("#passport-slots").textContent = "Загрузка…";
   $("#passport-done").checked = false;
+  const fillLink = $("#passport-fill-bot");
+  if (fillLink) {
+    fillLink.hidden = true;
+    fillLink.removeAttribute("href");
+  }
   if (typeof dlg.showModal === "function") dlg.showModal();
   else dlg.setAttribute("open", "");
   try {
@@ -1383,6 +1399,10 @@ async function openPassportEditor(kind) {
       ? `Обновлён: ${String(data.updated_at).replace("T", " ").slice(0, 16)}`
       : "Ещё не сохраняли";
     $("#passport-done").checked = Boolean(data.done);
+    if (fillLink && data.fill_url) {
+      fillLink.href = data.fill_url;
+      fillLink.hidden = false;
+    }
     const box = $("#passport-slots");
     box.textContent = "";
     (data.slot_meta || []).forEach((slot) => {

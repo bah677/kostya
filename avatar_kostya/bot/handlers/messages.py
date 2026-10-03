@@ -56,6 +56,11 @@ async def route_message_to_feature(
         if "support" in current_state_lower:
             feature = feature_manager.get("support")
             await feature.handle_message(message, state, text)
+        elif "passport" in current_state_lower:
+            feature = feature_manager.get_optional("passport_wizard")
+            if feature:
+                await feature.handle_message(message, state, text)
+            return
         elif "ledger" in current_state_lower:
             return
         else:
@@ -101,6 +106,7 @@ class MessageHandlers:
             ~F.data.startswith("payment_"),
             ~F.data.startswith("ldg:"),
             ~F.data.startswith("apnl:"),
+            ~F.data.startswith("ppw:"),
         )
         self.dp.edited_message.register(
             self._edited_message_handler, PRIVATE_CHAT

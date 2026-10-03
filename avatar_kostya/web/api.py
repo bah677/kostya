@@ -19,6 +19,7 @@ from course.formats import FORMATS
 from course.paths import source_dir
 from course.products import active_product_id, product_display_name
 from course.format_skills import list_format_skills, save_format_skill
+from bot.features.passport_wizard import passport_fill_deeplink
 from course.passports import (
     PASSPORT_KINDS,
     list_passports,
@@ -256,6 +257,7 @@ def create_app(bot_app) -> FastAPI:
                     "filled": p["filled"],
                     "total": p["total"],
                     "done": p["done"],
+                    "fill_url": passport_fill_deeplink(p["kind"]),
                 }
                 for p in passports
             ],
@@ -271,13 +273,18 @@ def create_app(bot_app) -> FastAPI:
 
     @app.get("/api/passports")
     async def get_passports(uid: int = Depends(auth)):
-        return {"passports": await list_passports(_stor())}
+        rows = await list_passports(_stor())
+        for p in rows:
+            p["fill_url"] = passport_fill_deeplink(p["kind"])
+        return {"passports": rows}
 
     @app.get("/api/passports/{kind}")
     async def get_passport(kind: str, uid: int = Depends(auth)):
         if kind not in PASSPORT_KINDS:
             raise HTTPException(status_code=404, detail="неизвестный паспорт")
-        return await load_passport(_stor(), kind)
+        out = await load_passport(_stor(), kind)
+        out["fill_url"] = passport_fill_deeplink(kind)
+        return out
 
     @app.put("/api/passports/{kind}")
     async def put_passport(

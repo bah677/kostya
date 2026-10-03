@@ -245,6 +245,15 @@ class AppCommandHandlers:
                 await self._maybe_notify_super_promote_request(message, stor)
                 return
 
+        # Deep link мастера паспортов: /start passport_expert|product|launch
+        if param and param.startswith("passport_"):
+            try:
+                wiz = self.features.get_optional("passport_wizard")
+                if wiz and await wiz.try_start_from_deeplink(message, state, param):
+                    return
+            except Exception as e:
+                logger.error("passport wizard start: %s", e)
+
         await state.clear()
         bot_label = await resolve_telegram_bot_display_name(message.bot)
         await message.answer(
