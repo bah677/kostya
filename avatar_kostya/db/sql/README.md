@@ -48,3 +48,10 @@ psql -v ON_ERROR_STOP=1 "$DATABASE_URL" -f db/sql/001_extensions.sql
 INSERT INTO license (user_id, license_type, expires_at, status)
 VALUES (123456789, 'subscription', NOW() + INTERVAL '365 days', 'active');
 ```
+
+| `028_course.sql` | `CourseMixin`, уроки и источники курса для веб-студии. |
+| `029_course_zoom_module.sql` | Zoom/module_no для `course_sources`. |
+| `030_style.sql` | `StyleMixin`, паспорта голоса / content_settings. |
+| `031_content_cards.sql` | `ContentCardsMixin`, карточки идей. |
+| `032_web_chats.sql` | `WebChatsMixin`, чаты веб-студии. |
+| `033_web_sessions.sql` | `WebSessionsMixin`, логин-коды и сессии. |

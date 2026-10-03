@@ -26,6 +26,11 @@ from storage.db.telemost_mail import TelemostMailMixin
 from storage.db.rag_import_cache import RagImportCacheMixin
 from storage.db.rag_source_visibility import RagSourceVisibilityMixin
 from storage.db.reels_scenarios import ReelsScenariosMixin
+from storage.db.course import CourseMixin
+from storage.db.content_cards import ContentCardsMixin
+from storage.db.style import StyleMixin
+from storage.db.web_chats import WebChatsMixin
+from storage.db.web_sessions import WebSessionsMixin
 
 
 class Database(
@@ -49,6 +54,11 @@ class Database(
     RagSourceVisibilityMixin,
     RagImportCacheMixin,
     ReelsScenariosMixin,
+    CourseMixin,
+    ContentCardsMixin,
+    StyleMixin,
+    WebChatsMixin,
+    WebSessionsMixin,
     DatabaseBase,
 ):
     """Единая точка доступа к PostgreSQL.
@@ -70,5 +80,10 @@ class Database(
       - GiftsMixin            — gifts
       - MediaArchiveMixin     — media_inbound_files
       - ReelsScenariosMixin   — reels_scenarios (фидбек сценариев)
+      - CourseMixin           — course_lessons, course_sources (веб-студия)
+      - ContentCardsMixin     — content_cards
+      - StyleMixin            — style_profiles, content_settings (паспорта)
+      - WebChatsMixin         — web_chats / web_chat_messages
+      - WebSessionsMixin      — web_sessions / web_login_codes
       - DatabaseBase          — пул подключений и get_connection()
     """

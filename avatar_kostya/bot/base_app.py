@@ -238,6 +238,14 @@ class TelegramBotApp:
             if llm_cost is not None and hasattr(llm_cost, "start_background_tasks"):
                 await llm_cost.start_background_tasks()
 
+            from web.server import WebStudioServer
+
+            if WebStudioServer.should_start():
+                self.web_studio = WebStudioServer(self)
+                self.web_studio.start()
+
+            await self._set_studio_menu_button()
+
         except Exception as e:
             logger.error(f"❌ Ошибка запуска фоновых задач: {e}")
 
@@ -266,6 +274,11 @@ class TelegramBotApp:
             llm_cost = self.feature_manager.get_optional("llm_cost_report")
             if llm_cost is not None and hasattr(llm_cost, "stop_background_tasks"):
                 await llm_cost.stop_background_tasks()
+
+            studio = getattr(self, "web_studio", None)
+            if studio is not None:
+                await studio.stop()
+                self.web_studio = None
 
             if self.payment_checker:
                 await self.payment_checker.stop()
@@ -363,6 +376,41 @@ class TelegramBotApp:
         except Exception as e:
             logger.error(f"❌ Ошибка инициализации зависимостей бота: {e}")
             raise
+
+    async def _set_studio_menu_button(self) -> None:
+        """Кнопка «Студия» рядом с полем ввода — только у админов."""
+        from aiogram.types import MenuButtonWebApp, WebAppInfo
+
+        from config import config
+
+        if not getattr(config, "WEB_ENABLED", False):
+            return
+        domain = str(getattr(config, "WEB_DOMAIN", "") or "").strip()
+        if not domain:
+            return
+        url = f"https://{domain}/"
+        ids: list[int] = []
+        sid = int(getattr(config, "SUPER_ADMIN_ID", 0) or 0)
+        if sid:
+            ids.append(sid)
+        try:
+            for uid in await self.user_storage.list_bot_admin_ids():
+                if int(uid) not in ids:
+                    ids.append(int(uid))
+        except Exception as e:
+            logger.warning("studio menu button: список админов: %s", e)
+        for uid in ids:
+            try:
+                await self.bot.set_chat_menu_button(
+                    chat_id=uid,
+                    menu_button=MenuButtonWebApp(
+                        text="Студия", web_app=WebAppInfo(url=url)
+                    ),
+                )
+            except Exception as e:
+                logger.info("studio menu button для %s не поставлена: %s", uid, e)
+        if ids:
+            logger.info("Кнопка студии поставлена админам: %s", len(ids))
 
     async def start(self) -> None:
         logger.info("🚀 Запуск бота...")

@@ -17,3 +17,6 @@ yt-dlp>=2024.0
 google-api-python-client>=2.100.0
 google-auth-oauthlib>=1.2.0
 google-auth-httplib2>=0.2.0
+# Веб-студия (uvicorn внутри процесса бота)
+fastapi>=0.110.0,<0.120
+uvicorn>=0.29.0

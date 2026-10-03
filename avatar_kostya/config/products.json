@@ -1,0 +1,6 @@
+{
+  "products": [
+    {"id": "club", "name": "Клуб", "aliases": ["клуб", "любящие бога"], "disk_folder": "Клуб"},
+    {"id": "prayers", "name": "Молитвы", "aliases": ["молитвы", "молитва"], "disk_folder": "Молитвы"}
+  ]
+}

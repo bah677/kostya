@@ -41,6 +41,7 @@ class BotApplication(TelegramBotApp):
             bot_token=bc.BIBLIA_BOT_TOKEN,
             database_url=bc.database_url,
         )
+        self.web_studio = None
 
     def _register_features(self) -> None:
         messaging_feature = ScriptureMessagingFeature(

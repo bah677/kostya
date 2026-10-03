@@ -368,6 +368,68 @@ class AppConfig:
     # Опционально: сток Pexels; без ключа — lavfi-фон.
     PEXELS_API_KEY: str = ""
 
+    # Контент-студия (course + веб). COURSE_ENABLED нужен веб-серверу.
+    COURSE_ENABLED: bool = False
+    ACTIVE_PRODUCT: str = "club"
+    PRODUCTS_FILE: str = "config/products.json"
+    EXPERT_NAME: str = "Константин"
+    COURSE_DISK_ROOT: str = "/Аватар"
+    COURSE_DISK_POLL_SEC: int = 900
+    VIDEO_HOST_PRIORITY: str = "youtube,vimeo,kinescope,disk"
+    COURSE_TRANSCRIBE_MODE: str = "auto"
+    COURSE_SUBS_MIN_CHARS_PER_MIN: int = 300
+    YTDLP_COOKIES_FILE: str = ""
+    COURSE_PLAYLIST_MAX: int = 100
+    COURSE_MEDIA_MAX_GB: float = 4.0
+    COURSE_TMP_DIR: str = "data/tmp"
+    KINESCOPE_API_TOKEN: str = ""
+    VIMEO_ACCESS_TOKEN: str = ""
+    COURSE_VISION_MODEL: str = "gpt-4o-mini"
+    COURSE_VISION_MAX_PAGES: int = 80
+    COURSE_MINING_MODEL: str = "gpt-4o-mini"
+    COURSE_PLANNER_MODEL: str = "gpt-4o-mini"
+    CONTENT_WRITER_MODEL: str = "deepseek-chat"
+    CONTENT_WRITER_MAX_TOKENS: int = 16000
+    STYLE_MODEL: str = "gpt-4o"
+    COURSE_LLM_CONCURRENCY: int = 3
+    COURSE_CARDS_PER_HOUR: int = 30
+    COURSE_CARD_DUP_SIM: float = 0.88
+    COURSE_PASSPORT_DEBOUNCE_SEC: int = 600
+    COURSE_INFO_MAX_CHARS: int = 8000
+    COURSE_USE_LEGACY_CHUNKS: bool = True
+    CONTENT_PLAN_WEEKDAY: int = 0
+    CONTENT_PLAN_HOUR: int = 9
+    CONTENT_PLAN_TZ: str = "Europe/Moscow"
+    CONTENT_PLAN_MIX: str = "tg_post:3,reels:2,carousel:1,stories:1"
+    CARD_REUSE_DAYS: int = 60
+    COST_TABLE: str = ""
+    RAG_CARDS_COLLECTION: str = "content_cards"
+
+    # Веб-студия (FastAPI внутри процесса бота)
+    WEB_ENABLED: bool = False
+    WEB_HOST: str = "127.0.0.1"
+    WEB_PORT: int = 8801
+    WEB_AUTH_TOKEN: str = ""
+    WEB_SECRET: str = ""
+    WEB_TOKEN_LOGIN: bool = False
+    WEB_DOMAIN: str = ""
+    WEB_CONTEXT_MAX_CHARS: int = 120_000
+    WEB_SOURCE_MAX_CHARS: int = 60_000
+    WEB_HISTORY_MESSAGES: int = 20
+    WEB_HISTORY_MAX_CHARS: int = 40_000
+    WEB_PLANNER_MODEL: str = "gpt-4o-mini"
+    WEB_DISTILL_MODEL: str = "gpt-4o-mini"
+    WEB_WRITER_MODEL: str = ""
+    WEB_RAW_INLINE_CHARS: int = 45_000
+    WEB_DISTILL_CHUNK_CHARS: int = 24_000
+    WEB_DISTILL_MAX_CHUNKS: int = 12
+    WEB_RAG_MAX_CHUNKS: int = 14
+
+    @property
+    def video_host_priority_list(self) -> tuple:
+        parts = [p.strip().lower() for p in (self.VIDEO_HOST_PRIORITY or "").split(",")]
+        return tuple(p for p in parts if p)
+
     @property
     def club_mail_database_url(self) -> str:
         if not (self.CLUB_DB_NAME and self.CLUB_DB_USER and self.CLUB_DB_PASSWORD):
@@ -1054,6 +1116,108 @@ def load_app_config() -> AppConfig:
             os.getenv("LLM_COST_REPORT_TOPIC_ID", "436") or 436
         ),
         PEXELS_API_KEY=(os.getenv("PEXELS_API_KEY") or "").strip(),
+        COURSE_ENABLED=_env_flag_true("COURSE_ENABLED", default=False),
+        ACTIVE_PRODUCT=(os.getenv("ACTIVE_PRODUCT") or "club").strip() or "club",
+        PRODUCTS_FILE=(os.getenv("PRODUCTS_FILE") or "config/products.json").strip(),
+        EXPERT_NAME=(os.getenv("EXPERT_NAME") or "Константин").strip() or "Константин",
+        COURSE_DISK_ROOT=(os.getenv("COURSE_DISK_ROOT") or "/Аватар").strip() or "/Аватар",
+        COURSE_DISK_POLL_SEC=_safe_int_env(
+            "COURSE_DISK_POLL_SEC", 900, min_v=60, max_v=86400
+        ),
+        VIDEO_HOST_PRIORITY=(
+            os.getenv("VIDEO_HOST_PRIORITY") or "youtube,vimeo,kinescope,disk"
+        ).strip(),
+        COURSE_TRANSCRIBE_MODE=(os.getenv("COURSE_TRANSCRIBE_MODE") or "auto").strip()
+        or "auto",
+        COURSE_SUBS_MIN_CHARS_PER_MIN=_safe_int_env(
+            "COURSE_SUBS_MIN_CHARS_PER_MIN", 300, min_v=0, max_v=5000
+        ),
+        YTDLP_COOKIES_FILE=(os.getenv("YTDLP_COOKIES_FILE") or "").strip(),
+        COURSE_PLAYLIST_MAX=_safe_int_env(
+            "COURSE_PLAYLIST_MAX", 100, min_v=1, max_v=500
+        ),
+        COURSE_MEDIA_MAX_GB=float(os.getenv("COURSE_MEDIA_MAX_GB", "4") or 4),
+        COURSE_TMP_DIR=(os.getenv("COURSE_TMP_DIR") or "data/tmp").strip() or "data/tmp",
+        KINESCOPE_API_TOKEN=(os.getenv("KINESCOPE_API_TOKEN") or "").strip(),
+        VIMEO_ACCESS_TOKEN=(os.getenv("VIMEO_ACCESS_TOKEN") or "").strip(),
+        COURSE_VISION_MODEL=(os.getenv("COURSE_VISION_MODEL") or "gpt-4o-mini").strip()
+        or "gpt-4o-mini",
+        COURSE_VISION_MAX_PAGES=_safe_int_env(
+            "COURSE_VISION_MAX_PAGES", 80, min_v=1, max_v=400
+        ),
+        COURSE_MINING_MODEL=(os.getenv("COURSE_MINING_MODEL") or "gpt-4o-mini").strip()
+        or "gpt-4o-mini",
+        COURSE_PLANNER_MODEL=(
+            os.getenv("COURSE_PLANNER_MODEL") or os.getenv("RAG_TAG_MODEL") or "gpt-4o-mini"
+        ).strip()
+        or "gpt-4o-mini",
+        CONTENT_WRITER_MODEL=(
+            os.getenv("CONTENT_WRITER_MODEL") or "deepseek-chat"
+        ).strip()
+        or "deepseek-chat",
+        CONTENT_WRITER_MAX_TOKENS=_safe_int_env(
+            "CONTENT_WRITER_MAX_TOKENS", 16000, min_v=2500, max_v=32000
+        ),
+        STYLE_MODEL=(os.getenv("STYLE_MODEL") or "gpt-4o").strip() or "gpt-4o",
+        COURSE_LLM_CONCURRENCY=_safe_int_env(
+            "COURSE_LLM_CONCURRENCY", 3, min_v=1, max_v=8
+        ),
+        COURSE_CARDS_PER_HOUR=_safe_int_env(
+            "COURSE_CARDS_PER_HOUR", 30, min_v=1, max_v=200
+        ),
+        COURSE_CARD_DUP_SIM=float(os.getenv("COURSE_CARD_DUP_SIM", "0.88") or 0.88),
+        COURSE_PASSPORT_DEBOUNCE_SEC=_safe_int_env(
+            "COURSE_PASSPORT_DEBOUNCE_SEC", 600, min_v=30, max_v=7200
+        ),
+        COURSE_INFO_MAX_CHARS=_safe_int_env(
+            "COURSE_INFO_MAX_CHARS", 8000, min_v=500, max_v=50_000
+        ),
+        COURSE_USE_LEGACY_CHUNKS=_env_flag_true("COURSE_USE_LEGACY_CHUNKS", default=True),
+        CONTENT_PLAN_WEEKDAY=_safe_int_env("CONTENT_PLAN_WEEKDAY", 0, min_v=0, max_v=6),
+        CONTENT_PLAN_HOUR=_safe_int_env("CONTENT_PLAN_HOUR", 9, min_v=0, max_v=23),
+        CONTENT_PLAN_TZ=(os.getenv("CONTENT_PLAN_TZ") or "Europe/Moscow").strip()
+        or "Europe/Moscow",
+        CONTENT_PLAN_MIX=(
+            os.getenv("CONTENT_PLAN_MIX") or "tg_post:3,reels:2,carousel:1,stories:1"
+        ).strip(),
+        CARD_REUSE_DAYS=_safe_int_env("CARD_REUSE_DAYS", 60, min_v=1, max_v=365),
+        COST_TABLE=(os.getenv("COST_TABLE") or "").strip(),
+        RAG_CARDS_COLLECTION=(os.getenv("RAG_CARDS_COLLECTION") or "content_cards").strip()
+        or "content_cards",
+        WEB_ENABLED=_env_flag_true("WEB_ENABLED", default=False),
+        WEB_HOST=(os.getenv("WEB_HOST") or "127.0.0.1").strip() or "127.0.0.1",
+        WEB_PORT=_safe_int_env("WEB_PORT", 8801, min_v=1, max_v=65535),
+        WEB_AUTH_TOKEN=(os.getenv("WEB_AUTH_TOKEN") or "").strip(),
+        WEB_SECRET=(os.getenv("WEB_SECRET") or "").strip(),
+        WEB_TOKEN_LOGIN=_env_flag_true("WEB_TOKEN_LOGIN", default=False),
+        WEB_DOMAIN=(os.getenv("WEB_DOMAIN") or "").strip(),
+        WEB_CONTEXT_MAX_CHARS=_safe_int_env(
+            "WEB_CONTEXT_MAX_CHARS", 120_000, min_v=4_000, max_v=600_000
+        ),
+        WEB_SOURCE_MAX_CHARS=_safe_int_env(
+            "WEB_SOURCE_MAX_CHARS", 60_000, min_v=2_000, max_v=400_000
+        ),
+        WEB_HISTORY_MESSAGES=_safe_int_env("WEB_HISTORY_MESSAGES", 20, min_v=2, max_v=100),
+        WEB_HISTORY_MAX_CHARS=_safe_int_env(
+            "WEB_HISTORY_MAX_CHARS", 40_000, min_v=2_000, max_v=200_000
+        ),
+        WEB_PLANNER_MODEL=(
+            os.getenv("WEB_PLANNER_MODEL")
+            or os.getenv("COURSE_PLANNER_MODEL")
+            or "gpt-4o-mini"
+        ).strip()
+        or "gpt-4o-mini",
+        WEB_DISTILL_MODEL=(os.getenv("WEB_DISTILL_MODEL") or "gpt-4o-mini").strip()
+        or "gpt-4o-mini",
+        WEB_WRITER_MODEL=(os.getenv("WEB_WRITER_MODEL") or "").strip(),
+        WEB_RAW_INLINE_CHARS=_safe_int_env(
+            "WEB_RAW_INLINE_CHARS", 45_000, min_v=2_000, max_v=400_000
+        ),
+        WEB_DISTILL_CHUNK_CHARS=_safe_int_env(
+            "WEB_DISTILL_CHUNK_CHARS", 24_000, min_v=4_000, max_v=80_000
+        ),
+        WEB_DISTILL_MAX_CHUNKS=_safe_int_env("WEB_DISTILL_MAX_CHUNKS", 12, min_v=1, max_v=60),
+        WEB_RAG_MAX_CHUNKS=_safe_int_env("WEB_RAG_MAX_CHUNKS", 14, min_v=1, max_v=50),
     )
 
 
