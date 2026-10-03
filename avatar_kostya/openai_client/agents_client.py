@@ -214,19 +214,28 @@ class AgentsClient:
         messages: Sequence[dict[str, Any]],
         user_id: int,
         *,
-        temperature: float = 0.7,
-        max_tokens: int = 2048,
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
         log_event_type: str = "deepseek_task_messages",
         model: Optional[str] = None,
     ) -> Optional[str]:
         """
         Запрос к DeepSeek с готовым списком messages (системный промпт + история + пользователь).
         Не подмешивает историю ЛС из БД.
+        temperature / max_tokens по умолчанию не передаём — дефолт модели.
         """
         seq = [dict(m) for m in messages]
         if not seq:
             return None
         model_id = (model or self.CHAT_MODEL).strip() or self.CHAT_MODEL
+        create_kwargs: dict[str, Any] = {
+            "model": model_id,
+            "messages": seq,
+        }
+        if temperature is not None:
+            create_kwargs["temperature"] = float(temperature)
+        if max_tokens is not None:
+            create_kwargs["max_tokens"] = int(max_tokens)
         try:
             logger.info(
                 "📨 DeepSeek run_with_messages user=%s model=%s turns=%s max_tokens=%s",
@@ -236,12 +245,7 @@ class AgentsClient:
                 max_tokens,
             )
             response = await asyncio.wait_for(
-                self.client.chat.completions.create(
-                    model=model_id,
-                    messages=seq,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                ),
+                self.client.chat.completions.create(**create_kwargs),
                 timeout=_DEEPSEEK_CHAT_WAIT_SEC,
             )
             usage = getattr(response, "usage", None)

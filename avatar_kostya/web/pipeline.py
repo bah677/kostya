@@ -187,8 +187,6 @@ async def plan_retrieval(
                 {"role": "user", "content": user_block},
             ],
             user_id=user_id,
-            temperature=0.2,
-            max_tokens=1200,
             request_kind="web_retrieval_plan",
         )
         searches, focus_hint, notes, is_revision = _parse_plan(data or {})
@@ -389,8 +387,6 @@ async def distill_source(
                 },
             ],
             user_id=user_id,
-            temperature=0.2,
-            max_tokens=2500,
             request_kind="web_distill",
         )
 
@@ -921,7 +917,6 @@ async def run_turn(
     messages.extend(picked)
     messages.append({"role": "user", "content": user_text})
 
-    max_tokens = int(getattr(config, "CONTENT_WRITER_MAX_TOKENS", 16000) or 16000)
     messaging = app.feature_manager.get_optional("messaging")
     agents = getattr(messaging, "agents_client", None) if messaging else None
 
@@ -932,8 +927,6 @@ async def run_turn(
             await agents.run_with_messages(
                 messages,
                 user_id,
-                temperature=0.7,
-                max_tokens=max_tokens,
                 log_event_type="web_studio",
                 model=writer_model,
             )
@@ -944,8 +937,6 @@ async def run_turn(
             model=writer_model,
             messages=messages,
             user_id=user_id,
-            temperature=0.7,
-            max_tokens=max_tokens,
             request_kind="web_studio",
         )
     trace["stages"].append(

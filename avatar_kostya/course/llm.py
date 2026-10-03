@@ -32,7 +32,6 @@ def _uses_max_completion_tokens(model: str) -> bool:
         return False
     if mid.startswith(("o1", "o3", "o4", "gpt-5", "gpt-6", "chatgpt-")):
         return True
-    # Cursor / Sol и прочие семейства вида *-sol*
     if "-sol" in mid or mid.endswith("sol"):
         return True
     return False
@@ -86,25 +85,45 @@ class CourseLLM:
         model: str,
         messages: Sequence[Dict[str, str]],
         user_id: int = 0,
-        temperature: float = 0.4,
-        max_tokens: int = 2500,
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
         json_mode: bool = False,
         request_kind: str = "course_llm",
     ) -> str:
+        """
+        temperature / max_tokens по умолчанию не передаём — берётся дефолт модели.
+        Явные значения оставляем для старых вызовов (course/* и т.п.).
+        """
         kwargs: Dict[str, Any] = {
             "model": model,
             "messages": list(messages),
-            "temperature": temperature,
-            **_token_limit_kwargs(model, max_tokens),
         }
+        if temperature is not None:
+            kwargs["temperature"] = float(temperature)
+        if max_tokens is not None:
+            kwargs.update(_token_limit_kwargs(model, int(max_tokens)))
         if json_mode:
             kwargs["response_format"] = {"type": "json_object"}
         client = self._client(model)
         try:
-            resp = await client.chat.completions.create(**kwargs)
+            resp = await self._create(client, kwargs)
+        except Exception as e:
+            logger.error("CourseLLM failed model=%s: %s", model, e)
+            raise
+        text = ""
+        if resp.choices and resp.choices[0].message:
+            text = (resp.choices[0].message.content or "").strip()
+        usage = getattr(resp, "usage", None)
+        await self._log(user_id, model, usage, request_kind)
+        return text
+
+    async def _create(self, client: AsyncOpenAI, kwargs: Dict[str, Any]) -> Any:
+        """Создать completion с мягкими ретраями под капризы новых моделей."""
+        try:
+            return await client.chat.completions.create(**kwargs)
         except Exception as e:
             err = str(e).lower()
-            # gpt-5/6/o* и т.п.: API просит max_completion_tokens вместо max_tokens
+            # max_tokens → max_completion_tokens
             if (
                 "max_tokens" in kwargs
                 and "max_completion_tokens" in err
@@ -112,23 +131,17 @@ class CourseLLM:
             ):
                 n = int(kwargs.pop("max_tokens"))
                 kwargs["max_completion_tokens"] = n
-                try:
-                    resp = await client.chat.completions.create(**kwargs)
-                except Exception as e2:
-                    logger.error("CourseLLM failed model=%s: %s", model, e2)
-                    raise
-            elif json_mode and "response_format" in err:
+                return await self._create(client, kwargs)
+            # temperature не поддерживает кастом — убрать, взять дефолт модели
+            if "temperature" in kwargs and "temperature" in err and (
+                "unsupported" in err or "only the default" in err
+            ):
+                kwargs.pop("temperature", None)
+                return await self._create(client, kwargs)
+            if kwargs.get("response_format") and "response_format" in err:
                 kwargs.pop("response_format", None)
-                resp = await client.chat.completions.create(**kwargs)
-            else:
-                logger.error("CourseLLM failed model=%s: %s", model, e)
-                raise
-        text = ""
-        if resp.choices and resp.choices[0].message:
-            text = (resp.choices[0].message.content or "").strip()
-        usage = getattr(resp, "usage", None)
-        await self._log(user_id, model, usage, request_kind)
-        return text
+                return await self._create(client, kwargs)
+            raise
 
     async def complete_json(self, **kwargs) -> dict:
         raw = await self.complete(json_mode=True, **kwargs)
