@@ -23,6 +23,28 @@ def is_deepseek_model(model: str) -> bool:
     return any(m.startswith(p) for p in _DEEPSEEK_PREFIXES)
 
 
+def _uses_max_completion_tokens(model: str) -> bool:
+    """Новые OpenAI-модели отвергают max_tokens в пользу max_completion_tokens."""
+    if is_deepseek_model(model):
+        return False
+    mid = (model or "").strip().lower()
+    if not mid:
+        return False
+    if mid.startswith(("o1", "o3", "o4", "gpt-5", "gpt-6", "chatgpt-")):
+        return True
+    # Cursor / Sol и прочие семейства вида *-sol*
+    if "-sol" in mid or mid.endswith("sol"):
+        return True
+    return False
+
+
+def _token_limit_kwargs(model: str, max_tokens: int) -> Dict[str, Any]:
+    n = max(200, min(16000, int(max_tokens)))
+    if _uses_max_completion_tokens(model):
+        return {"max_completion_tokens": n}
+    return {"max_tokens": n}
+
+
 def _parse_json_obj(raw: str) -> dict:
     text = (raw or "").strip()
     text = re.sub(r"^```(?:json)?\s*", "", text)
@@ -73,7 +95,7 @@ class CourseLLM:
             "model": model,
             "messages": list(messages),
             "temperature": temperature,
-            "max_tokens": max(200, min(16000, int(max_tokens))),
+            **_token_limit_kwargs(model, max_tokens),
         }
         if json_mode:
             kwargs["response_format"] = {"type": "json_object"}
@@ -82,7 +104,20 @@ class CourseLLM:
             resp = await client.chat.completions.create(**kwargs)
         except Exception as e:
             err = str(e).lower()
-            if json_mode and "response_format" in err:
+            # gpt-5/6/o* и т.п.: API просит max_completion_tokens вместо max_tokens
+            if (
+                "max_tokens" in kwargs
+                and "max_completion_tokens" in err
+                and ("unsupported" in err or "not supported" in err)
+            ):
+                n = int(kwargs.pop("max_tokens"))
+                kwargs["max_completion_tokens"] = n
+                try:
+                    resp = await client.chat.completions.create(**kwargs)
+                except Exception as e2:
+                    logger.error("CourseLLM failed model=%s: %s", model, e2)
+                    raise
+            elif json_mode and "response_format" in err:
                 kwargs.pop("response_format", None)
                 resp = await client.chat.completions.create(**kwargs)
             else:
