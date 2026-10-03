@@ -1278,22 +1278,14 @@ $("#btn-sync").addEventListener("click", async (e) => {
   btn.disabled = true;
   btn.classList.add("spin");
   try {
-    await api("/api/sync", { method: "POST" });
-    toast("Синхронизация запущена");
-    setTimeout(async () => {
-      btn.disabled = false;
-      btn.classList.remove("spin");
-      try {
-        await reloadTree();
-      } catch (err) {
-        /* дерево обновится при следующем действии */
-      }
-      loadQueue();
-    }, 4000);
+    await reloadTree();
+    renderIndexStats();
+    toast("Материалы обновлены");
   } catch (err) {
+    if (err.message !== "auth") toast(`Обновление: ${err.message}`, "bad");
+  } finally {
     btn.disabled = false;
     btn.classList.remove("spin");
-    if (err.message !== "auth") toast(`Синхронизация: ${err.message}`, "bad");
   }
 });
 
@@ -1305,38 +1297,35 @@ async function reloadTree() {
   renderContext();
 }
 
-const QUEUE_STATUS = {
-  pending: "в очереди",
-  queued: "в очереди",
-  processing: "обрабатывается",
-  running: "обрабатывается",
-  error: "ошибка",
-  failed: "ошибка",
-};
+function renderIndexStats() {
+  const box = $("#queue");
+  if (!box) return;
+  box.textContent = "";
+  const items = [];
+  (state.tree?.groups || []).forEach((g) => {
+    (g.items || []).forEach((it) => items.push(it));
+  });
+  if (!items.length) {
+    box.append(el("div", "q-empty", "В индексе пока нет материалов для клуба"));
+    return;
+  }
+  let total = 0;
+  items.forEach((it) => {
+    const m = String(it.meta || "");
+    const n = parseInt((m.match(/(\d+)\s*фрагмент/) || [])[1] || "0", 10);
+    total += n;
+    const row = el("div", "q-item");
+    row.append(el("b", null, it.name || it.id));
+    row.append(el("span", "muted small", m));
+    box.append(row);
+  });
+  const foot = el("div", "q-empty");
+  foot.append(document.createTextNode(`Всего ≈ ${total} фрагментов в выбранных типах`));
+  box.append(foot);
+}
 
 async function loadQueue() {
-  try {
-    const data = await api("/api/queue");
-    const box = $("#queue");
-    box.textContent = "";
-    if (!(data.items || []).length) {
-      const empty = el("div", "q-empty");
-      empty.innerHTML = icon("check");
-      empty.append(document.createTextNode("Всё обработано"));
-      box.append(empty);
-      return;
-    }
-    data.items.forEach((item) => {
-      const row = el("div", "q-item" + (item.error ? " error" : ""));
-      row.append(el("span", "status"), el("div", "n", item.name));
-      row.append(
-        el("div", "s", item.error ? `Ошибка: ${item.error}` : QUEUE_STATUS[item.status] || item.status || "")
-      );
-      box.append(row);
-    });
-  } catch (err) {
-    /* очередь не критична */
-  }
+  renderIndexStats();
 }
 
 /* ── вкладки на телефоне ─────────────────────────────────────────────── */

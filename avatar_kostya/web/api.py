@@ -256,28 +256,14 @@ def create_app(bot_app) -> FastAPI:
 
     @app.get("/api/queue")
     async def queue(uid: int = Depends(auth)):
-        pid = active_product_id()
-        rows = await _stor().list_course_queue([pid, "_expert"])
-        return {
-            "items": [
-                {
-                    "id": str(r.get("id")),
-                    "name": source_label(r),
-                    "status": r.get("status"),
-                    "error": (r.get("error_message") or "")[:300],
-                    "attempts": r.get("attempts"),
-                }
-                for r in rows
-            ]
-        }
+        # У Кости нет course-очереди Юлии: UI показывает сводку по дереву RAG.
+        return {"items": [], "mode": "rag_facets"}
 
     @app.post("/api/sync")
     async def sync(uid: int = Depends(auth)):
-        feature = bot_app.feature_manager.get_optional("course_disk_sync")
-        if feature is None or not hasattr(feature, "run_sync"):
-            raise HTTPException(status_code=503, detail="синхронизация недоступна")
-        asyncio.create_task(feature.run_sync(notify=False))
-        return {"ok": True}
+        # Обновление материалов = перечитать дерево из Chroma (диск-курс Юлии не подключён).
+        tree = await build_tree(bot_app)
+        return {"ok": True, "tree": tree}
 
     # ── Чаты ───────────────────────────────────────────────────────────────
     @app.get("/api/chats")
