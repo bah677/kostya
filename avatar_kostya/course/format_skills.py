@@ -1,45 +1,72 @@
-"""Скиллы видов контента: правила генерации живут здесь, не в этапах прогрева."""
+"""Скиллы видов контента (обычно markdown): правила генерации, не этапы прогрева."""
 
 from __future__ import annotations
 
+import json
+import logging
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from course.formats import FORMATS, format_prompt_block
 from course.models import FormatSpec
 
-FORMAT_SKILLS_KEY = "format_skills"
+logger = logging.getLogger(__name__)
 
-# Базовые скиллы: то, что уходит в WRITE вместе с паспортами.
-# Этап прогрева — отдельно в контексте; скилл говорит, как к нему относиться.
-_STORIES_SKILL_EXTRA = """
-Раскадровка на день, не один абзац: 8–12 кадров.
-На кадр: текст НА ЭКРАНЕ (до 8–12 слов), что сказать голосом (1–2 фразы),
-стикер если есть, роль кадра (хук/боль/метод/интерактив/доказ/CTA).
-Этап прогрева задан в контексте задачи — подстраивай жёсткость оффера и CTA под него:
-на прогреве почти без продажи; на предзапуске собирай интерес; в окне продаж — оффер и куда писать;
-после закрытия — тепло и процесс у тех, кто уже внутри.
-Не обещай цен, дат и результатов вне паспорта запуска.
-""".strip()
+FORMAT_SKILLS_KEY = "format_skills"
+_SKILLS_DIR = Path(__file__).resolve().parent / "skills"
+_MAX_SKILL_CHARS = 100_000
+
+
+def _read_skill_md(format_id: str) -> str:
+    path = _SKILLS_DIR / f"{format_id}.md"
+    if not path.is_file():
+        return ""
+    try:
+        return path.read_text(encoding="utf-8").strip()
+    except Exception as e:
+        logger.warning("skill md %s: %s", path, e)
+        return ""
 
 
 def default_skill_text(spec: FormatSpec) -> str:
-    parts = [format_prompt_block(spec)]
-    if spec.id == "stories":
-        parts.append(_STORIES_SKILL_EXTRA)
-    return "\n\n".join(p for p in parts if (p or "").strip()).strip()
+    """Дефолт: course/skills/{id}.md, иначе краткое описание из FormatSpec."""
+    from_file = _read_skill_md(spec.id)
+    if from_file:
+        return from_file
+    return format_prompt_block(spec).strip()
 
 
 def decode_format_skills(raw: Any) -> Dict[str, Dict[str, str]]:
+    if isinstance(raw, (bytes, memoryview)):
+        raw = bytes(raw).decode("utf-8")
+    if isinstance(raw, str):
+        raw = raw.strip()
+        if not raw:
+            return {}
+        try:
+            raw = json.loads(raw)
+        except json.JSONDecodeError:
+            logger.warning("format_skills: value is not JSON object")
+            return {}
     if not isinstance(raw, dict):
         return {}
     out: Dict[str, Dict[str, str]] = {}
     for fid, row in raw.items():
-        if fid not in FORMATS or not isinstance(row, dict):
+        if str(fid) not in FORMATS:
             continue
-        skill = str(row.get("skill") or "").strip()
-        title = str(row.get("title") or "").strip()
+        if isinstance(row, str):
+            skill = row.strip()
+            title = ""
+        elif isinstance(row, dict):
+            skill = str(row.get("skill") or "").strip()
+            title = str(row.get("title") or "").strip()
+        else:
+            continue
         if skill or title:
-            out[str(fid)] = {"skill": skill[:20000], "title": title[:200]}
+            out[str(fid)] = {
+                "skill": skill[:_MAX_SKILL_CHARS],
+                "title": title[:200],
+            }
     return out
 
 
@@ -50,7 +77,8 @@ def resolved_formats(
     rows: List[Dict[str, Any]] = []
     for fid, spec in FORMATS.items():
         patch = ov.get(fid) or {}
-        skill = str(patch.get("skill") or "").strip() or default_skill_text(spec)
+        custom = str(patch.get("skill") or "").strip()
+        skill = custom or default_skill_text(spec)
         title = str(patch.get("title") or "").strip() or spec.title
         rows.append(
             {
@@ -59,7 +87,7 @@ def resolved_formats(
                 "platform": spec.platform,
                 "skill": skill,
                 "default_skill": default_skill_text(spec),
-                "customized": bool(str(patch.get("skill") or "").strip()),
+                "customized": bool(custom),
             }
         )
     return rows
@@ -89,6 +117,7 @@ async def save_format_skill(
     skill: str,
     title: str = "",
     user_id: int = 0,
+    reset: bool = False,
 ) -> Dict[str, Any]:
     from course.products import active_product_id
 
@@ -100,16 +129,27 @@ async def save_format_skill(
     current = await load_format_skills(stor)
     text = (skill or "").strip()
     ttl = (title or "").strip()
-    # Пустой skill или равный дефолту — сбрасываем кастом.
-    if not text or text == default_skill_text(spec):
+    default = default_skill_text(spec)
+
+    if reset or not text or (text == default and not (ttl and ttl != spec.title)):
         current.pop(fid, None)
     else:
-        row: Dict[str, str] = {"skill": text[:20000]}
+        row: Dict[str, str] = {"skill": text[:_MAX_SKILL_CHARS]}
         if ttl and ttl != spec.title:
             row["title"] = ttl[:200]
         current[fid] = row
-    await stor.set_content_setting(active_product_id(), FORMAT_SKILLS_KEY, current)
-    return next(r for r in resolved_formats(current) if r["id"] == fid)
+
+    pid = active_product_id()
+    await stor.set_content_setting(pid, FORMAT_SKILLS_KEY, current)
+    # Перечитать из БД — чтобы поймать поломку записи сразу.
+    stored = decode_format_skills(await stor.get_content_setting(pid, FORMAT_SKILLS_KEY))
+    if text and text != default and fid not in stored:
+        raise RuntimeError("скилл не записался в content_settings")
+    if text and text != default:
+        got = str((stored.get(fid) or {}).get("skill") or "")
+        if got != text[:_MAX_SKILL_CHARS]:
+            raise RuntimeError("скилл записался обрезанным или повреждённым")
+    return next(r for r in resolved_formats(stored) if r["id"] == fid)
 
 
 async def list_format_skills(stor) -> List[Dict[str, Any]]:

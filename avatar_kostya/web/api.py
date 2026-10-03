@@ -345,6 +345,7 @@ def create_app(bot_app) -> FastAPI:
                 return row
         raise HTTPException(status_code=404, detail="неизвестный вид контента")
 
+    @app.post("/api/formats/{format_id}")
     @app.put("/api/formats/{format_id}")
     async def put_format_skill(
         format_id: str, payload: Dict[str, Any] = Body(default={}), uid: int = Depends(auth)
@@ -358,9 +359,12 @@ def create_app(bot_app) -> FastAPI:
                 skill=str(payload.get("skill") or ""),
                 title=str(payload.get("title") or ""),
                 user_id=uid,
+                reset=bool(payload.get("reset")),
             )
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
+        except RuntimeError as e:
+            raise HTTPException(status_code=500, detail=str(e))
 
     @app.get("/api/tree")
     async def tree(uid: int = Depends(auth)):

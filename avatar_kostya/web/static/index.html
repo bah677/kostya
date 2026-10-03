@@ -18,7 +18,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
-  <link rel="stylesheet" href="/static/style.css?v=14">
+  <link rel="stylesheet" href="/static/style.css?v=15">
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
 </head>
 <body>
@@ -235,29 +235,29 @@
 </dialog>
 
 <dialog id="format-dialog" class="edit-dialog">
-  <form method="dialog" class="edit-sheet" id="format-form">
+  <div class="edit-sheet" id="format-form">
     <header class="source-head">
       <div>
-        <p class="muted small">Скилл вида контента</p>
+        <p class="muted small">Скилл вида контента (markdown)</p>
         <h2 id="format-title">Формат</h2>
         <p class="muted small" id="format-meta">Правила уходят в финальную модель при генерации.</p>
       </div>
-      <button type="submit" class="icon-btn" value="cancel" aria-label="Закрыть">×</button>
+      <button type="button" class="icon-btn" id="format-close" aria-label="Закрыть">×</button>
     </header>
     <div class="edit-field">
       <label for="format-skill">Скилл / правила</label>
-      <div class="hint">Структура, длина, CTA, как учитывать этап прогрева — всё здесь.</div>
-      <textarea id="format-skill" class="field skill" rows="14"></textarea>
+      <div class="hint">Обычно markdown. Паспорта и материалы — отдельно; здесь только механика формата.</div>
+      <textarea id="format-skill" class="field skill" rows="16" spellcheck="false"></textarea>
     </div>
     <footer class="source-foot">
       <button type="button" class="btn" id="format-reset">Сбросить к дефолту</button>
       <span style="flex:1"></span>
-      <button type="submit" class="btn" value="cancel">Отмена</button>
+      <button type="button" class="btn" id="format-cancel">Отмена</button>
       <button type="button" class="btn primary" id="format-save">Сохранить</button>
     </footer>
-  </form>
+  </div>
 </dialog>
 
-<script src="/static/app.js?v=14"></script>
+<script src="/static/app.js?v=15"></script>
 </body>
 </html>

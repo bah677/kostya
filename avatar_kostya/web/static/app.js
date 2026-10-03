@@ -1578,20 +1578,38 @@ $("#btn-edit-formats")?.addEventListener("click", () => {
   if (current) openFormatEditor(current);
 });
 
+function closeFormatDialog() {
+  const dlg = $("#format-dialog");
+  if (dlg?.open) dlg.close();
+}
+
+$("#format-close")?.addEventListener("click", closeFormatDialog);
+$("#format-cancel")?.addEventListener("click", closeFormatDialog);
+
 $("#format-reset")?.addEventListener("click", () => {
   if (state.formatDefaultSkill) $("#format-skill").value = state.formatDefaultSkill;
 });
 
-$("#format-save")?.addEventListener("click", async () => {
+$("#format-save")?.addEventListener("click", async (e) => {
+  e.preventDefault();
+  e.stopPropagation();
   const formatId = state.formatId;
-  if (!formatId) return;
+  if (!formatId) {
+    toast("Не выбран вид контента", "bad");
+    return;
+  }
   const btn = $("#format-save");
+  const skill = $("#format-skill").value;
   btn.disabled = true;
   try {
     const saved = await api(`/api/formats/${encodeURIComponent(formatId)}`, {
-      method: "PUT",
-      body: JSON.stringify({ skill: $("#format-skill").value }),
+      method: "POST",
+      body: JSON.stringify({ skill }),
     });
+    // Проверяем, что сервер реально вернул наш текст.
+    if ((saved.skill || "").trim() !== skill.trim() && skill.trim() !== (saved.default_skill || "").trim()) {
+      throw new Error("сервер вернул другой текст скилла");
+    }
     const brief = state.formats.find((f) => f.id === formatId);
     if (brief) {
       brief.title = saved.title || brief.title;
@@ -1599,9 +1617,8 @@ $("#format-save")?.addEventListener("click", async () => {
     }
     renderFormats();
     renderContext();
-    toast("Скилл сохранён");
-    const dlg = $("#format-dialog");
-    if (dlg?.open) dlg.close();
+    toast(saved.customized ? "Скилл сохранён" : "Скилл = дефолт (как в пособии)");
+    closeFormatDialog();
   } catch (err) {
     toast(`Не сохранилось: ${err.message}`, "bad");
   } finally {
