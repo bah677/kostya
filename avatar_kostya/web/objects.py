@@ -60,7 +60,7 @@ FACET_SPECS: Dict[str, Dict[str, Any]] = {
     },
     "meeting": {
         "name": "Встречи клуба",
-        "hint": "Встречи «Разговоры с Богом» (телемост)",
+        "hint": "Встречи «Любящие Бога» (телемост)",
         "content_types": ("встреча клуба", "встреча"),
         "group": "materials",
     },
@@ -331,14 +331,14 @@ def _scan_rag_materials(app) -> Dict[str, Material]:
         logger.warning("scan rag materials: %s", e)
         return {}
 
-    allowed = set(product_chroma_names(active_product_id()))
+    allowed = {str(x).strip().casefold() for x in product_chroma_names(active_product_id()) if str(x).strip()}
     bucket: Dict[Tuple[str, str], Dict[str, Any]] = {}
     metas = raw.get("metadatas") or []
     docs = raw.get("documents") or []
     for meta, doc in zip(metas, docs):
         m = meta or {}
         prod = str(m.get("product") or "").strip()
-        if allowed and prod and prod not in allowed:
+        if allowed and prod and prod.casefold() not in allowed:
             continue
         ctype = str(m.get("content_type") or "").strip()
         cat = str(m.get("content_category") or "").strip()

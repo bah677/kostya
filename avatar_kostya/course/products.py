@@ -144,7 +144,7 @@ def product_display_name(product_id: str) -> str:
 def product_chroma_names(product_id: str) -> List[str]:
     """Имена ``product`` в Chroma для фильтра студии / RagScope.
 
-    У Кости в метаданных человекочитаемые строки («Клуб», «Клуб Разговоры с Богом»),
+    У Кости в метаданных человекочитаемые строки («Клуб», «Клуб Любящие Бога»),
     не внутренний id. Берём name + aliases + id.
     """
     pid = (product_id or "").strip()

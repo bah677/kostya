@@ -635,10 +635,22 @@ async def run_turn(
         if mid and mid not in mat_ids:
             mat_ids.append(mid)
 
-    from web.objects import ensure_materials
+    from web.objects import build_tree, ensure_materials
 
     ensure_materials(app)
     materials = [m for mid in mat_ids if (m := get_material(mid)) is not None]
+    missing_mats = [mid for mid in mat_ids if get_material(mid) is None]
+    if missing_mats:
+        # кэш мог устареть после переиндекса / смены метаданных — пересканировать
+        await build_tree(app)
+        materials = [m for mid in mat_ids if (m := get_material(mid)) is not None]
+        missing_mats = [mid for mid in mat_ids if get_material(mid) is None]
+        if missing_mats:
+            logger.warning(
+                "web studio: выбранные материалы не найдены в RAG: %s",
+                ", ".join(missing_mats),
+            )
+            trace["missing_objects"] = missing_mats
 
     labels: Dict[str, str] = {}
     for m in materials:
