@@ -75,15 +75,15 @@ async def write_draft(
 ) -> tuple[str, str, List[str]]:
     """Возвращает (text, model, issues). Issues могут быть, если повтор не помог."""
     from config import config
-    from course.stories_cycle import stage_prompt, writer_stories_rules
+    from course.format_skills import default_skill_text
+    from course.stories_cycle import stage_prompt
 
     spec = get_format(format_id) or get_format("tg_post")
     model = getattr(config, "CONTENT_WRITER_MODEL", "deepseek-v4-flash")
     max_tokens = int(getattr(config, "CONTENT_WRITER_MAX_TOKENS", 16000) or 16000)
-    format_block = format_prompt_block(spec)
-    if spec.id == "stories":
-        format_block += "\n" + writer_stories_rules(stories_stage)
-        format_block += "\n" + stage_prompt(stories_stage)
+    format_block = default_skill_text(spec)
+    if stories_stage:
+        format_block = (format_block + "\n\n" + stage_prompt(stories_stage)).strip()
     product_blob = product_info or ""
     if launch_info:
         product_blob = (product_blob + "\n\n## Запуск\n" + launch_info).strip()

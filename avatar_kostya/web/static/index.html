@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
-  <title>Контент-студия</title>
+  <title>Контент завод</title>
   <meta name="theme-color" content="#f7f7f9" media="(prefers-color-scheme: light)">
   <meta name="theme-color" content="#0c0c10" media="(prefers-color-scheme: dark)">
   <script>
@@ -18,7 +18,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
-  <link rel="stylesheet" href="/static/style.css?v=12">
+  <link rel="stylesheet" href="/static/style.css?v=14">
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
 </head>
 <body>
@@ -28,7 +28,7 @@
     <div class="login-head">
       <span class="logo" aria-hidden="true"></span>
       <div>
-        <h1>Контент-студия</h1>
+        <h1>Контент завод</h1>
         <p class="muted">Вход для команды</p>
       </div>
     </div>
@@ -63,7 +63,7 @@
     <div class="brand">
       <span class="logo" aria-hidden="true"></span>
       <div class="brand-text">
-        <strong id="product-name">—</strong>
+        <strong id="app-name">Контент завод</strong>
         <button type="button" class="chat-title" id="chat-title" title="Переименовать чат">новый чат</button>
         <input type="text" class="chat-title-input" id="chat-title-input" maxlength="200" hidden aria-label="Название чата">
       </div>
@@ -74,7 +74,7 @@
       <button id="btn-theme" class="icon-btn" title="Тема" aria-label="Переключить тему" data-icon="auto"></button>
       <span class="divider" aria-hidden="true"></span>
       <span class="me" id="me" hidden></span>
-      <button id="btn-logout" class="icon-btn" title="Выйти из студии" aria-label="Выйти" data-icon="logout"></button>
+      <button id="btn-logout" class="icon-btn" title="Выйти из Контент завода" aria-label="Выйти" data-icon="logout"></button>
     </div>
   </header>
 
@@ -128,13 +128,16 @@
 
   <aside class="pane pane-right" id="pane-right">
     <section class="block">
-      <div class="block-head"><h2>Вид контента</h2></div>
+      <div class="block-head">
+        <h2>Вид контента</h2>
+        <button type="button" class="link small" id="btn-edit-formats">Скиллы</button>
+      </div>
       <div id="formats" class="seg"></div>
     </section>
     <section class="block">
       <div class="block-head">
         <h2>Этап прогрева</h2>
-        <button type="button" class="link small" id="btn-edit-stages">Править тексты</button>
+        <button type="button" class="link small" id="btn-edit-stages">Править</button>
       </div>
       <div id="stages" class="options"></div>
     </section>
@@ -215,20 +218,46 @@
   <form method="dialog" class="edit-sheet" id="stages-form">
     <header class="source-head">
       <div>
-        <p class="muted small">Тексты этапов прогрева</p>
+        <p class="muted small">Воронка прогрева</p>
         <h2>Этапы</h2>
-        <p class="muted small">Название и описание — в UI и план. Правила — в генерацию сторис.</p>
+        <p class="muted small">Общее описание этапа. Правила генерации — в скилле вида контента.</p>
       </div>
       <button type="submit" class="icon-btn" value="cancel" aria-label="Закрыть">×</button>
     </header>
     <div id="stages-editor" class="edit-fields"></div>
     <footer class="source-foot">
+      <button type="button" class="btn" id="stages-add">+ Этап</button>
+      <span style="flex:1"></span>
       <button type="submit" class="btn" value="cancel">Отмена</button>
       <button type="button" class="btn primary" id="stages-save">Сохранить</button>
     </footer>
   </form>
 </dialog>
 
-<script src="/static/app.js?v=12"></script>
+<dialog id="format-dialog" class="edit-dialog">
+  <form method="dialog" class="edit-sheet" id="format-form">
+    <header class="source-head">
+      <div>
+        <p class="muted small">Скилл вида контента</p>
+        <h2 id="format-title">Формат</h2>
+        <p class="muted small" id="format-meta">Правила уходят в финальную модель при генерации.</p>
+      </div>
+      <button type="submit" class="icon-btn" value="cancel" aria-label="Закрыть">×</button>
+    </header>
+    <div class="edit-field">
+      <label for="format-skill">Скилл / правила</label>
+      <div class="hint">Структура, длина, CTA, как учитывать этап прогрева — всё здесь.</div>
+      <textarea id="format-skill" class="field skill" rows="14"></textarea>
+    </div>
+    <footer class="source-foot">
+      <button type="button" class="btn" id="format-reset">Сбросить к дефолту</button>
+      <span style="flex:1"></span>
+      <button type="submit" class="btn" value="cancel">Отмена</button>
+      <button type="button" class="btn primary" id="format-save">Сохранить</button>
+    </footer>
+  </form>
+</dialog>
+
+<script src="/static/app.js?v=14"></script>
 </body>
 </html>

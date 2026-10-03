@@ -13,6 +13,8 @@ const state = {
   search: "",
   open: {},
   passportKind: "",
+  formatId: "",
+  formatDefaultSkill: "",
 };
 
 const $ = (sel) => document.querySelector(sel);
@@ -308,7 +310,10 @@ async function boot() {
   state.chats = data.chats || [];
   state.defaults = data.defaults || {};
   $("#app").hidden = false;
-  $("#product-name").textContent = data.product?.name || "—";
+  const appName = $("#app-name");
+  if (appName) appName.textContent = "Контент завод";
+  if (data.product?.name) document.title = `Контент завод · ${data.product.name}`;
+  else document.title = "Контент завод";
   try {
     const me = await api("/api/me");
     const box = $("#me");
@@ -866,7 +871,7 @@ function pollJob(jobId) {
       state.polling = null;
       setBusy(false);
       if (data.status === "done" && data.message && document.hidden) {
-        document.title = "✓ Ответ готов — Контент-студия";
+        document.title = "✓ Ответ готов — Контент завод";
       }
       if (data.status === "done" && data.message) {
         if (state.chat?.id === chatId) {
@@ -1292,11 +1297,28 @@ function renderFormats() {
   const box = $("#formats");
   box.textContent = "";
   state.formats.forEach((fmt) => {
-    box.append(
-      optionRow("format", fmt.id, state.chat?.format === fmt.id, fmt.title, fmt.platform, () =>
-        patchChat({ format: fmt.id })
-      )
+    const hint = [fmt.platform, fmt.customized ? "свой скилл" : ""]
+      .filter(Boolean)
+      .join(" · ");
+    const row = optionRow(
+      "format",
+      fmt.id,
+      state.chat?.format === fmt.id,
+      fmt.title,
+      hint,
+      () => patchChat({ format: fmt.id })
     );
+    const edit = el("button", "format-edit", "скилл");
+    edit.type = "button";
+    edit.title = "Править скилл вида контента";
+    edit.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      openFormatEditor(fmt.id);
+    });
+    row.style.position = "relative";
+    row.append(edit);
+    box.append(row);
   });
 }
 
@@ -1414,6 +1436,47 @@ $("#passport-save")?.addEventListener("click", async () => {
   }
 });
 
+function stageEditorCard(stage) {
+  const card = el("div", "edit-stage");
+  card.dataset.id = stage.id || "";
+  const head = el("div", "edit-stage-head");
+  head.append(el("h3", null, stage.id || "новый"));
+  const del = el("button", "del", "Удалить");
+  del.type = "button";
+  del.addEventListener("click", () => {
+    const box = $("#stages-editor");
+    if (box.querySelectorAll(".edit-stage").length <= 1) {
+      toast("Нужен хотя бы один этап", "bad");
+      return;
+    }
+    card.remove();
+  });
+  head.append(del);
+  card.append(head);
+  const titleWrap = el("div", "edit-field");
+  titleWrap.append(el("label", null, "Название"));
+  const title = document.createElement("textarea");
+  title.className = "field tiny";
+  title.rows = 1;
+  title.dataset.field = "title";
+  title.value = stage.title || "";
+  titleWrap.append(title);
+  card.append(titleWrap);
+  const descWrap = el("div", "edit-field");
+  descWrap.append(el("label", null, "Описание этапа"));
+  descWrap.append(
+    el("div", "hint", "Общее: что происходит на этом шаге воронки. Попадает в план и в WRITE.")
+  );
+  const desc = document.createElement("textarea");
+  desc.className = "field";
+  desc.rows = 3;
+  desc.dataset.field = "description";
+  desc.value = stage.description || stage.hint || "";
+  descWrap.append(desc);
+  card.append(descWrap);
+  return card;
+}
+
 async function openStagesEditor() {
   const dlg = $("#stages-dialog");
   if (!dlg) return;
@@ -1423,41 +1486,8 @@ async function openStagesEditor() {
   else dlg.setAttribute("open", "");
   try {
     const data = await api("/api/stages");
-    const stages = data.stages || [];
     box.textContent = "";
-    stages.forEach((stage) => {
-      const card = el("div", "edit-stage");
-      card.dataset.id = stage.id;
-      card.append(el("h3", null, stage.id));
-      const titleWrap = el("div", "edit-field");
-      titleWrap.append(el("label", null, "Название"));
-      const title = document.createElement("textarea");
-      title.className = "field tiny";
-      title.rows = 1;
-      title.dataset.field = "title";
-      title.value = stage.title || "";
-      titleWrap.append(title);
-      card.append(titleWrap);
-      const hintWrap = el("div", "edit-field");
-      hintWrap.append(el("label", null, "Описание для UI и плана"));
-      const hint = document.createElement("textarea");
-      hint.className = "field";
-      hint.rows = 3;
-      hint.dataset.field = "hint";
-      hint.value = stage.hint || "";
-      hintWrap.append(hint);
-      card.append(hintWrap);
-      const rulesWrap = el("div", "edit-field");
-      rulesWrap.append(el("label", null, "Правила для генерации сторис"));
-      const rules = document.createElement("textarea");
-      rules.className = "field";
-      rules.rows = 4;
-      rules.dataset.field = "rules";
-      rules.value = stage.rules || "";
-      rulesWrap.append(rules);
-      card.append(rulesWrap);
-      box.append(card);
-    });
+    (data.stages || []).forEach((stage) => box.append(stageEditorCard(stage)));
   } catch (err) {
     box.textContent = err.message || String(err);
   }
@@ -1468,29 +1498,109 @@ $("#btn-edit-stages")?.addEventListener("click", () => {
   openStagesEditor();
 });
 
+$("#stages-add")?.addEventListener("click", () => {
+  const box = $("#stages-editor");
+  if (!box || box.textContent === "Загрузка…") return;
+  box.append(
+    stageEditorCard({
+      id: "",
+      title: "Новый этап",
+      description: "",
+    })
+  );
+  box.lastElementChild?.scrollIntoView({ block: "nearest" });
+});
+
 $("#stages-save")?.addEventListener("click", async () => {
-  const payload = {};
+  const stages = [];
   $("#stages-editor").querySelectorAll(".edit-stage").forEach((card) => {
-    const id = card.dataset.id;
-    if (!id) return;
-    const row = {};
+    const row = { id: card.dataset.id || "" };
     card.querySelectorAll("textarea[data-field]").forEach((ta) => {
       row[ta.dataset.field] = ta.value;
     });
-    payload[id] = row;
+    if ((row.title || "").trim() || (row.description || "").trim()) stages.push(row);
   });
+  if (!stages.length) {
+    toast("Добавьте хотя бы один этап", "bad");
+    return;
+  }
   const btn = $("#stages-save");
   btn.disabled = true;
   try {
     const data = await api("/api/stages", {
       method: "PUT",
-      body: JSON.stringify({ stages: payload }),
+      body: JSON.stringify({ stages }),
     });
     state.stages = data.stages || [];
     renderStages();
     renderContext();
+    // Если текущий этап удалили — выберем первый.
+    if (state.chat && !state.stages.some((s) => s.id === state.chat.stage)) {
+      const next = state.stages[0]?.id;
+      if (next) await patchChat({ stage: next });
+    }
     toast("Этапы сохранены");
     const dlg = $("#stages-dialog");
+    if (dlg?.open) dlg.close();
+  } catch (err) {
+    toast(`Не сохранилось: ${err.message}`, "bad");
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+async function openFormatEditor(formatId) {
+  const dlg = $("#format-dialog");
+  if (!dlg) return;
+  state.formatId = formatId;
+  $("#format-title").textContent = "Загрузка…";
+  $("#format-skill").value = "";
+  state.formatDefaultSkill = "";
+  if (typeof dlg.showModal === "function") dlg.showModal();
+  else dlg.setAttribute("open", "");
+  try {
+    const data = await api(`/api/formats/${encodeURIComponent(formatId)}`);
+    $("#format-title").textContent = data.title || formatId;
+    $("#format-meta").textContent = data.customized
+      ? `${data.platform || ""} · изменённый скилл`.replace(/^ · /, "")
+      : `${data.platform || ""} · дефолтный скилл`.replace(/^ · /, "");
+    $("#format-skill").value = data.skill || "";
+    state.formatDefaultSkill = data.default_skill || data.skill || "";
+  } catch (err) {
+    $("#format-title").textContent = "Ошибка";
+    $("#format-skill").value = err.message || String(err);
+  }
+}
+
+$("#btn-edit-formats")?.addEventListener("click", () => {
+  focusPane("pane-right", "#formats");
+  const current = state.chat?.format || state.formats[0]?.id;
+  if (current) openFormatEditor(current);
+});
+
+$("#format-reset")?.addEventListener("click", () => {
+  if (state.formatDefaultSkill) $("#format-skill").value = state.formatDefaultSkill;
+});
+
+$("#format-save")?.addEventListener("click", async () => {
+  const formatId = state.formatId;
+  if (!formatId) return;
+  const btn = $("#format-save");
+  btn.disabled = true;
+  try {
+    const saved = await api(`/api/formats/${encodeURIComponent(formatId)}`, {
+      method: "PUT",
+      body: JSON.stringify({ skill: $("#format-skill").value }),
+    });
+    const brief = state.formats.find((f) => f.id === formatId);
+    if (brief) {
+      brief.title = saved.title || brief.title;
+      brief.customized = saved.customized;
+    }
+    renderFormats();
+    renderContext();
+    toast("Скилл сохранён");
+    const dlg = $("#format-dialog");
     if (dlg?.open) dlg.close();
   } catch (err) {
     toast(`Не сохранилось: ${err.message}`, "bad");
@@ -1642,7 +1752,11 @@ document.addEventListener("keydown", (e) => {
 });
 
 document.addEventListener("visibilitychange", () => {
-  if (!document.hidden) document.title = "Контент-студия";
+  if (!document.hidden) {
+    document.title = state.product?.name
+      ? `Контент завод · ${state.product.name}`
+      : "Контент завод";
+  }
 });
 
 /* ── тема ────────────────────────────────────────────────────────────── */

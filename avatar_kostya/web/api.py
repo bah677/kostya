@@ -18,6 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from course.formats import FORMATS
 from course.paths import source_dir
 from course.products import active_product_id, product_display_name
+from course.format_skills import list_format_skills, save_format_skill
 from course.passports import (
     PASSPORT_KINDS,
     list_passports,
@@ -26,12 +27,7 @@ from course.passports import (
     save_passport,
     spec_for,
 )
-from course.stories_cycle import (
-    load_stage_texts,
-    normalize_stage,
-    resolved_stages,
-    save_stage_texts,
-)
+from course.stories_cycle import load_stages, normalize_stage, save_stages
 from web.auth import (
     AuthError,
     admin_list,
@@ -79,7 +75,7 @@ def _cleanup_jobs() -> None:
 def create_app(bot_app) -> FastAPI:
     from config import config
 
-    app = FastAPI(title="Контент-студия", docs_url=None, redoc_url=None, openapi_url=None)
+    app = FastAPI(title="Контент завод", docs_url=None, redoc_url=None, openapi_url=None)
 
     def _stor():
         return bot_app.user_storage
@@ -229,14 +225,29 @@ def create_app(bot_app) -> FastAPI:
         chats = await _stor().list_web_chats(pid)
         focus = await _stor().get_content_setting(pid, "focus")
         stage = await _stor().get_content_setting(pid, "stories_cycle_stage")
-        stage_texts = await load_stage_texts(_stor())
+        stages = await load_stages(_stor())
+        formats = await list_format_skills(_stor())
         passports = await list_passports(_stor())
         return {
             "product": {"id": pid, "name": product_display_name(pid)},
             "formats": [
-                {"id": f.id, "title": f.title, "platform": f.platform} for f in FORMATS.values()
+                {
+                    "id": f["id"],
+                    "title": f["title"],
+                    "platform": f["platform"],
+                    "customized": f.get("customized"),
+                }
+                for f in formats
             ],
-            "stages": resolved_stages(stage_texts),
+            "stages": [
+                {
+                    "id": s["id"],
+                    "title": s["title"],
+                    "hint": s.get("description") or "",
+                    "description": s.get("description") or "",
+                }
+                for s in stages
+            ],
             "passports": [
                 {
                     "kind": p["kind"],
@@ -249,7 +260,9 @@ def create_app(bot_app) -> FastAPI:
             ],
             "defaults": {
                 "focus": str(focus or "") if isinstance(focus, str) else "",
-                "stage": normalize_stage(stage if isinstance(stage, str) else ""),
+                "stage": normalize_stage(
+                    stage if isinstance(stage, str) else "", stages
+                ),
             },
             "tree": tree,
             "chats": [_chat_brief(c) for c in chats],
@@ -290,15 +303,64 @@ def create_app(bot_app) -> FastAPI:
 
     @app.get("/api/stages")
     async def get_stages(uid: int = Depends(auth)):
-        texts = await load_stage_texts(_stor())
-        return {"stages": resolved_stages(texts)}
+        stages = await load_stages(_stor())
+        return {
+            "stages": [
+                {
+                    "id": s["id"],
+                    "title": s["title"],
+                    "hint": s.get("description") or "",
+                    "description": s.get("description") or "",
+                }
+                for s in stages
+            ]
+        }
 
     @app.put("/api/stages")
     async def put_stages(payload: Dict[str, Any] = Body(default={}), uid: int = Depends(auth)):
-        body = payload.get("stages") if isinstance(payload.get("stages"), dict) else payload
-        await save_stage_texts(_stor(), body or {}, user_id=uid)
-        texts = await load_stage_texts(_stor())
-        return {"stages": resolved_stages(texts)}
+        stages = await save_stages(_stor(), payload, user_id=uid)
+        return {
+            "stages": [
+                {
+                    "id": s["id"],
+                    "title": s["title"],
+                    "hint": s.get("description") or "",
+                    "description": s.get("description") or "",
+                }
+                for s in stages
+            ]
+        }
+
+    @app.get("/api/formats")
+    async def get_formats(uid: int = Depends(auth)):
+        return {"formats": await list_format_skills(_stor())}
+
+    @app.get("/api/formats/{format_id}")
+    async def get_format_skill(format_id: str, uid: int = Depends(auth)):
+        if format_id not in FORMATS:
+            raise HTTPException(status_code=404, detail="неизвестный вид контента")
+        rows = await list_format_skills(_stor())
+        for row in rows:
+            if row["id"] == format_id:
+                return row
+        raise HTTPException(status_code=404, detail="неизвестный вид контента")
+
+    @app.put("/api/formats/{format_id}")
+    async def put_format_skill(
+        format_id: str, payload: Dict[str, Any] = Body(default={}), uid: int = Depends(auth)
+    ):
+        if format_id not in FORMATS:
+            raise HTTPException(status_code=404, detail="неизвестный вид контента")
+        try:
+            return await save_format_skill(
+                _stor(),
+                format_id,
+                skill=str(payload.get("skill") or ""),
+                title=str(payload.get("title") or ""),
+                user_id=uid,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
 
     @app.get("/api/tree")
     async def tree(uid: int = Depends(auth)):
@@ -378,12 +440,13 @@ def create_app(bot_app) -> FastAPI:
         if stage is None:
             raw = await _stor().get_content_setting(pid, "stories_cycle_stage")
             stage = raw if isinstance(raw, str) else ""
+        stages = await load_stages(_stor())
         objects = [r.id for r in parse_object_ids(payload.get("objects") or [])]
         cid = await _stor().create_web_chat(
             product_id=pid,
             title=str(payload.get("title") or "Новый чат")[:200],
             format=_safe_format(payload.get("format")),
-            stage=normalize_stage(str(stage or "")),
+            stage=normalize_stage(str(stage or ""), stages),
             focus=str(focus or ""),
             context={"objects": objects},
             created_by=uid,
@@ -410,7 +473,9 @@ def create_app(bot_app) -> FastAPI:
         if "format" in payload:
             fields["format"] = _safe_format(payload.get("format"))
         if "stage" in payload:
-            fields["stage"] = normalize_stage(str(payload.get("stage") or ""))
+            fields["stage"] = normalize_stage(
+                str(payload.get("stage") or ""), await load_stages(_stor())
+            )
         if "focus" in payload:
             fields["focus"] = str(payload.get("focus") or "")
         if "archived" in payload:
@@ -552,7 +617,7 @@ def create_app(bot_app) -> FastAPI:
                 break
             if str(row.get("role")) == "user":
                 topic = str(row.get("text") or "")
-        topic = (topic or chat.get("title") or chat.get("focus") or "студия").strip()[:2000]
+        topic = (topic or chat.get("title") or chat.get("focus") or "контент завод").strip()[:2000]
 
         lesson_keys = [
             ref.value
@@ -587,8 +652,11 @@ def create_app(bot_app) -> FastAPI:
         if "focus" in payload:
             await _stor().set_content_setting(pid, "focus", str(payload.get("focus") or ""))
         if "stage" in payload:
+            stages = await load_stages(_stor())
             await _stor().set_content_setting(
-                pid, "stories_cycle_stage", normalize_stage(str(payload.get("stage") or ""))
+                pid,
+                "stories_cycle_stage",
+                normalize_stage(str(payload.get("stage") or ""), stages),
             )
         return {"ok": True}
 

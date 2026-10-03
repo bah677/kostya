@@ -378,7 +378,7 @@ class TelegramBotApp:
             raise
 
     async def _set_studio_menu_button(self) -> None:
-        """Кнопка «Студия» рядом с полем ввода — только у админов."""
+        """Кнопка «Контент завод» рядом с полем ввода — только у админов."""
         from aiogram.types import MenuButtonWebApp, WebAppInfo
 
         from config import config
@@ -404,13 +404,13 @@ class TelegramBotApp:
                 await self.bot.set_chat_menu_button(
                     chat_id=uid,
                     menu_button=MenuButtonWebApp(
-                        text="Студия", web_app=WebAppInfo(url=url)
+                        text="Контент завод", web_app=WebAppInfo(url=url)
                     ),
                 )
             except Exception as e:
                 logger.info("studio menu button для %s не поставлена: %s", uid, e)
         if ids:
-            logger.info("Кнопка студии поставлена админам: %s", len(ids))
+            logger.info("Кнопка «Контент завод» поставлена админам: %s", len(ids))
 
     async def start(self) -> None:
         logger.info("🚀 Запуск бота...")

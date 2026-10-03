@@ -119,7 +119,7 @@ def distill_user_block(
 WEB_CHAT_ROLE = (
     WRITER_ROLE
     + """
-Ты работаешь в студии эксперта: слева он выбирает объекты (уроки, записи, паспорта, живой чат),
+Ты работаешь в Контент заводе: слева эксперт выбирает объекты (записи, эфиры, паспорта),
 справа — формат, этап прогрева и фокус, посередине — этот диалог.
 
 Как отвечать:
@@ -147,12 +147,13 @@ def context_block(
     lesson_passports: str,
     raw_full: str,
     golden: str = "",
+    stages: list | None = None,
     stage_texts: dict | None = None,
 ) -> str:
     parts: list[str] = ["# Контекст задачи"]
     if (focus or "").strip():
         parts.append(f"## Фокус\n{focus.strip()}")
-    parts.append(f"## Этап\n{stage_prompt(stage_id, stage_texts)}")
+    parts.append(f"## Этап\n{stage_prompt(stage_id, stages=stages, texts=stage_texts)}")
     if objects_summary:
         parts.append(f"## Выбранные объекты\n{objects_summary}")
     if (notes or "").strip():

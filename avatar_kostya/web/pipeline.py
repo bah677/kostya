@@ -25,18 +25,14 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 from uuid import UUID
 
-from course.formats import format_prompt_block, get_format
+from course.formats import get_format
 from course.llm import CourseLLM, is_deepseek_model
 from course.passports import load_passport
 from course.paths import source_dir
 from course.products import EXPERT_PRODUCT_ID, active_product_id
 from course.speech import segments_from_dicts
-from course.stories_cycle import (
-    load_stage_texts,
-    normalize_stage,
-    stage_title,
-    writer_stories_rules,
-)
+from course.format_skills import load_format_skill
+from course.stories_cycle import load_stages, normalize_stage, stage_title
 from openai_client.content_prompts import writer_static_prefix
 from rag.scope import scope_from_stack
 from web.objects import (
@@ -165,7 +161,7 @@ async def plan_retrieval(
     focus: str,
     history_tail: Sequence[str],
     user_id: int,
-    stage_texts: Optional[Dict[str, Dict[str, str]]] = None,
+    stages: Optional[List[Dict[str, str]]] = None,
 ) -> Tuple[List[Search], str, str, bool, str]:
     """→ (searches, distill_focus, notes, is_revision, model)"""
     from config import config
@@ -175,7 +171,7 @@ async def plan_retrieval(
         request=user_text,
         objects=object_names,
         format_title=format_title,
-        stage_title=stage_title(stage_id, stage_texts),
+        stage_title=stage_title(stage_id, stages),
         focus=focus,
         history_tail=history_tail,
     )
@@ -605,11 +601,11 @@ async def run_turn(
     product_id = str(chat.get("product_id") or active_product_id())
     ctx = chat.get("context") or {}
     refs = parse_object_ids(ctx.get("objects") or [])
-    stage_id = normalize_stage(str(chat.get("stage") or ""))
+    stages = await load_stages(stor)
+    stage_id = normalize_stage(str(chat.get("stage") or ""), stages)
     focus = str(chat.get("focus") or "")
     fmt = get_format(str(chat.get("format") or "")) or get_format("stories")
     names = object_names or {}
-    stage_texts = await load_stage_texts(stor)
     trace: Dict[str, Any] = {"stages": [], "objects": [], "rag": {}, "mode": "none"}
 
     # Объекты Кости: тип (facet) и/или конкретные записи (mat)
@@ -662,7 +658,7 @@ async def run_turn(
         focus=focus,
         history_tail=history_tail,
         user_id=user_id,
-        stage_texts=stage_texts,
+        stages=stages,
     )
     trace["stages"].append(
         {
@@ -861,9 +857,7 @@ async def run_turn(
     if launch_text:
         product_blob = (product_blob + "\n\n## Запуск\n" + launch_text).strip()
 
-    format_block = format_prompt_block(fmt)
-    if fmt.id == "stories":
-        format_block += "\n" + writer_stories_rules(stage_id, stage_texts)
+    format_block = await load_format_skill(stor, fmt.id)
 
     static_prefix = WEB_CHAT_ROLE + "\n\n" + writer_static_prefix(
         expert_info=(expert_p.get("text") or "")[:info_max],
@@ -882,7 +876,7 @@ async def run_turn(
         lesson_passports=lesson_passports,
         raw_full=parts.get("raw_full") or "",
         golden=parts.get("golden") or "",
-        stage_texts=stage_texts,
+        stages=stages,
     )
 
     messages: List[Dict[str, str]] = [
