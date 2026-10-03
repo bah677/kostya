@@ -141,6 +141,29 @@ def product_display_name(product_id: str) -> str:
     return p.name if p else product_id
 
 
+def product_chroma_names(product_id: str) -> List[str]:
+    """Имена ``product`` в Chroma для фильтра студии / RagScope.
+
+    У Кости в метаданных человекочитаемые строки («Клуб», «Клуб Разговоры с Богом»),
+    не внутренний id. Берём name + aliases + id.
+    """
+    pid = (product_id or "").strip()
+    if not pid or pid == EXPERT_PRODUCT_ID:
+        return [pid] if pid else []
+    p = get_registry().by_id(pid)
+    if p is None:
+        return [pid]
+    out: List[str] = []
+    seen: set[str] = set()
+    for raw in (p.name, p.id, *p.aliases):
+        name = str(raw or "").strip()
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        out.append(name)
+    return out
+
+
 def folder_to_product_id(folder_name: str) -> Optional[str]:
     name = (folder_name or "").strip().rstrip("/")
     if name.casefold().startswith("00") and "эксперт" in name.casefold():

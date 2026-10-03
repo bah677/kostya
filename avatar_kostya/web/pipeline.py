@@ -34,7 +34,14 @@ from course.speech import segments_from_dicts
 from course.stories_cycle import normalize_stage, stage_title, writer_stories_rules
 from openai_client.content_prompts import writer_static_prefix
 from rag.scope import scope_from_stack
-from web.objects import LIVE_FILTERS, LIVE_NAMES, ObjectRef, parse_object_ids, source_label
+from web.objects import (
+    FACET_FILTERS,
+    FACET_NAMES,
+    ObjectRef,
+    facet_search_filter,
+    parse_object_ids,
+    source_label,
+)
 from web.prompts import (
     DISTILL_SYSTEM,
     RETRIEVAL_PLANNER_SYSTEM,
@@ -45,8 +52,6 @@ from web.prompts import (
 )
 
 logger = logging.getLogger(__name__)
-
-_LIVE_KIND_NAMES = LIVE_NAMES
 
 
 @dataclass
@@ -597,26 +602,35 @@ async def run_turn(
     names = object_names or {}
     trace: Dict[str, Any] = {"stages": [], "objects": [], "rag": {}, "mode": "none"}
 
-    # Объекты: источники, уроки, паспорта, живой чат
+    # Объекты Кости: фасеты RAG (эфир/молитва/…) + опционально старые course source/lesson
+    facet_keys: List[str] = []
+    for r in refs:
+        fk = r.as_facet_key()
+        if fk and fk not in facet_keys:
+            facet_keys.append(fk)
     source_ids = [r.value for r in refs if r.kind == "source"]
     lesson_keys = [r.value for r in refs if r.kind == "lesson"]
-    live_keys = [r.value for r in refs if r.kind == "live"]
     sources: Dict[str, Dict[str, Any]] = {}
     labels: Dict[str, str] = {}
     skipped: List[str] = []
     for sid in source_ids:
-        src = await stor.get_course_source(UUID(sid))
+        try:
+            src = await stor.get_course_source(UUID(sid))
+        except Exception:
+            src = None
         if not src:
             continue
         if str(src.get("status") or "") != "done":
-            # Источник удалён или не обработался — брать из него нечего.
             skipped.append(f"{source_label(src)} ({src.get('status')})")
             continue
         sources[sid] = src
         labels[sid] = names.get(f"source:{sid}") or source_label(src)
     lesson_rows = []
     for key in lesson_keys:
-        les = await stor.get_course_lesson(product_id=product_id, lesson_key=key)
+        try:
+            les = await stor.get_course_lesson(product_id=product_id, lesson_key=key)
+        except Exception:
+            les = None
         if les:
             lesson_rows.append(les)
             for src in await stor.list_course_sources_for_lesson(int(les["id"])):
@@ -624,12 +638,17 @@ async def run_turn(
                 if sid not in sources and str(src.get("status")) == "done":
                     sources[sid] = src
                     labels[sid] = source_label(src)
-    objects_summary_lines = [f"- {labels[sid]}" for sid in sources]
-    objects_summary_lines += [f"- Урок {r['lesson_key']}. {r.get('title') or ''}" for r in lesson_rows]
-    objects_summary_lines += [f"- Живой чат: {_LIVE_KIND_NAMES.get(k, k)}" for k in live_keys]
+    objects_summary_lines = [
+        f"- {FACET_NAMES.get(k, k)}" for k in facet_keys
+    ]
+    objects_summary_lines += [f"- {labels[sid]}" for sid in sources]
+    objects_summary_lines += [
+        f"- Урок {r['lesson_key']}. {r.get('title') or ''}" for r in lesson_rows
+    ]
     trace["objects"] = [line[2:] for line in objects_summary_lines]
     if skipped:
         trace["skipped"] = skipped
+    facet_where = facet_search_filter(facet_keys)
 
     llm = CourseLLM(stor)
     history_tail = [str(m.get("text") or "") for m in history[-4:]]
@@ -730,16 +749,20 @@ async def run_turn(
     if gw is not None:
         chunk_hits: List[Dict[str, Any]] = []
         max_chunks = int(getattr(config, "WEB_RAG_MAX_CHUNKS", 14) or 14)
-        # Выбранные срезы живого чата ищем всегда: эксперт отметил их сам.
-        for key in live_keys:
-            flt = dict(LIVE_FILTERS.get(key) or {})
-            kinds = [flt.pop("source_kind")] if "source_kind" in flt else None
+        # Выбранные фасеты: отдельный поиск по каждому + общий план с тем же where.
+        for key in facet_keys:
+            flt = dict(FACET_FILTERS.get(key) or {})
             try:
                 chunk_hits.extend(
-                    gw.search_chunks(user_text, k=8, kinds=kinds, **flt)
+                    gw.search_chunks(
+                        user_text,
+                        k=8,
+                        content_types=flt.get("content_types"),
+                        content_categories=flt.get("content_categories"),
+                    )
                 )
             except Exception as e:
-                logger.warning("web live search %s: %s", key, e)
+                logger.warning("web facet search %s: %s", key, e)
         for s in searches:
             try:
                 if s.collection == "cards":
@@ -756,6 +779,7 @@ async def run_turn(
                         k=s.k,
                         lesson_key=s.lesson_key or None,
                         kinds=s.source_kind or None,
+                        extra_where=facet_where,
                     )
                     chunk_hits.extend(hits)
             except Exception as e:

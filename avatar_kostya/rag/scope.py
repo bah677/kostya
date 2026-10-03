@@ -32,9 +32,25 @@ class ProductScope:
             ids.append(EXPERT_ID)
         return ids
 
+    def chroma_product_names(self) -> List[str]:
+        """Значения метаданных ``product`` в Chroma Кости (человекочитаемые)."""
+        from course.products import product_chroma_names
+
+        names = list(product_chroma_names(self.product_id))
+        if self.include_expert and EXPERT_ID not in names:
+            # на всякий случай, если когда-то появятся чанки _expert
+            names.append(EXPERT_ID)
+        return names
+
     def where(self, extra: dict | None = None) -> dict:
-        """{"product_id": {"$in": [...]}} + {"legacy": {"$ne": True}} + extra, через $and."""
-        clauses: List[dict] = [{"product_id": {"$in": self.product_ids()}}]
+        """Фильтр продукта + extra через $and.
+
+        У Кости в индексе поле ``product`` (не ``product_id`` как у курса Юлии).
+        """
+        names = self.chroma_product_names()
+        if not names:
+            raise ScopeRequiredError("ProductScope: пустой список product для Chroma")
+        clauses: List[dict] = [{"product": {"$in": names}}]
         if not self.include_legacy:
             clauses.append({"legacy": {"$ne": True}})
         if extra:
@@ -47,7 +63,7 @@ class ProductScope:
 def _has_product_filter(where: Optional[dict]) -> bool:
     if not isinstance(where, dict) or not where:
         return False
-    if "product_id" in where:
+    if "product_id" in where or "product" in where:
         return True
     inner = where.get("$and") or where.get("$or") or []
     if isinstance(inner, list):
@@ -72,14 +88,14 @@ class RagScope:
         k: int,
         extra: Optional[dict] = None,
     ) -> Dict[str, Any]:
-        from rag.truncate import truncate_for_embedding
+        from rag.embeddings import truncate_for_embedding
 
         q = truncate_for_embedding((query or "").strip())
         if not q:
             return {}
         where = self.scope.where(extra)
         if not _has_product_filter(where):
-            raise ScopeRequiredError("фильтр product_id обязателен")
+            raise ScopeRequiredError("фильтр product / product_id обязателен")
         try:
             return collection.query(
                 query_texts=[q],
@@ -99,8 +115,11 @@ class RagScope:
         kinds: Optional[Sequence[str]] = None,
         source_ids: Optional[Sequence[str]] = None,
         content_category: Optional[str] = None,
+        content_types: Optional[Sequence[str]] = None,
+        content_categories: Optional[Sequence[str]] = None,
         origin: Optional[str] = None,
         role: Optional[str] = None,
+        extra_where: Optional[dict] = None,
     ) -> List[Dict[str, Any]]:
         extra: Dict[str, Any] | None = None
         clauses: List[dict] = []
@@ -116,10 +135,27 @@ class RagScope:
                 clauses.append({"source_id": {"$in": sids}})
         if content_category:
             clauses.append({"content_category": str(content_category)})
+        types = [str(x) for x in (content_types or []) if str(x).strip()]
+        cats = [str(x) for x in (content_categories or []) if str(x).strip()]
+        if types and cats:
+            clauses.append(
+                {
+                    "$or": [
+                        {"content_type": {"$in": types}},
+                        {"content_category": {"$in": cats}},
+                    ]
+                }
+            )
+        elif types:
+            clauses.append({"content_type": {"$in": types}})
+        elif cats:
+            clauses.append({"content_category": {"$in": cats}})
         if origin:
             clauses.append({"origin": str(origin)})
         if role:
             clauses.append({"role": str(role)})
+        if extra_where:
+            clauses.append(extra_where)
         if len(clauses) == 1:
             extra = clauses[0]
         elif len(clauses) > 1:
