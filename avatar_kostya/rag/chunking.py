@@ -54,3 +54,21 @@ def chunk_text_by_tokens(
         start += step
 
     return chunks
+
+
+def shingles(text: str, n: int = 8) -> set[str]:
+    """Слово-шинглы для грубой дедупликации текстов."""
+    words = (text or "").casefold().split()
+    if len(words) < n:
+        return {" ".join(words)} if words else set()
+    return {" ".join(words[i : i + n]) for i in range(len(words) - n + 1)}
+
+
+def jaccard_shingles(a: str, b: str, n: int = 8) -> float:
+    """Jaccard по шинглам; 0…1. Нужен веб-студии (RagScope.format_chunks_for_prompt)."""
+    sa, sb = shingles(a, n), shingles(b, n)
+    if not sa or not sb:
+        return 0.0
+    inter = len(sa & sb)
+    union = len(sa | sb)
+    return inter / union if union else 0.0

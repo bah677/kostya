@@ -570,3 +570,35 @@ textarea.field { resize: vertical; line-height: 1.5; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+
+/* Исходник записи */
+.source-dialog {
+  border: 0; padding: 0; max-width: min(720px, 96vw); width: 100%;
+  background: transparent; color: var(--text);
+}
+.source-dialog::backdrop { background: rgba(0,0,0,.55); }
+.source-sheet {
+  display: grid; gap: 12px; background: var(--surface); border: 1px solid var(--rule);
+  border-radius: 16px; padding: 16px 16px 12px; max-height: min(84vh, 900px);
+  grid-template-rows: auto auto 1fr auto;
+}
+.source-head { display: flex; justify-content: space-between; gap: 12px; align-items: start; }
+.source-head h2 { margin: 2px 0 4px; font-size: 1.15rem; line-height: 1.25; }
+.source-links { display: flex; flex-wrap: wrap; gap: 8px; }
+.source-links a {
+  color: var(--accent-text); text-decoration: none; font-size: .85rem;
+  border: 1px solid var(--rule); border-radius: 999px; padding: 4px 10px;
+}
+.source-body {
+  margin: 0; overflow: auto; white-space: pre-wrap; word-break: break-word;
+  background: var(--bg); border: 1px solid var(--rule); border-radius: 12px;
+  padding: 12px; font: 0.88rem/1.45 ui-sans-serif, system-ui, sans-serif;
+  min-height: 180px;
+}
+.source-foot { display: flex; justify-content: flex-end; gap: 8px; }
+.node .src {
+  opacity: 0; border: 0; background: none; color: var(--muted); cursor: pointer;
+  font-size: .78rem; padding: 2px 6px; border-radius: 6px;
+}
+.node:hover .src, .node.picked .src { opacity: 1; }
+.node .src:hover { color: var(--accent-text); background: var(--rule); }

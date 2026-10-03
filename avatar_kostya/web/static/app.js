@@ -1021,7 +1021,9 @@ function renderTree() {
       el(
         "div",
         "tree-empty",
-        searching ? "Ничего не нашлось" : "Материалов пока нет — загрузите их на Диск и нажмите синхронизацию"
+        searching
+          ? "Ничего не нашлось"
+          : "Материалов пока нет — дождитесь индексации эфиров/молитв в RAG"
       )
     );
   }
@@ -1034,7 +1036,7 @@ function appendWithChildren(box, item, sel, level, searching, match) {
   if (!children.length) return;
   const key = `c:${item.id}`;
   const open = isOpen(key, false) || searching;
-  const label = item.kind === "lesson" ? "материалы" : "части";
+  const label = item.kind === "facet" ? "записи" : item.kind === "lesson" ? "материалы" : "части";
   const toggle = el("button", `fold level-${level + 1} sub` + (open ? " open" : ""));
   toggle.type = "button";
   toggle.setAttribute("aria-expanded", String(open));
@@ -1079,10 +1081,79 @@ function nodeRow(item, sel, level) {
     e.preventDefault();
     insertName(item.name);
   });
+  let srcBtn = null;
+  if (item.kind === "mat" || item.has_source) {
+    srcBtn = el("button", "src", item.has_telemost ? "🎙" : "📄");
+    srcBtn.type = "button";
+    srcBtn.title = item.has_telemost
+      ? "Открыть исходник (транскрипт телемоста / RAG)"
+      : "Открыть исходный текст из RAG";
+    srcBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      openSource(item.id, item.name);
+    });
+  }
   const status = el("span", `status ${item.status || "off"}`);
-  row.append(cb, label, at, status);
+  row.append(cb, label);
+  if (srcBtn) row.append(srcBtn);
+  row.append(at, status);
   return row;
 }
+
+let sourceCurrentId = "";
+
+async function openSource(id, fallbackName) {
+  const dlg = $("#source-dialog");
+  if (!dlg) return;
+  sourceCurrentId = id;
+  $("#source-title").textContent = fallbackName || "Исходник";
+  $("#source-facet").textContent = "Загрузка…";
+  $("#source-meta").textContent = "";
+  $("#source-links").textContent = "";
+  $("#source-body").textContent = "Загрузка исходника…";
+  if (typeof dlg.showModal === "function") dlg.showModal();
+  else dlg.setAttribute("open", "");
+  try {
+    const path = id.startsWith("mat:") ? id.slice(4) : id;
+    const data = await api(`/api/materials/${encodeURIComponent(path).replace(/%3A/g, ":")}`);
+    $("#source-title").textContent = data.name || fallbackName || id;
+    $("#source-facet").textContent = data.facet_name || data.facet || "";
+    const bits = [];
+    if (data.origin) bits.push(`источник: ${data.origin}`);
+    if (data.chunks) bits.push(`${data.chunks} фрагм. в RAG`);
+    if (data.chars) bits.push(`${data.chars} символов`);
+    if (data.meeting_id) bits.push(`телемост ${data.meeting_id}`);
+    $("#source-meta").textContent = bits.join(" · ");
+    const links = $("#source-links");
+    links.textContent = "";
+    if (data.private_link) {
+      const a = el("a", null, data.has_telemost ? "Ссылка на телемост" : "Исходная ссылка");
+      a.href = data.private_link;
+      a.target = "_blank";
+      a.rel = "noopener";
+      links.append(a);
+    }
+    if (data.group_link) {
+      const a = el("a", null, "Сообщение в группе");
+      a.href = data.group_link;
+      a.target = "_blank";
+      a.rel = "noopener";
+      links.append(a);
+    }
+    $("#source-body").textContent = data.text || data.preview || "Текст исходника пуст";
+  } catch (err) {
+    $("#source-facet").textContent = "Ошибка";
+    $("#source-body").textContent = err.message || String(err);
+  }
+}
+
+$("#source-use")?.addEventListener("click", async () => {
+  if (!sourceCurrentId) return;
+  await toggleObject(sourceCurrentId, true);
+  const dlg = $("#source-dialog");
+  if (dlg?.open) dlg.close();
+  toast("Запись добавлена в контекст");
+});
 
 function insertName(name) {
   const input = $("#input");
@@ -1309,18 +1380,29 @@ function renderIndexStats() {
     box.append(el("div", "q-empty", "В индексе пока нет материалов для клуба"));
     return;
   }
-  let total = 0;
+  let totalChunks = 0;
+  let totalRecords = 0;
   items.forEach((it) => {
+    const kids = (it.children || []).length;
+    totalRecords += kids;
     const m = String(it.meta || "");
     const n = parseInt((m.match(/(\d+)\s*фрагмент/) || [])[1] || "0", 10);
-    total += n;
+    totalChunks += n;
     const row = el("div", "q-item");
     row.append(el("b", null, it.name || it.id));
-    row.append(el("span", "muted small", m));
+    row.append(
+      el(
+        "span",
+        "muted small",
+        kids ? `${kids} записей · ${n || "?"} фрагм.` : m
+      )
+    );
     box.append(row);
   });
   const foot = el("div", "q-empty");
-  foot.append(document.createTextNode(`Всего ≈ ${total} фрагментов в выбранных типах`));
+  foot.append(
+    document.createTextNode(`Итого ${totalRecords} записей · ≈ ${totalChunks} фрагментов`)
+  );
   box.append(foot);
 }
 

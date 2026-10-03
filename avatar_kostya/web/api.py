@@ -30,7 +30,14 @@ from web.auth import (
     session_user_id,
     verify_code,
 )
-from web.objects import build_tree, object_names, parse_object_id, parse_object_ids, source_label
+from web.objects import (
+    build_tree,
+    load_material_raw,
+    object_names,
+    parse_object_id,
+    parse_object_ids,
+    source_label,
+)
 from web.pipeline import raw_text_for_source, run_turn
 
 logger = logging.getLogger(__name__)
@@ -227,8 +234,27 @@ def create_app(bot_app) -> FastAPI:
     async def tree(uid: int = Depends(auth)):
         return await build_tree(bot_app)
 
+    @app.get("/api/materials/{mat_id:path}")
+    async def material_details(mat_id: str, uid: int = Depends(auth)):
+        """Исходник конкретной записи Кости (RAG + transcript телемоста)."""
+        if not mat_id.startswith("mat:"):
+            mat_id = f"mat:{mat_id}"
+        data = await load_material_raw(bot_app, mat_id)
+        if not data.get("found"):
+            raise HTTPException(status_code=404, detail="материал не найден — обновите дерево")
+        return data
+
     @app.get("/api/sources/{source_id}")
     async def source_details(source_id: str, uid: int = Depends(auth)):
+        # Совместимость: если пришёл mat:… — отдаём исходник Кости.
+        if source_id.startswith("mat:") or source_id.count(":") >= 1 and source_id.split(":", 1)[0] in {
+            "efir", "molitva", "pokayanie", "qa", "podcast", "meeting", "product", "stories", "testimonial",
+        }:
+            mid = source_id if source_id.startswith("mat:") else f"mat:{source_id}"
+            data = await load_material_raw(bot_app, mid)
+            if not data.get("found"):
+                raise HTTPException(status_code=404, detail="материал не найден")
+            return data
         try:
             sid = UUID(source_id)
         except ValueError:

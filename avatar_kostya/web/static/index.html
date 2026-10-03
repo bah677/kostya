@@ -18,7 +18,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
-  <link rel="stylesheet" href="/static/style.css?v=9">
+  <link rel="stylesheet" href="/static/style.css?v=11">
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
 </head>
 <body>
@@ -162,6 +162,25 @@
 
 <div id="toasts" class="toasts" aria-live="assertive"></div>
 
-<script src="/static/app.js?v=10"></script>
+<dialog id="source-dialog" class="source-dialog">
+  <form method="dialog" class="source-sheet">
+    <header class="source-head">
+      <div>
+        <p class="muted small" id="source-facet">—</p>
+        <h2 id="source-title">Исходник</h2>
+        <p class="muted small" id="source-meta"></p>
+      </div>
+      <button type="submit" class="icon-btn" aria-label="Закрыть" data-icon="x">×</button>
+    </header>
+    <div class="source-links" id="source-links"></div>
+    <pre class="source-body" id="source-body">Загрузка…</pre>
+    <footer class="source-foot">
+      <button type="button" class="btn" id="source-use">Выбрать в контексте</button>
+      <button type="submit" class="btn primary">Закрыть</button>
+    </footer>
+  </form>
+</dialog>
+
+<script src="/static/app.js?v=11"></script>
 </body>
 </html>

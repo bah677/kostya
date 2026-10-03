@@ -39,6 +39,9 @@ from web.objects import (
     FACET_NAMES,
     ObjectRef,
     facet_search_filter,
+    get_material,
+    load_material_raw,
+    material_search_filter,
     parse_object_ids,
     source_label,
 )
@@ -602,53 +605,39 @@ async def run_turn(
     names = object_names or {}
     trace: Dict[str, Any] = {"stages": [], "objects": [], "rag": {}, "mode": "none"}
 
-    # Объекты Кости: фасеты RAG (эфир/молитва/…) + опционально старые course source/lesson
+    # Объекты Кости: тип (facet) и/или конкретные записи (mat)
     facet_keys: List[str] = []
+    mat_ids: List[str] = []
     for r in refs:
         fk = r.as_facet_key()
         if fk and fk not in facet_keys:
             facet_keys.append(fk)
-    source_ids = [r.value for r in refs if r.kind == "source"]
-    lesson_keys = [r.value for r in refs if r.kind == "lesson"]
-    sources: Dict[str, Dict[str, Any]] = {}
+        mid = r.as_material_id()
+        if mid and mid not in mat_ids:
+            mat_ids.append(mid)
+
+    from web.objects import ensure_materials
+
+    ensure_materials(app)
+    materials = [m for mid in mat_ids if (m := get_material(mid)) is not None]
+
     labels: Dict[str, str] = {}
-    skipped: List[str] = []
-    for sid in source_ids:
-        try:
-            src = await stor.get_course_source(UUID(sid))
-        except Exception:
-            src = None
-        if not src:
-            continue
-        if str(src.get("status") or "") != "done":
-            skipped.append(f"{source_label(src)} ({src.get('status')})")
-            continue
-        sources[sid] = src
-        labels[sid] = names.get(f"source:{sid}") or source_label(src)
-    lesson_rows = []
-    for key in lesson_keys:
-        try:
-            les = await stor.get_course_lesson(product_id=product_id, lesson_key=key)
-        except Exception:
-            les = None
-        if les:
-            lesson_rows.append(les)
-            for src in await stor.list_course_sources_for_lesson(int(les["id"])):
-                sid = str(src["id"])
-                if sid not in sources and str(src.get("status")) == "done":
-                    sources[sid] = src
-                    labels[sid] = source_label(src)
-    objects_summary_lines = [
-        f"- {FACET_NAMES.get(k, k)}" for k in facet_keys
-    ]
-    objects_summary_lines += [f"- {labels[sid]}" for sid in sources]
+    for m in materials:
+        labels[m.id] = names.get(m.id) or m.display_name
+
+    objects_summary_lines = [f"- {FACET_NAMES.get(k, k)} (весь тип)" for k in facet_keys]
     objects_summary_lines += [
-        f"- Урок {r['lesson_key']}. {r.get('title') or ''}" for r in lesson_rows
+        f"- {labels[m.id]} [{FACET_NAMES.get(m.facet, m.facet)}]" for m in materials
     ]
     trace["objects"] = [line[2:] for line in objects_summary_lines]
-    if skipped:
-        trace["skipped"] = skipped
     facet_where = facet_search_filter(facet_keys)
+    mat_where = material_search_filter(materials)
+    # если выбраны и типы, и записи — OR
+    scope_extra = None
+    if facet_where and mat_where:
+        scope_extra = {"$or": [facet_where, mat_where]}
+    else:
+        scope_extra = facet_where or mat_where
 
     llm = CourseLLM(stor)
     history_tail = [str(m.get("text") or "") for m in history[-4:]]
@@ -679,12 +668,15 @@ async def run_turn(
         }
     )
 
-    # ── Стадия 2а: сырьё выбранных объектов
+    # ── Стадия 2а: сырьё выбранных конкретных записей (исходник телемоста / RAG)
     raws: Dict[str, str] = {}
-    for sid in sources:
-        text = raw_text_for_source(sid)
+    for m in materials:
+        payload = await load_material_raw(app, m.id)
+        text = str(payload.get("text") or "").strip()
         if text:
-            raws[sid] = text
+            raws[m.id] = text
+            if payload.get("origin"):
+                labels[m.id] = f"{labels.get(m.id, m.display_name)} · {payload['origin']}"
     raw_total = sum(len(v) for v in raws.values())
     inline_limit = int(getattr(config, "WEB_RAW_INLINE_CHARS", 45_000) or 45_000)
     raw_full = ""
@@ -749,7 +741,7 @@ async def run_turn(
     if gw is not None:
         chunk_hits: List[Dict[str, Any]] = []
         max_chunks = int(getattr(config, "WEB_RAG_MAX_CHUNKS", 14) or 14)
-        # Выбранные фасеты: отдельный поиск по каждому + общий план с тем же where.
+        # Выбранные типы / записи: точечный поиск + общий план в том же scope.
         for key in facet_keys:
             flt = dict(FACET_FILTERS.get(key) or {})
             try:
@@ -763,6 +755,18 @@ async def run_turn(
                 )
             except Exception as e:
                 logger.warning("web facet search %s: %s", key, e)
+        for m in materials:
+            try:
+                chunk_hits.extend(
+                    gw.search_chunks(
+                        user_text,
+                        k=6,
+                        content_types=list(m.content_types) or None,
+                        extra_where={"source": m.source},
+                    )
+                )
+            except Exception as e:
+                logger.warning("web mat search %s: %s", m.id, e)
         for s in searches:
             try:
                 if s.collection == "cards":
@@ -779,7 +783,7 @@ async def run_turn(
                         k=s.k,
                         lesson_key=s.lesson_key or None,
                         kinds=s.source_kind or None,
-                        extra_where=facet_where,
+                        extra_where=scope_extra,
                     )
                     chunk_hits.extend(hits)
             except Exception as e:
@@ -817,13 +821,13 @@ async def run_turn(
             "golden": len(golden_hits),
         }
 
-    # ── Материал из БД: паспорта уроков и карточки
-    lesson_passports = await _lesson_passports(stor, product_id, lesson_keys)
+    # Карточки курса Юлии у Кости обычно пустые — оставляем хук на будущее.
+    lesson_passports = ""
     cards_db = await _cards_block(
         stor,
         product_id=product_id,
-        source_ids=list(sources.keys()),
-        lesson_ids=[int(r["id"]) for r in lesson_rows],
+        source_ids=[],
+        lesson_ids=[],
     )
     cards_text = "\n".join([x for x in [cards_db, "\n".join(cards_from_rag)] if x.strip()])
 
