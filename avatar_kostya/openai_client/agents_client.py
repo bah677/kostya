@@ -217,6 +217,7 @@ class AgentsClient:
         temperature: float = 0.7,
         max_tokens: int = 2048,
         log_event_type: str = "deepseek_task_messages",
+        model: Optional[str] = None,
     ) -> Optional[str]:
         """
         Запрос к DeepSeek с готовым списком messages (системный промпт + история + пользователь).
@@ -225,16 +226,18 @@ class AgentsClient:
         seq = [dict(m) for m in messages]
         if not seq:
             return None
+        model_id = (model or self.CHAT_MODEL).strip() or self.CHAT_MODEL
         try:
             logger.info(
-                "📨 DeepSeek run_with_messages user=%s turns=%s max_tokens=%s",
+                "📨 DeepSeek run_with_messages user=%s model=%s turns=%s max_tokens=%s",
                 user_id,
+                model_id,
                 len(seq),
                 max_tokens,
             )
             response = await asyncio.wait_for(
                 self.client.chat.completions.create(
-                    model=self.CHAT_MODEL,
+                    model=model_id,
                     messages=seq,
                     temperature=temperature,
                     max_tokens=max_tokens,
@@ -250,7 +253,7 @@ class AgentsClient:
             await self.user_storage.log_llm_completion_usage(
                 user_id=user_id,
                 provider="deepseek",
-                model=self.CHAT_MODEL,
+                model=model_id,
                 usage=usage,
                 request_kind=log_event_type,
                 request_id=request_id,
@@ -259,11 +262,11 @@ class AgentsClient:
             await self.user_storage.log_interaction(
                 user_id=user_id,
                 event_category="llm",
-                event_type=f"deepseek_{self.CHAT_MODEL}_{log_event_type}",
+                event_type=f"deepseek_{model_id}_{log_event_type}",
                 data={
                     "provider": "deepseek",
                     "request_id": request_id,
-                    "model": self.CHAT_MODEL,
+                    "model": model_id,
                     "prompt_tokens": pt,
                     "completion_tokens": ct,
                     "total_tokens": tt,
@@ -279,7 +282,7 @@ class AgentsClient:
                 user_id=user_id,
                 event_category="llm",
                 event_type="deepseek_timeout",
-                data={"model": self.CHAT_MODEL, "mode": "run_with_messages"},
+                data={"model": model_id, "mode": "run_with_messages"},
                 source="deepseek",
                 outcome="error",
             )
@@ -290,7 +293,7 @@ class AgentsClient:
                 user_id=user_id,
                 event_category="llm",
                 event_type="deepseek_api_error",
-                data={"model": self.CHAT_MODEL, "error": str(e), "mode": "run_with_messages"},
+                data={"model": model_id, "error": str(e), "mode": "run_with_messages"},
                 source="deepseek",
                 outcome="error",
             )

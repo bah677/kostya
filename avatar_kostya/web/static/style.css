@@ -654,6 +654,25 @@ textarea.field { resize: vertical; line-height: 1.5; }
 .field.skill {
   min-height: 280px; font-family: var(--mono); font-size: .82rem; line-height: 1.45;
 }
+.llm-summary { display: grid; gap: 6px; font-size: .8rem; line-height: 1.35; }
+.llm-summary .row {
+  display: flex; justify-content: space-between; gap: 8px;
+  padding: 6px 8px; border: 1px solid var(--rule); border-radius: 8px;
+  background: var(--surface-2); cursor: pointer; color: var(--ink);
+}
+.llm-summary .row:hover { border-color: var(--rule-strong); }
+.llm-summary .k { color: var(--muted); }
+.llm-summary .v { font-weight: 600; text-align: right; word-break: break-word; }
+.llm-step {
+  display: grid; gap: 10px; padding: 12px; border: 1px solid var(--rule);
+  border-radius: var(--radius-sm); background: var(--surface-2);
+}
+.llm-step h3 { margin: 0; font-size: .95rem; }
+.llm-step .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+@media (max-width: 560px) { .llm-step .grid2 { grid-template-columns: 1fr; } }
+.llm-step select.field, .llm-step input.field {
+  min-height: 38px; height: 38px; resize: none; padding: 6px 10px;
+}
 .seg .option { position: relative; }
 .format-edit {
   position: absolute; right: 8px; top: 8px; border: 0; background: transparent;

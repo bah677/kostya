@@ -88,6 +88,12 @@ ADMIN_CATALOG: Tuple[AdminEntry, ...] = (
         "notes",
     ),
     AdminEntry(
+        "/factory, /content_factory",
+        "Мини-апп Контент завод (только админы)",
+        "admin",
+        "notes",
+    ),
+    AdminEntry(
         "/rag_topics",
         "Список топиков RAG-группы",
         "admin",

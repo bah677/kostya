@@ -20,6 +20,7 @@ from bot.features.caption_editor_feature import CaptionEditorFeature
 from bot.features.support import SupportFeature
 from bot.features.voicebox_admin import VoiceboxAdminFeature
 from bot.features.admin_panel import AdminPanelFeature
+from bot.features.content_factory_feature import ContentFactoryFeature
 from bot.features.ledger import LedgerFeature
 from bot.features.youtube_prayer_feature import YoutubePrayerFeature
 from bot.features.reels_feature import ReelsFeature
@@ -76,6 +77,7 @@ class BotApplication(TelegramBotApp):
         rag_source_visibility = RagSourceVisibilityFeature()
         voicebox_admin = VoiceboxAdminFeature()
         admin_panel = AdminPanelFeature(user_storage=self.user_storage)
+        content_factory = ContentFactoryFeature(user_storage=self.user_storage)
         ledger = LedgerFeature(user_storage=self.user_storage)
         youtube_prayer = YoutubePrayerFeature()
         reels = ReelsFeature(user_storage=self.user_storage)
@@ -83,6 +85,7 @@ class BotApplication(TelegramBotApp):
 
         features = [
             admin_panel,
+            content_factory,
             ledger,
             rag_backfill,
             telemost_shorts,

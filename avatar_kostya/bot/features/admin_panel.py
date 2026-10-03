@@ -11,6 +11,7 @@ from aiogram.types import CallbackQuery, Message
 
 from bot.admin_guard import is_admin_or_super, is_super_admin_user_id
 from bot.features.base import BaseFeature
+from bot.features.content_factory_feature import prepend_factory_button
 from bot.services.admin_panel import (
     CB_HOME,
     CB_PREFIX,
@@ -52,7 +53,11 @@ class AdminPanelFeature(BaseFeature):
             return
         tier = await self._resolve_tier(message.from_user.id)
         text, kb = build_admin_panel_home(tier)
-        await message.answer(text, parse_mode=ParseMode.HTML, reply_markup=kb)
+        await message.answer(
+            text,
+            parse_mode=ParseMode.HTML,
+            reply_markup=prepend_factory_button(kb),
+        )
 
     async def _cb_panel(self, query: CallbackQuery) -> None:
         if query.from_user is None or query.message is None:
@@ -66,6 +71,7 @@ class AdminPanelFeature(BaseFeature):
         try:
             if data == CB_HOME:
                 text, kb = build_admin_panel_home(tier)
+                kb = prepend_factory_button(kb)
             else:
                 group_key = parse_admin_panel_group_cb(data)
                 if not group_key:

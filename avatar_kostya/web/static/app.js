@@ -15,6 +15,7 @@ const state = {
   passportKind: "",
   formatId: "",
   formatDefaultSkill: "",
+  llm: null,
 };
 
 const $ = (sel) => document.querySelector(sel);
@@ -329,6 +330,12 @@ async function boot() {
   renderFormats();
   renderStages();
   renderPassports();
+  try {
+    state.llm = await api("/api/llm-settings");
+  } catch (err) {
+    state.llm = null;
+  }
+  renderLlmSummary();
   renderTree();
   renderChats();
   if (state.chats.length) {
@@ -1588,6 +1595,214 @@ $("#format-cancel")?.addEventListener("click", closeFormatDialog);
 
 $("#format-reset")?.addEventListener("click", () => {
   if (state.formatDefaultSkill) $("#format-skill").value = state.formatDefaultSkill;
+});
+
+function renderLlmSummary() {
+  const box = $("#llm-summary");
+  if (!box) return;
+  box.textContent = "";
+  const steps = state.llm?.steps || [];
+  if (!steps.length) {
+    box.textContent = "Не загрузилось";
+    return;
+  }
+  steps.forEach((step) => {
+    const row = el("button", "row");
+    row.type = "button";
+    row.append(el("span", "k", step.title));
+    row.append(el("span", "v", `${step.provider} · ${step.model}`));
+    row.addEventListener("click", () => openLlmEditor());
+    box.append(row);
+  });
+}
+
+function _llmModelOptions(provider, selected, modelsMap) {
+  const list = (modelsMap && modelsMap[provider]) || [];
+  const ids = list.map((m) => m.id);
+  const opts = list.map((m) => ({ id: m.id, title: m.title || m.id }));
+  if (selected && !ids.includes(selected)) {
+    opts.unshift({ id: selected, title: `${selected} (своя)` });
+  }
+  opts.push({ id: "__custom__", title: "Своя модель…" });
+  return opts;
+}
+
+function _llmSourceLabel(source) {
+  const src = source || {};
+  const bit = (name, key) => {
+    const v = String(src[key] || "");
+    if (v === "api") return `${name}: API`;
+    if (v.startsWith("fallback")) return `${name}: запасной список`;
+    return `${name}: ${v || "—"}`;
+  };
+  return `${bit("OpenAI", "openai")} · ${bit("DeepSeek", "deepseek")}`;
+}
+
+async function _loadLlmEditor(refresh) {
+  const box = $("#llm-editor");
+  if (!box) return;
+  box.textContent = refresh ? "Обновляю список моделей…" : "Загрузка…";
+  try {
+    const data = await api(`/api/llm-settings${refresh ? "?refresh=1" : ""}`);
+    state.llm = data;
+    const meta = $("#llm-meta");
+    if (meta) {
+      meta.textContent = `Список моделей: ${_llmSourceLabel(data.models_source)}. Кэш ~10 мин.`;
+    }
+    box.textContent = "";
+    (data.steps || []).forEach((step) => {
+        const card = el("div", "llm-step");
+        card.dataset.id = step.id;
+        card.append(el("h3", null, step.title));
+        if (step.hint) card.append(el("div", "hint", step.hint));
+        const grid = el("div", "grid2");
+
+        const provWrap = el("div", "edit-field");
+        provWrap.append(el("label", null, "Провайдер"));
+        const prov = document.createElement("select");
+        prov.className = "field";
+        prov.dataset.field = "provider";
+        (data.providers || []).forEach((p) => {
+          const opt = document.createElement("option");
+          opt.value = p.id;
+          opt.textContent = p.title || p.id;
+          if (p.id === step.provider) opt.selected = true;
+          prov.append(opt);
+        });
+        provWrap.append(prov);
+        grid.append(provWrap);
+
+        const modelWrap = el("div", "edit-field");
+        modelWrap.append(el("label", null, "Модель"));
+        const modelSel = document.createElement("select");
+        modelSel.className = "field";
+        modelSel.dataset.field = "model_select";
+        const custom = document.createElement("input");
+        custom.type = "text";
+        custom.className = "field";
+        custom.dataset.field = "model_custom";
+        custom.placeholder = "id модели, например gpt-4.1";
+        custom.hidden = true;
+        const fillModels = (provider, selected) => {
+          modelSel.textContent = "";
+          _llmModelOptions(provider, selected, data.models).forEach((m) => {
+            const opt = document.createElement("option");
+            opt.value = m.id;
+            opt.textContent = m.title;
+            if (m.id === selected) opt.selected = true;
+            modelSel.append(opt);
+          });
+          const known = ((data.models || {})[provider] || []).some((m) => m.id === selected);
+          custom.hidden = Boolean(known || !selected);
+          if (!known && selected) custom.value = selected;
+          else if (known) custom.value = "";
+        };
+        fillModels(step.provider, step.model);
+        prov.addEventListener("change", () => {
+          const first = ((data.models || {})[prov.value] || [])[0];
+          fillModels(prov.value, first?.id || "");
+        });
+        modelSel.addEventListener("change", () => {
+          if (modelSel.value === "__custom__") {
+            custom.hidden = false;
+            custom.focus();
+          } else {
+            custom.hidden = true;
+            custom.value = "";
+          }
+        });
+        modelWrap.append(modelSel, custom);
+        grid.append(modelWrap);
+        card.append(grid);
+        const def = el(
+          "div",
+          "hint",
+          `Дефолт из .env: ${step.default_provider} · ${step.default_model}`
+        );
+        card.append(def);
+        box.append(card);
+      });
+  } catch (err) {
+    box.textContent = err.message || String(err);
+  }
+}
+
+function openLlmEditor() {
+  const dlg = $("#llm-dialog");
+  if (!dlg) return;
+  if (typeof dlg.showModal === "function") dlg.showModal();
+  else dlg.setAttribute("open", "");
+  _loadLlmEditor(false);
+}
+
+function closeLlmDialog() {
+  const dlg = $("#llm-dialog");
+  if (dlg?.open) dlg.close();
+}
+
+$("#btn-edit-llm")?.addEventListener("click", () => {
+  focusPane("pane-right", "#llm-summary");
+  openLlmEditor();
+});
+$("#llm-close")?.addEventListener("click", closeLlmDialog);
+$("#llm-cancel")?.addEventListener("click", closeLlmDialog);
+$("#llm-refresh")?.addEventListener("click", () => _loadLlmEditor(true));
+
+$("#llm-reset")?.addEventListener("click", () => {
+  const data = state.llm;
+  if (!data?.steps) return;
+  $("#llm-editor").querySelectorAll(".llm-step").forEach((card) => {
+    const step = data.steps.find((s) => s.id === card.dataset.id);
+    if (!step) return;
+    const prov = card.querySelector('[data-field="provider"]');
+    const modelSel = card.querySelector('[data-field="model_select"]');
+    const custom = card.querySelector('[data-field="model_custom"]');
+    if (prov) prov.value = step.default_provider;
+    if (modelSel) {
+      // пересобрать опции под дефолтный провайдер
+      modelSel.textContent = "";
+      _llmModelOptions(step.default_provider, step.default_model, data.models).forEach((m) => {
+        const opt = document.createElement("option");
+        opt.value = m.id;
+        opt.textContent = m.title;
+        if (m.id === step.default_model) opt.selected = true;
+        modelSel.append(opt);
+      });
+    }
+    if (custom) {
+      custom.value = "";
+      custom.hidden = true;
+    }
+  });
+});
+
+$("#llm-save")?.addEventListener("click", async (e) => {
+  e.preventDefault();
+  const steps = {};
+  $("#llm-editor").querySelectorAll(".llm-step").forEach((card) => {
+    const id = card.dataset.id;
+    if (!id) return;
+    const provider = card.querySelector('[data-field="provider"]')?.value || "openai";
+    const sel = card.querySelector('[data-field="model_select"]')?.value || "";
+    const custom = (card.querySelector('[data-field="model_custom"]')?.value || "").trim();
+    const model = sel === "__custom__" ? custom : sel;
+    if (model) steps[id] = { provider, model };
+  });
+  const btn = $("#llm-save");
+  btn.disabled = true;
+  try {
+    state.llm = await api("/api/llm-settings", {
+      method: "POST",
+      body: JSON.stringify({ steps }),
+    });
+    renderLlmSummary();
+    toast("Модели сохранены");
+    closeLlmDialog();
+  } catch (err) {
+    toast(`Не сохранилось: ${err.message}`, "bad");
+  } finally {
+    btn.disabled = false;
+  }
 });
 
 $("#format-save")?.addEventListener("click", async (e) => {

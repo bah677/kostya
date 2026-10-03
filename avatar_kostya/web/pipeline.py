@@ -33,6 +33,7 @@ from course.products import EXPERT_PRODUCT_ID, active_product_id
 from course.speech import segments_from_dicts
 from course.format_skills import load_format_skill
 from course.stories_cycle import load_stages, normalize_stage, stage_title
+from web.llm_settings import load_step_model
 from openai_client.content_prompts import writer_static_prefix
 from rag.scope import scope_from_stack
 from web.objects import (
@@ -162,11 +163,14 @@ async def plan_retrieval(
     history_tail: Sequence[str],
     user_id: int,
     stages: Optional[List[Dict[str, str]]] = None,
+    model: Optional[str] = None,
 ) -> Tuple[List[Search], str, str, bool, str]:
     """→ (searches, distill_focus, notes, is_revision, model)"""
     from config import config
 
-    model = str(getattr(config, "WEB_PLANNER_MODEL", "") or "gpt-4o-mini")
+    model = (model or "").strip() or str(
+        getattr(config, "WEB_PLANNER_MODEL", "") or "gpt-4o-mini"
+    )
     user_block = planner_user_block(
         request=user_text,
         objects=object_names,
@@ -328,6 +332,7 @@ async def distill_source(
     distill_focus: str,
     user_id: int,
     prefer_cached: bool = False,
+    model: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Дешёвая модель читает весь материал и отдаёт дословные выдержки под задачу.
 
@@ -336,7 +341,9 @@ async def distill_source(
     """
     from config import config
 
-    model = str(getattr(config, "WEB_DISTILL_MODEL", "") or "gpt-4o-mini")
+    model = (model or "").strip() or str(
+        getattr(config, "WEB_DISTILL_MODEL", "") or "gpt-4o-mini"
+    )
     key = _distill_key(task, distill_focus)
     cache = _distill_cache_path(source_id, key)
     if prefer_cached and not cache.is_file():
@@ -606,7 +613,20 @@ async def run_turn(
     focus = str(chat.get("focus") or "")
     fmt = get_format(str(chat.get("format") or "")) or get_format("stories")
     names = object_names or {}
-    trace: Dict[str, Any] = {"stages": [], "objects": [], "rag": {}, "mode": "none"}
+    plan_model = await load_step_model(stor, "plan")
+    distill_model = await load_step_model(stor, "distill")
+    writer_model = await load_step_model(stor, "write")
+    trace: Dict[str, Any] = {
+        "stages": [],
+        "objects": [],
+        "rag": {},
+        "mode": "none",
+        "llm": {
+            "plan": plan_model,
+            "distill": distill_model,
+            "write": writer_model,
+        },
+    }
 
     # Объекты Кости: тип (facet) и/или конкретные записи (mat)
     facet_keys: List[str] = []
@@ -659,6 +679,7 @@ async def run_turn(
         history_tail=history_tail,
         user_id=user_id,
         stages=stages,
+        model=plan_model,
     )
     trace["stages"].append(
         {
@@ -707,6 +728,7 @@ async def run_turn(
                     distill_focus=distill_focus,
                     user_id=user_id,
                     prefer_cached=is_revision,
+                    model=distill_model,
                 )
                 for sid in raws
             ]
@@ -899,11 +921,6 @@ async def run_turn(
     messages.extend(picked)
     messages.append({"role": "user", "content": user_text})
 
-    writer_model = str(
-        getattr(config, "WEB_WRITER_MODEL", "")
-        or getattr(config, "CONTENT_WRITER_MODEL", "")
-        or "deepseek-v4-flash"
-    )
     max_tokens = int(getattr(config, "CONTENT_WRITER_MAX_TOKENS", 16000) or 16000)
     messaging = app.feature_manager.get_optional("messaging")
     agents = getattr(messaging, "agents_client", None) if messaging else None
@@ -918,6 +935,7 @@ async def run_turn(
                 temperature=0.7,
                 max_tokens=max_tokens,
                 log_event_type="web_studio",
+                model=writer_model,
             )
             or ""
         )

@@ -287,7 +287,9 @@ def parse_init_data(init_data: str) -> Dict[str, Any]:
     except ValueError:
         auth_date = 0
     if not auth_date or time.time() - auth_date > INIT_DATA_MAX_AGE_SEC:
-        raise AuthError("Данные входа устарели, откройте студию заново", status=401)
+        raise AuthError(
+            "Данные входа устарели, откройте Контент завод заново", status=401
+        )
 
     user: Dict[str, Any] = {}
     if pairs.get("user"):
@@ -310,7 +312,9 @@ async def login_with_init_data(
     user_id = int(tg_user["id"])
 
     if not await is_admin_or_super(stor, user_id):
-        raise AuthError("Студия доступна только администраторам проекта", status=403)
+        raise AuthError(
+            "Контент завод доступен только администраторам проекта", status=403
+        )
 
     # Профиль из Telegram свежее того, что в базе.
     try:

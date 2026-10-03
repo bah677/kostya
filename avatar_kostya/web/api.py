@@ -28,6 +28,7 @@ from course.passports import (
     spec_for,
 )
 from course.stories_cycle import load_stages, normalize_stage, save_stages
+from web.llm_settings import list_llm_settings, save_llm_settings
 from web.auth import (
     AuthError,
     admin_list,
@@ -330,6 +331,25 @@ def create_app(bot_app) -> FastAPI:
                 for s in stages
             ]
         }
+
+    @app.get("/api/llm-settings")
+    async def get_llm_settings(request: Request, uid: int = Depends(auth)):
+        refresh = str(request.query_params.get("refresh") or "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+        }
+        return await list_llm_settings(_stor(), refresh_models=refresh)
+
+    @app.post("/api/llm-settings")
+    @app.put("/api/llm-settings")
+    async def put_llm_settings(
+        payload: Dict[str, Any] = Body(default={}), uid: int = Depends(auth)
+    ):
+        try:
+            return await save_llm_settings(_stor(), payload or {}, user_id=uid)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
 
     @app.get("/api/formats")
     async def get_formats(uid: int = Depends(auth)):

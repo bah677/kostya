@@ -82,6 +82,7 @@ _HELP_TEXT = (
     "<code>/affiliate</code> — реферальная ссылка\n"
     "<code>/code_id</code> — узнать file_id вложения (для настройки)\n\n"
     "<b>Для администраторов проекта</b>\n"
+    "<code>/factory</code>, <code>/content_factory</code> — мини-апп Контент завод\n"
     "<code>/admin_add</code> &lt;id&gt; — добавить админа бота\n"
     "<code>/admin_block</code> &lt;id&gt; — снять админа\n"
     "<code>/adm</code>, <code>/admin</code> — админ-панель по разделам\n"
