@@ -207,7 +207,9 @@ class AgentsClient:
                 "model": self.CHAT_MODEL,
                 "messages": messages,
                 "temperature": 0.7,
-                "max_tokens": 2048,
+                # V4: thinking+content делят бюджет. 2048 часто резало ответ
+                # на полуслове — пользователи писали «продолжи».
+                "max_tokens": 8192,
             }
             if thinking:
                 create_kwargs["extra_body"] = {"thinking": {"type": thinking}}
@@ -364,7 +366,7 @@ class AgentsClient:
                     model=model,
                     messages=messages,
                     temperature=0.7,
-                    max_tokens=2048,
+                    max_tokens=8192,
                 ),
                 timeout=90.0,
             )
