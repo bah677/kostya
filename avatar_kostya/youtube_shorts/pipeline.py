@@ -40,10 +40,9 @@ logger = logging.getLogger(__name__)
 # prayer.txt остаётся чистой молитвой — обёртки только для озвучки.
 # Пустая строка в env отключает соответствующий кусок.
 _DEFAULT_ATTUNE = "Закрой глаза и давай вместе помолимся."
-_DEFAULT_CTA = (
-    "Если эта молитва про тебя — напиши «Аминь» в комментариях, "
-    "и я помолюсь за тебя."
-)
+_DEFAULT_CTA = "Если эта молитва про тебя — напиши «Аминь» в комментариях."
+# Многоточие между блоками — пауза для ElevenLabs (чуть дольше обычного абзаца).
+_SPOKEN_PAUSE = "..."
 
 
 def _attune_text() -> str:
@@ -57,7 +56,11 @@ def _cta_text() -> str:
 
 
 def _spoken_prayer(prayer: str) -> str:
-    """Молитва + сонастройка в начале + CTA в конце (для TTS/субтитров)."""
+    """Молитва + сонастройка в начале + CTA в конце (для TTS/субтитров).
+
+    Между блоками — отдельная строка «...»: ElevenLabs держит паузу дольше,
+    чем на обычном переносе абзаца.
+    """
     parts: List[str] = []
     attune = _attune_text()
     if attune:
@@ -68,7 +71,16 @@ def _spoken_prayer(prayer: str) -> str:
     cta = _cta_text()
     if cta:
         parts.append(cta)
-    return "\n\n".join(parts) if parts else (prayer or "")
+    if not parts:
+        return prayer or ""
+    if len(parts) == 1:
+        return parts[0]
+    glued: List[str] = []
+    for i, chunk in enumerate(parts):
+        if i:
+            glued.append(_SPOKEN_PAUSE)
+        glued.append(chunk)
+    return "\n\n".join(glued)
 
 
 _MSK = ZoneInfo("Europe/Moscow")

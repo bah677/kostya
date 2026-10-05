@@ -521,6 +521,8 @@ async def _openai_one_image(
     model: str = "",
 ) -> Optional[Path]:
     """Один кадр gpt-image-1 / dall-e под конкретный visual-промпт."""
+    if not _env_flag("YT_PRAYER_IMAGE_GEN", True):
+        return None
     key = (os.getenv("OPENAI_API_KEY") or "").strip()
     if not key:
         return None

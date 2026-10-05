@@ -93,6 +93,11 @@ async def _save_image_response_item(item, dest: Path) -> bool:
     return False
 
 
+def _image_gen_enabled() -> bool:
+    raw = (os.getenv("YT_PRAYER_IMAGE_GEN") or "0").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
 async def _gen_cover_bg(
     *,
     trend: str,
@@ -104,6 +109,9 @@ async def _gen_cover_bg(
     mood_extra: str = "",
     vertical: bool = False,
 ) -> bool:
+    if not _image_gen_enabled():
+        logger.info("cover AI skipped (YT_PRAYER_IMAGE_GEN=0)")
+        return False
     key = (os.getenv("OPENAI_API_KEY") or "").strip()
     if not key:
         logger.error("OPENAI_API_KEY missing — cover AI generation impossible")

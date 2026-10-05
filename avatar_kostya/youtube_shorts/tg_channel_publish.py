@@ -36,9 +36,7 @@ from youtube_shorts.uploader import shorts_premiere_hours_msk
 logger = logging.getLogger(__name__)
 _MSK = ZoneInfo("Europe/Moscow")
 
-_DEFAULT_CTA = (
-    "Если молитва про тебя — напиши «Аминь» в комментариях, и я помолюсь за тебя."
-)
+_DEFAULT_CTA = "Если молитва про тебя — напиши «Аминь» в комментариях."
 
 
 def _cfg(name: str, default=None):

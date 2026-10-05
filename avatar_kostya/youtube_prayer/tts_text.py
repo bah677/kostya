@@ -50,6 +50,10 @@ def _insert_breath_in_long_sentence(sent: str) -> str:
     return f"{left} — {right}"
 
 
+def _is_tts_pause_marker(s: str) -> bool:
+    return bool(re.fullmatch(r"\.{2,}|…+", (s or "").strip()))
+
+
 def _pack_prayer_paragraphs(sentences: list[str]) -> list[str]:
     paras: list[str] = []
     buf: list[str] = []
@@ -64,9 +68,15 @@ def _pack_prayer_paragraphs(sentences: list[str]) -> list[str]:
         buf_words = 0
 
     for raw in sentences:
-        s = _insert_breath_in_long_sentence(raw.strip())
+        s = (raw or "").strip()
         if not s:
             continue
+        # Отдельная пауза между блоками озвучки (сонастройка / молитва / CTA).
+        if _is_tts_pause_marker(s):
+            flush()
+            paras.append("...")
+            continue
+        s = _insert_breath_in_long_sentence(s)
         w = _word_count(s)
         if w >= _LONG_SENT_WORDS:
             flush()
@@ -95,7 +105,9 @@ def format_prayer_for_tts(text: str, *, lang: str = "ru", stress_amen: bool = Tr
     t = t.strip().strip('"').strip("«»")
     t = re.sub(r"\+(?=[аАеЕёЁиИоОуУыЫэЭюЮяЯaAeEiIoOuU])", "", t)
     t = re.sub(r"[\u0300\u0301\u0341]", "", t)
-    t = t.replace("…", " ")
+    # Многоточие оставляем: ElevenLabs читает его как паузу между блоками
+    # (сонастройка → молитва → CTA). Unicode-«…» нормализуем в «...».
+    t = t.replace("…", "...")
     t = re.sub(r"[ \t]+", " ", t)
     t = re.sub(r" *\n *", "\n", t)
 
