@@ -10,10 +10,11 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import shutil
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, List, Optional, Sequence
 from zoneinfo import ZoneInfo
 
 from aiogram.types import FSInputFile
@@ -36,7 +37,17 @@ from youtube_shorts.uploader import shorts_premiere_hours_msk
 logger = logging.getLogger(__name__)
 _MSK = ZoneInfo("Europe/Moscow")
 
-_DEFAULT_CTA = "Если молитва про тебя — напиши «Аминь» в комментариях."
+_DEFAULT_CTA = "Перешли молитву тому, кто в ней сейчас нуждается."
+
+_TAG_SYSTEM = """Ты подбираешь хэштеги для потока христианских молитв в Telegram.
+По тексту молитвы выдай 2–3 коротких тематических тега (ситуация / нужда человека).
+Правила:
+- только русский, без # в ответе;
+- 1 слово на тег (можно слитное: внутреннийпокой), нижний регистр;
+- без «молитва», «shorts», «аминь», «христос», «бог» как единственного смысла;
+- цепляй конкретную ситуацию: тревога, усталость, одиночество, семья, прощение, исцеление…
+Ответ СТРОГО JSON: {"tags":["тревога","покой","восстановление"]}
+"""
 
 
 def _cfg(name: str, default=None):
@@ -60,10 +71,112 @@ def tg_queue_root(work_root: Path) -> Path:
     return Path(work_root) / "tg_voice_queue"
 
 
-def _caption(*, title: str, trend: str = "") -> str:
-    head = (title or trend or "Молитва").strip()
-    # Коротко: тема + призыв к комментарию (как на YouTube).
-    return f"{head}\n\n{_DEFAULT_CTA}"
+def _strip_shorts_suffix(title: str) -> str:
+    t = re.sub(r"\s+", " ", (title or "").strip())
+    return re.sub(r"\s*#shorts\s*$", "", t, flags=re.I).strip()
+
+
+def _normalize_tag(raw: str) -> str:
+    t = (raw or "").strip().lstrip("#").casefold()
+    t = re.sub(r"[^\wа-яё]+", "", t, flags=re.I)
+    return t[:32]
+
+
+def _format_hashtags(tags: Sequence[str]) -> str:
+    out: List[str] = []
+    for raw in tags:
+        t = _normalize_tag(str(raw))
+        if not t or t in {"молитва", "shorts", "аминь", "бог", "христос"}:
+            continue
+        tag = f"#{t}"
+        if tag not in out:
+            out.append(tag)
+        if len(out) >= 3:
+            break
+    return " ".join(out)
+
+
+def _fallback_tags(*, trend: str = "", title: str = "") -> List[str]:
+    """Грубый запасной набор из темы, если LLM не ответил."""
+    blob = f"{trend} {title}"
+    blob = re.sub(r"#shorts", "", blob, flags=re.I)
+    words = re.findall(r"[а-яёa-z]{4,}", blob.casefold(), flags=re.I)
+    stop = {
+        "молитва",
+        "которая",
+        "когда",
+        "shorts",
+        "внутри",
+        "пусто",
+        "нуле",
+        "сили",
+        "силы",
+    }
+    out: List[str] = []
+    for w in words:
+        if w in stop:
+            continue
+        if w not in out:
+            out.append(w)
+        if len(out) >= 3:
+            break
+    return out or ["покой"]
+
+
+async def generate_tg_prayer_tags(
+    prayer_text: str,
+    *,
+    trend: str = "",
+    title: str = "",
+) -> List[str]:
+    """2–3 ситуационных тега по тексту молитвы (для поиска в канале)."""
+    body = (prayer_text or "").strip()
+    if len(body) > 2500:
+        body = body[:2500] + "…"
+    user = (
+        f"Тема: {trend or '—'}\n"
+        f"Название: {_strip_shorts_suffix(title) or '—'}\n\n"
+        f"Текст молитвы:\n{body or '(пусто)'}"
+    )
+    try:
+        from youtube_prayer.compose import deepseek_complete
+
+        raw, _ = await deepseek_complete(
+            _TAG_SYSTEM,
+            user,
+            temperature=0.3,
+            max_tokens=200,
+            thinking="disabled",
+            request_kind="yt_shorts_tg_tags",
+        )
+        text = (raw or "").strip()
+        text = re.sub(r"^```(?:json)?\s*", "", text)
+        text = re.sub(r"\s*```$", "", text)
+        data = json.loads(text)
+        tags = data.get("tags") if isinstance(data, dict) else None
+        if isinstance(tags, list):
+            cleaned = [_normalize_tag(str(t)) for t in tags]
+            cleaned = [t for t in cleaned if t]
+            if cleaned:
+                return cleaned[:3]
+    except Exception as e:
+        logger.warning("tg prayer tags LLM failed: %s", e)
+    return _fallback_tags(trend=trend, title=title)
+
+
+def _caption(
+    *,
+    title: str,
+    trend: str = "",
+    tags: Optional[Sequence[str]] = None,
+) -> str:
+    head = _strip_shorts_suffix(title) or (trend or "Молитва").strip()
+    tag_line = _format_hashtags(tags or _fallback_tags(trend=trend, title=title))
+    parts = [head]
+    if tag_line:
+        parts.append(tag_line)
+    parts.append(_DEFAULT_CTA)
+    return "\n\n".join(parts)
 
 
 def _encode_voice_ogg(src: Path, dst: Path) -> bool:
@@ -115,6 +228,7 @@ def enqueue_short_voice(
     index: int,
     title: str,
     trend: str = "",
+    tags: Optional[Sequence[str]] = None,
     audio_src: Optional[Path] = None,
     publish_at_msk: Optional[datetime] = None,
 ) -> Optional[Path]:
@@ -146,6 +260,10 @@ def enqueue_short_voice(
             slots_msk=shorts_premiere_hours_msk(),
         )
 
+    tag_list = [str(t) for t in (tags or []) if str(t).strip()]
+    if not tag_list:
+        tag_list = _fallback_tags(trend=trend, title=title)
+
     job_id = f"{day}_{int(index):02d}"
     job_dir = tg_queue_root(work_root) / job_id
     job_dir.mkdir(parents=True, exist_ok=True)
@@ -159,7 +277,8 @@ def enqueue_short_voice(
         "chat_id": chat_id,
         "title": (title or "")[:200],
         "trend": (trend or "")[:200],
-        "caption": _caption(title=title, trend=trend),
+        "tags": tag_list[:3],
+        "caption": _caption(title=title, trend=trend, tags=tag_list),
         "publish_at_msk": publish_at_msk.astimezone(_MSK).isoformat(),
         "premiere_label": premiere_slot_label(publish_at_msk),
         "status": "pending",
@@ -171,10 +290,11 @@ def enqueue_short_voice(
         json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8"
     )
     logger.info(
-        "tg voice queued %s slot=%s chat=%s",
+        "tg voice queued %s slot=%s chat=%s tags=%s",
         job_id,
         meta["premiere_label"],
         chat_id,
+        tag_list,
     )
     return job_dir
 
@@ -234,7 +354,14 @@ async def publish_due_tg_voices(
         if not chat_id:
             continue
 
-        caption = str(meta.get("caption") or _caption(title=str(meta.get("title") or "")))
+        caption = str(
+            meta.get("caption")
+            or _caption(
+                title=str(meta.get("title") or ""),
+                trend=str(meta.get("trend") or ""),
+                tags=meta.get("tags") or [],
+            )
+        )
         # TG caption limit 1024
         caption = caption[:1024]
         dur = ogg_path_duration_sec(voice)

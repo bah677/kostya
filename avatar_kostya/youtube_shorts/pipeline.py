@@ -31,7 +31,7 @@ from youtube_prayer.youtube_uploader import (
 from youtube_shorts.compose import ShortComposeIncompleteError, compose_short_prayer_for_topic
 from youtube_shorts.deliver import deliver_short_pack
 from youtube_shorts.metadata import generate_short_metadata, theme_overlay_label
-from youtube_shorts.tg_channel_publish import enqueue_short_voice
+from youtube_shorts.tg_channel_publish import enqueue_short_voice, generate_tg_prayer_tags
 from youtube_shorts.uploader import shorts_upload_enabled, upload_short_premiere_if_enabled
 
 logger = logging.getLogger(__name__)
@@ -316,6 +316,11 @@ async def run_daily_youtube_shorts_pipeline(
                     audio_src = Path(ogg_path)
                 elif wav.is_file():
                     audio_src = wav
+                tg_tags = await generate_tg_prayer_tags(
+                    prayer,
+                    trend=topic.trend,
+                    title=meta.title,
+                )
                 job = enqueue_short_voice(
                     work_root=work_root,
                     item_dir=item_dir,
@@ -323,6 +328,7 @@ async def run_daily_youtube_shorts_pipeline(
                     index=i,
                     title=meta.title,
                     trend=topic.trend,
+                    tags=tg_tags,
                     audio_src=audio_src,
                     publish_at_msk=publish_at,
                 )
