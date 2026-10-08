@@ -21,8 +21,10 @@ logger = logging.getLogger(__name__)
 
 _AUDIO_EXTS = {".mp3", ".m4a", ".ogg", ".opus", ".wav", ".flac", ".webm"}
 _DEFAULT_VOLUME = 0.14
-# Не начинать слишком близко к концу трека (запас под длинную молитву).
-_TAIL_RESERVE_SEC = 60.0
+# У YouTube-эмбиента часто длинный fade-out в конце: если молитва идёт
+# по этому участку, весь микс «садится» и голос кажется затухающим.
+# Старт только до outro; длину голоса закрывает aloop.
+_OUTRO_AVOID_SEC = 120.0
 _MIN_TRACK_FOR_RANDOM_SEC = 90.0
 
 
@@ -63,23 +65,34 @@ def _pick_track_and_start(
     *,
     voice_out_dur: float = 0.0,
 ) -> tuple[Path, float]:
+    del voice_out_dur  # длина голоса закрывается aloop; старт от неё не зависит
     track = random.choice(list(tracks))
     duration = probe_media_duration_sec(track) or 0.0
     if duration < _MIN_TRACK_FOR_RANDOM_SEC:
         return track, 0.0
-    reserve = max(_TAIL_RESERVE_SEC, float(voice_out_dur) + 15.0)
-    max_start = max(0.0, duration - reserve)
+    max_start = max(0.0, duration - _OUTRO_AVOID_SEC)
     start = random.uniform(0.0, max_start) if max_start > 1.0 else 0.0
     return track, start
 
 
 def _mix_filter_complex(*, tempo: float, vol: float) -> str:
+    """
+    Голос без огибающей громкости + ровный зацикленный фон.
+    dynaudnorm на фоне — без медленного «проседания» микса на crescendo/fade трека.
+    duration=first + dropout_transition=0 + normalize=0 — без затухания голоса.
+    """
     voice_chain = f"atempo={tempo:.4f}," if abs(tempo - 1.0) >= 0.001 else ""
     bg_chain = (
-        f"aloop=loop=-1:size=2e+09,volume={vol:.4f},"
+        f"aloop=loop=-1:size=2e+09,"
+        f"dynaudnorm=f=250:g=12:p=0.95,"
+        f"volume={vol:.4f},"
         f"aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=mono"
     )
-    voice_fmt = f"{voice_chain}aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=mono"
+    voice_fmt = (
+        f"{voice_chain}"
+        f"aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=mono,"
+        f"volume=1.0"
+    )
     return (
         f"[0:a]{voice_fmt}[v];"
         f"[1:a]{bg_chain}[bg];"

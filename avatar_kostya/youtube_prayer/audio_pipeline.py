@@ -22,7 +22,8 @@ _MAX_CHARS = 5000
 _TIMEOUT_SEC = 120.0
 _AUDIO_EXTS = {".mp3", ".m4a", ".ogg", ".opus", ".wav", ".flac", ".webm"}
 _DEFAULT_BG_VOLUME = 0.14
-_TAIL_RESERVE_SEC = 60.0
+# Не стартовать в outro YouTube-эмбиента (длинный fade-out) — иначе микс «садится».
+_OUTRO_AVOID_SEC = 120.0
 _MIN_TRACK_FOR_RANDOM_SEC = 90.0
 
 WordTiming = Tuple[float, float, str]  # start, end, word
@@ -346,15 +347,21 @@ def _voice_output_duration_sec(voice_in_dur: float, tempo: float) -> float:
 
 def _mix_filter_complex(*, tempo: float, vol: float) -> str:
     """
-    Голос + тихий фон: фон зациклен на всю длину голоса.
-    duration=first + dropout_transition=0 — голос не затухает, когда фон кончился.
+    Голос без огибающей + ровный зацикленный фон (без outro-fade трека).
+    duration=first + dropout_transition=0 + normalize=0 — голос не затухает.
     """
     voice_chain = f"atempo={tempo:.4f}," if abs(tempo - 1.0) >= 0.001 else ""
     bg_chain = (
-        f"aloop=loop=-1:size=2e+09,volume={vol:.4f},"
+        f"aloop=loop=-1:size=2e+09,"
+        f"dynaudnorm=f=250:g=12:p=0.95,"
+        f"volume={vol:.4f},"
         f"aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=mono"
     )
-    voice_fmt = f"{voice_chain}aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=mono"
+    voice_fmt = (
+        f"{voice_chain}"
+        f"aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=mono,"
+        f"volume=1.0"
+    )
     return (
         f"[0:a]{voice_fmt}[v];"
         f"[1:a]{bg_chain}[bg];"
@@ -390,9 +397,8 @@ def _mix_voice_bg_to_files(
             if duration < _MIN_TRACK_FOR_RANDOM_SEC:
                 start_sec = 0.0
             else:
-                # Запас под длину голоса (не только 60 с), но aloop всё равно подстрахует.
-                reserve = max(_TAIL_RESERVE_SEC, out_dur + 15.0)
-                max_start = max(0.0, duration - reserve)
+                # Не заходим в outro; длину голоса закрывает aloop.
+                max_start = max(0.0, duration - _OUTRO_AVOID_SEC)
                 start_sec = random.uniform(0.0, max_start) if max_start > 1.0 else 0.0
             filter_complex = _mix_filter_complex(tempo=tempo, vol=vol)
             cmd = [
