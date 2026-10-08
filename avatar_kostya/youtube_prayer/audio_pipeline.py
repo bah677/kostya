@@ -344,12 +344,33 @@ def _voice_output_duration_sec(voice_in_dur: float, tempo: float) -> float:
     return voice_in_dur / tempo
 
 
-def _mix_filter_complex(*, tempo: float, vol: float) -> str:
+def outro_tail_sec() -> float:
+    """Хвост после молитвы — под концевую карточку в ролике.
+
+    Карточка с адресом бота — единственная часть воронки, которую видят все
+    зрители. Описание в плеере Shorts свёрнуто: за 37 тысяч просмотров по
+    ссылке из него не пришёл ни один человек (касаний yt_* в базе клуба — 0,
+    при том что код метки в проде и ссылка в описании стоит).
+
+    Хвост нужен, чтобы карточка не наезжала на последние слова молитвы.
+    Фоновая музыка под ним продолжает играть: amix обрезается по голосу,
+    а голос к этому моменту уже дополнен тишиной.
+    """
+    try:
+        v = float(os.getenv("YT_PRAYER_OUTRO_SEC") or 2.5)
+    except (TypeError, ValueError):
+        v = 2.5
+    return max(0.0, min(5.0, v))
+
+
+def _mix_filter_complex(*, tempo: float, vol: float, outro_sec: float = 0.0) -> str:
     """
     Голос + тихий фон: фон зациклен на всю длину голоса.
     duration=first + dropout_transition=0 — голос не затухает, когда фон кончился.
     """
     voice_chain = f"atempo={tempo:.4f}," if abs(tempo - 1.0) >= 0.001 else ""
+    if outro_sec > 0.05:
+        voice_chain += f"apad=pad_dur={outro_sec:.2f},"
     bg_chain = (
         f"aloop=loop=-1:size=2e+09,volume={vol:.4f},"
         f"aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=mono"
@@ -382,7 +403,8 @@ def _mix_voice_bg_to_files(
         voice_path.write_bytes(voice_mp3)
 
         voice_in_dur = probe_duration_sec(voice_path) or 0.0
-        out_dur = _voice_output_duration_sec(voice_in_dur, tempo)
+        outro = outro_tail_sec()
+        out_dur = _voice_output_duration_sec(voice_in_dur, tempo) + outro
 
         if tracks:
             track = random.choice(tracks)
@@ -394,7 +416,9 @@ def _mix_voice_bg_to_files(
                 reserve = max(_TAIL_RESERVE_SEC, out_dur + 15.0)
                 max_start = max(0.0, duration - reserve)
                 start_sec = random.uniform(0.0, max_start) if max_start > 1.0 else 0.0
-            filter_complex = _mix_filter_complex(tempo=tempo, vol=vol)
+            filter_complex = _mix_filter_complex(
+                tempo=tempo, vol=vol, outro_sec=outro
+            )
             cmd = [
                 ffmpeg,
                 "-y",
@@ -422,6 +446,8 @@ def _mix_voice_bg_to_files(
         else:
             logger.warning("нет bg-треков в %s — только голос", resolve_bg_music_dir())
             af = "aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=mono"
+            if outro > 0.05:
+                af = f"apad=pad_dur={outro:.2f}," + af
             if abs(tempo - 1.0) >= 0.001:
                 af = f"atempo={tempo:.4f}," + af
             cmd = [

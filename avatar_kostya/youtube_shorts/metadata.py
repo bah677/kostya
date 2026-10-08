@@ -107,14 +107,24 @@ def bot_start_link(*, day: str, index: int) -> str:
 
 
 def _inject_bot_link(description: str, link: str) -> str:
-    """Ставим ссылку перед блоком Keywords — там её видно до «ещё»."""
+    """Ссылка — ПЕРВОЙ строкой описания.
+
+    Раньше она стояла перед блоком Keywords, то есть после трёх абзацев.
+    В плеере Shorts описание свёрнуто целиком, и до ссылки не доходил никто:
+    за 37 тысяч просмотров в базе клуба ноль касаний с меткой yt_* — при
+    том, что метка проставлялась верно и код её разбора стоял в проде.
+
+    Первая строка — единственное место описания, которое вообще где-то
+    показывается: на странице просмотра, в поиске и в превью канала.
+    Рядом со ссылкой даём @имя текстом: из Shorts никуда не кликнуть,
+    зато имя можно запомнить и найти в Telegram поиском.
+    """
     if not link or link in description:
         return description
-    line = f"Молитва по твоей ситуации — в боте: {link}"
-    if "\n---" in description:
-        head, sep, tail = description.partition("\n---")
-        return f"{head.rstrip()}\n\n{line}\n{sep}{tail}"
-    return f"{description.rstrip()}\n\n{line}"
+    user = (os.getenv("YT_SHORTS_BOT_USERNAME") or _DEFAULT_BOT_USERNAME).strip().lstrip("@")
+    handle = f" — @{user}" if user else ""
+    line = f"🙏 Молитва по твоей ситуации{handle}: {link}"
+    return f"{line}\n\n{description.lstrip()}"
 
 
 def _order_hashtags(tags: list[str]) -> list[str]:
