@@ -10,6 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, List, Optional, Sequence
 
+from youtube_prayer.langs import DEFAULT_LANG, normalize_lang, profile
 from youtube_prayer.metadata import VideoMetadata
 from youtube_prayer.premiere_schedule import (
     premiere_slot_datetime,
@@ -70,14 +71,35 @@ def _resolve_path(raw: str | Path, *, default_rel: str) -> Path:
     return p
 
 
-def client_secrets_path() -> Path:
+def client_secrets_path(lang: str = "") -> Path:
+    """Секреты OAuth. У каждого языка свой канал, значит и свой проект."""
+    code = normalize_lang(lang) if lang else ""
+    if code and code != DEFAULT_LANG:
+        raw = str(_cfg(f"YT_PRAYER_YOUTUBE_CLIENT_SECRETS_{code.upper()}", "") or "")
+        if raw:
+            return _resolve_path(raw, default_rel=raw)
     return _resolve_path(
         str(_cfg("YT_PRAYER_YOUTUBE_CLIENT_SECRETS", "") or ""),
         default_rel="data/youtube_prayer/youtube_client_secret.json",
     )
 
 
-def token_path() -> Path:
+def token_path(lang: str = "") -> Path:
+    """Токен канала этого языка.
+
+    Каналы разные — испанские ролики должны уходить на испанский канал, а не
+    на «Любящие Бога». Если для языка токен не задан, берётся общий: русский
+    канал продолжает работать ровно как раньше.
+    """
+    code = normalize_lang(lang) if lang else ""
+    if code and code != DEFAULT_LANG:
+        raw = str(_cfg(f"YT_PRAYER_YOUTUBE_TOKEN_{code.upper()}", "") or "")
+        if raw:
+            return _resolve_path(raw, default_rel=raw)
+        default_rel = f"data/youtube_prayer/youtube_oauth_token_{code}.json"
+        guess = _resolve_path("", default_rel=default_rel)
+        if guess.is_file():
+            return guess
     return _resolve_path(
         str(_cfg("YT_PRAYER_YOUTUBE_TOKEN", "") or ""),
         default_rel="data/youtube_prayer/youtube_oauth_token.json",
@@ -182,19 +204,19 @@ async def notify_youtube_oauth_problem(
         return False
 
 
-def _load_credentials():
+def _load_credentials(lang: str = ""):
     from google.auth.transport.requests import Request
     from google.oauth2.credentials import Credentials
 
-    tok = token_path()
+    tok = token_path(lang)
     if not tok.is_file():
         raise YoutubeOAuthError(
             f"нет токена {tok}. Запустите: {_OAUTH_REISSUE_HINT}"
         )
-    if not client_secrets_path().is_file():
+    if not client_secrets_path(lang).is_file():
         # токен может жить без файла secret, но перевыпуск без него невозможен
         logger.warning(
-            "YouTube client secret отсутствует: %s", client_secrets_path()
+            "YouTube client secret отсутствует: %s", client_secrets_path(lang)
         )
     creds = Credentials.from_authorized_user_file(str(tok), _SCOPES)
     try:
@@ -214,17 +236,19 @@ def _load_credentials():
     return creds
 
 
-def probe_youtube_oauth(*, require_upload_enabled: bool = True) -> None:
+def probe_youtube_oauth(
+    *, require_upload_enabled: bool = True, lang: str = ""
+) -> None:
     """Проверка токена до тяжёлого рендера. Бросает YoutubeOAuthError."""
     if require_upload_enabled and not youtube_upload_enabled():
         return
-    _load_credentials()
+    _load_credentials(lang)
 
 
-def _youtube_service():
+def _youtube_service(lang: str = ""):
     from googleapiclient.discovery import build
 
-    creds = _load_credentials()
+    creds = _load_credentials(lang)
     return build("youtube", "v3", credentials=creds, cache_discovery=False)
 
 
@@ -234,11 +258,7 @@ def _tags_from_metadata(meta: VideoMetadata, *, lang: str) -> List[str]:
         t = str(tag).strip().lstrip("#")
         if t and t not in tags:
             tags.append(t[:30])
-    if lang == "en":
-        defaults = ["prayer", "Christian prayer", "faith", "comfort"]
-    else:
-        defaults = ["молитва", "христианская молитва", "вера", "утешение"]
-    for d in defaults:
+    for d in profile(lang).default_tags:
         if d not in tags:
             tags.append(d)
         if len(tags) >= 12:
@@ -274,9 +294,9 @@ def _upload_sync(
     category_id: str,
     notify_subscribers: bool,
 ) -> YoutubeUploadResult:
-    youtube = _youtube_service()
+    youtube = _youtube_service(lang)
     publish_at = to_youtube_publish_at(publish_at_msk)
-    default_lang = "en" if (lang or "").lower() == "en" else "ru"
+    default_lang = profile(lang).youtube_lang
     body = {
         "snippet": {
             "title": meta.title[:100],
