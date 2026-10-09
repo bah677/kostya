@@ -166,11 +166,20 @@ def main() -> int:
         print("1) Откройте URL в браузере и разрешите доступ YouTube-каналу:")
         print(auth_url)
         print()
+        # Подсказка повторяет ТЕ ЖЕ флаги, с которыми скрипт запущен. Без них
+        # обмен кода сохранит токен в путь по умолчанию — то есть перезапишет
+        # токен основного канала чужой авторизацией, и это заметно не сразу.
+        same_flags = ""
+        if args.token:
+            same_flags += f" \\\n     --token {args.token}"
+        if args.expect_channel:
+            same_flags += f" \\\n     --expect-channel {args.expect_channel}"
         print(
             "2) После «Разрешить» браузер откроет http://localhost/?code=...\n"
             "   Страница может не загрузиться — скопируйте URL из адресной строки.\n"
             "3) На сервере выполните (вставьте свой URL):\n"
-            "   .venv/bin/python scripts/youtube_oauth_setup.py --code 'http://localhost/?code=...'\n"
+            f"   .venv/bin/python scripts/youtube_oauth_setup.py{same_flags} \\\n"
+            "     --code 'http://localhost/?code=...'\n"
         )
         pasted = input("Или вставьте код/URL сюда сейчас: ").strip()
         code = _extract_code(pasted)
