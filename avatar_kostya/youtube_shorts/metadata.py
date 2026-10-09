@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Awaitable, Callable, List, Optional, Sequence
 from zoneinfo import ZoneInfo
 
-from youtube_prayer.langs import bot_username_for, normalize_lang, profile
+from youtube_prayer.langs import destination_for, normalize_lang, profile
 from youtube_prayer.metadata import VideoMetadata, _clamp_title, _normalize_hashtags
 
 logger = logging.getLogger(__name__)
@@ -121,7 +121,11 @@ def bot_start_link(*, day: str, index: int, lang: str = "ru") -> str:
     users.first_touch_key. Так видно не «что набрало просмотры», а «что
     привело людей» — это разные ролики.
     """
-    user = bot_username_for(lang) or _DEFAULT_BOT_USERNAME
+    handle, direct = destination_for(lang)
+    if direct:
+        # Публичный канал: стартовой метки у него нет, ссылка как есть.
+        return direct
+    user = handle.lstrip("@") or _DEFAULT_BOT_USERNAME
     if not user:
         return ""
     tag = f"yt_{day.replace('-', '')}_{int(index):02d}"
@@ -143,9 +147,9 @@ def _inject_bot_link(description: str, link: str, *, lang: str = "ru") -> str:
     """
     if not link or link in description:
         return description
-    user = bot_username_for(lang) or _DEFAULT_BOT_USERNAME
-    handle = f" — @{user}" if user else ""
-    line = f"🙏 {profile(lang).outro_text}{handle}: {link}"
+    name, _ = destination_for(lang)
+    suffix = f" — {name}" if name else ""
+    line = f"🙏 {profile(lang).outro_text}{suffix}: {link}"
     return f"{line}\n\n{description.lstrip()}"
 
 

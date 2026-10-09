@@ -257,6 +257,30 @@ def premiere_hours_for(lang: Optional[str], *, env_prefix: str) -> List[int]:
     return list(p.premiere_hours)
 
 
+def destination_for(lang: Optional[str]) -> tuple[str, str]:
+    """Куда вести зрителя: (@имя, ссылка). Второе — уже готовый URL.
+
+    Если для языка задан свой бот — ведём в него, со стартовой меткой, по
+    которой потом видно, какой ролик привёл человека.
+
+    Если бота ещё нет, а публичный канал есть — ведём в канал. Это честнее,
+    чем отправлять мексиканца в русского бота: он туда дойдёт и упрётся в
+    русский интерфейс. Метки у канала нет, атрибуция появится вместе с ботом.
+    """
+    p = profile(lang)
+    bot = (os.getenv(p.bot_username_env) or "").strip().lstrip("@")
+    if bot:
+        return f"@{bot}", ""
+    public = (os.getenv(f"YT_SHORTS_TG_PUBLIC_{p.code.upper()}") or "").strip().lstrip("@")
+    if public:
+        return f"@{public}", f"https://t.me/{public}"
+    if p.code == DEFAULT_LANG:
+        shared = (os.getenv("YT_SHORTS_BOT_USERNAME") or "").strip().lstrip("@")
+        if shared:
+            return f"@{shared}", ""
+    return "", ""
+
+
 def bot_username_for(lang: Optional[str]) -> str:
     """Имя бота, куда ведём зрителей этого языка.
 
