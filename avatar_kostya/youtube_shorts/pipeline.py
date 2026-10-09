@@ -17,6 +17,14 @@ from youtube_prayer.audio_pipeline import synthesize_prayer_audio
 from youtube_prayer.covers import CoverPack, generate_vertical_cover_pack
 from youtube_prayer.compose import deepseek_complete
 from youtube_prayer.pipeline import is_done, mark_done, run_dir_for_day
+from youtube_prayer.langs import (
+    attune_text,
+    bot_username_for,
+    cta_text,
+    normalize_lang,
+    profile,
+    voice_id_for,
+)
 from youtube_prayer.render import SHORT_H, SHORT_W, format_prayer_theme_label, render_vertical_full
 from youtube_prayer.stock_broll import build_broll_montage
 from youtube_prayer.topic_history import append_used_trends, load_recent_trends
@@ -39,36 +47,24 @@ logger = logging.getLogger(__name__)
 # Сонастройка в начале и призыв в конце звучат голосом и попадают в субтитры.
 # prayer.txt остаётся чистой молитвой — обёртки только для озвучки.
 # Пустая строка в env отключает соответствующий кусок.
-_DEFAULT_ATTUNE = "Закрой глаза и давай вместе помолимся."
-_DEFAULT_CTA = "Если эта молитва про тебя — напиши «Аминь» в комментариях."
 # Многоточие между блоками — пауза для ElevenLabs (чуть дольше обычного абзаца).
 _SPOKEN_PAUSE = "..."
 
 
-def _attune_text() -> str:
-    raw = os.getenv("YT_SHORTS_ATTUNE")
-    return (_DEFAULT_ATTUNE if raw is None else raw).strip()
-
-
-def _cta_text() -> str:
-    raw = os.getenv("YT_SHORTS_CTA")
-    return (_DEFAULT_CTA if raw is None else raw).strip()
-
-
-def _spoken_prayer(prayer: str) -> str:
+def _spoken_prayer(prayer: str, *, lang: str = "ru") -> str:
     """Молитва + сонастройка в начале + CTA в конце (для TTS/субтитров).
 
     Между блоками — отдельная строка «...»: ElevenLabs держит паузу дольше,
     чем на обычном переносе абзаца.
     """
     parts: List[str] = []
-    attune = _attune_text()
+    attune = attune_text(lang)
     if attune:
         parts.append(attune)
     body = (prayer or "").rstrip()
     if body:
         parts.append(body)
-    cta = _cta_text()
+    cta = cta_text(lang)
     if cta:
         parts.append(cta)
     if not parts:
@@ -122,7 +118,10 @@ async def run_daily_youtube_shorts_pipeline(
     progress_chat_id: Optional[int] = None,
     history_days: int = 14,
     horizontal_work_root: Optional[Path] = None,
+    lang: str = "ru",
 ) -> ShortsPipelineResult:
+    lang = normalize_lang(lang)
+    prof = profile(lang)
     day = datetime.now(_MSK).strftime("%Y-%m-%d")
     day_dir = run_dir_for_day(work_root, day)
     day_dir.mkdir(parents=True, exist_ok=True)
@@ -165,11 +164,11 @@ async def run_daily_youtube_shorts_pipeline(
         return text
 
     try:
-        recent_shorts = load_recent_trends(work_root, history_days=history_days, lang="ru")
+        recent_shorts = load_recent_trends(work_root, history_days=history_days, lang=lang)
         recent_horiz: List[str] = []
         if horizontal_work_root and horizontal_work_root.is_dir():
             recent_horiz = load_recent_trends(
-                horizontal_work_root, history_days=history_days, lang="ru"
+                horizontal_work_root, history_days=history_days, lang=lang
             )
         recent = _merge_recent(recent_shorts, recent_horiz)
         if recent and progress_chat_id:
@@ -179,13 +178,13 @@ async def run_daily_youtube_shorts_pipeline(
                 + ("\n…" if len(recent) > 10 else "")
             )
 
-        trends = await fetch_google_trends(geo="RU", limit=24)
+        trends = await fetch_google_trends(geo=prof.geo, limit=24)
         topics = await select_prayer_topics(
             trends,
             n=count,
             complete_fn=_complete,
             recent_themes=recent,
-            lang="ru",
+            lang=lang,
         )
         await _notify(
             f"[Shorts] темы ({len(topics)}):\n"
@@ -206,7 +205,7 @@ async def run_daily_youtube_shorts_pipeline(
             await _notify(f"⏳ [Short {i}/{len(topics)}] compose: {topic.trend}")
 
             try:
-                prayer = await compose_short_prayer_for_topic(topic)
+                prayer = await compose_short_prayer_for_topic(topic, lang=lang)
             except ShortComposeIncompleteError as exc:
                 err_text = exc.info.telegram_text(
                     label="Shorts", index=i, total=len(topics), day=day
@@ -237,17 +236,18 @@ async def run_daily_youtube_shorts_pipeline(
                 work_dir=item_dir,
                 day=day,
                 index=i,
+                lang=lang,
             )
 
             # prayer.txt остаётся чистой молитвой; сонастройка + CTA только в озвучке
-            spoken = _spoken_prayer(prayer)
+            spoken = _spoken_prayer(prayer, lang=lang)
 
             await _notify(f"🎙 [Short {i}/{len(topics)}] TTS…")
             wav, ogg_path, dur, _tts, word_timings = await synthesize_prayer_audio(
                 spoken,
                 work_dir=item_dir,
-                voice_id=None,
-                lang="ru",
+                voice_id=voice_id_for(lang),
+                lang=lang,
                 stress_amen=False,
             )
 
@@ -283,6 +283,8 @@ async def run_daily_youtube_shorts_pipeline(
                 work_dir=item_dir,
                 theme_label=theme_label,
                 word_timings=word_timings,
+                outro_text=prof.outro_text,
+                outro_handle=(f"@{bot_username_for(lang)}" if bot_username_for(lang) else ""),
             )
 
             premiere_label = ""
@@ -381,7 +383,7 @@ async def run_daily_youtube_shorts_pipeline(
             theme_names.append(topic.trend)
             logger.info("yt_shorts item %s done trend=%r", i, topic.trend)
 
-        append_used_trends(work_root, day=day, themes=theme_names, lang="ru")
+        append_used_trends(work_root, day=day, themes=theme_names, lang=lang)
         mark_done(
             day_dir,
             {

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from youtube_prayer.langs import profile
+
 import re
 
 _AMEN_STRESSED = "амИнь"
@@ -160,10 +162,9 @@ def prayer_text_looks_complete(text: str, *, lang: str = "ru") -> bool:
     if len(t) < 120:
         return False
     tail = t[-200:].casefold()
-    if lang == "en":
-        return "amen" in tail
+    # Латинская «i» в кириллическом хвосте — частый артефакт распознавания.
     tail = tail.replace("і", "и").replace("i", "и")
-    return "аминь" in tail
+    return any(m.casefold() in tail for m in profile(lang).amen_markers)
 
 
 def strip_prayer_text(raw: str) -> str:

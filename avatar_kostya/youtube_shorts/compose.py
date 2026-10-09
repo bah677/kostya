@@ -12,6 +12,7 @@ from youtube_prayer.compose import (
     PrayerComposeIncompleteError,
     deepseek_complete,
 )
+from youtube_prayer.langs import normalize_lang, profile
 from youtube_prayer.tts_text import (
     normalize_amen_display,
     prayer_text_looks_complete,
@@ -21,7 +22,7 @@ from youtube_prayer.trends import PrayerTopic
 from youtube_shorts.prompts import (
     SHORT_PRAYER_COMPOSE_MAX_ATTEMPTS,
     SHORT_PRAYER_COMPOSE_MAX_TOKENS,
-    SHORT_PRAYER_COMPOSE_SYSTEM_PROMPT,
+    short_prayer_system_prompt,
 )
 
 logger = logging.getLogger(__name__)
@@ -51,27 +52,61 @@ class ShortComposeIncompleteError(PrayerComposeIncompleteError):
     pass
 
 
-def _short_text_looks_complete(text: str) -> bool:
+def _short_text_looks_complete(text: str, *, lang: str = "ru") -> bool:
     t = (text or "").strip()
     if len(t) < _SHORT_MIN_CHARS:
         return False
-    return prayer_text_looks_complete(t, lang="ru")
+    return prayer_text_looks_complete(t, lang=lang)
 
 
-async def compose_short_prayer_for_topic(topic: PrayerTopic) -> str:
-    """Короткая молитва 1–2 мин для отдельного вертикального Short."""
-    system = SHORT_PRAYER_COMPOSE_SYSTEM_PROMPT
-    user_base = (
+# Задание копирайтеру — на языке молитвы: модель лучше держит интонацию,
+# когда инструкция и результат на одном языке.
+_USER_TASK = {
+    "ru": (
         "Составь короткую личную молитву по этому запросу. "
         "Только текст молитвы, без преамбулы.\n\n"
-        f"Тема тренда: {topic.trend}\n"
-        f"О чём молиться: {topic.brief}"
-    )
-    retry_nudge = (
+        "Тема тренда: {trend}\nО чём молиться: {brief}"
+    ),
+    "en": (
+        "Write a short personal prayer for this need. "
+        "Prayer text only, no preamble.\n\n"
+        "Trend topic: {trend}\nWhat to pray about: {brief}"
+    ),
+    "es": (
+        "Escribe una oración personal breve para esta necesidad. "
+        "Solo el texto de la oración, sin preámbulo.\n\n"
+        "Tema: {trend}\nPor qué orar: {brief}"
+    ),
+}
+
+_RETRY_NUDGE = {
+    "ru": (
         "\n\nВАЖНО: предыдущий ответ оборвался. "
-        "Напиши молитву ПОЛНОСТЬЮ до «Во имя Иисуса Христа, Аминь». "
+        "Напиши молитву ПОЛНОСТЬЮ до «{closing}». "
         "Коротко — 1–2 минуты озвучки."
-    )
+    ),
+    "en": (
+        "\n\nIMPORTANT: the previous answer was cut off. "
+        "Write the prayer IN FULL through «{closing}». "
+        "Keep it short — 1–2 minutes of narration."
+    ),
+    "es": (
+        "\n\nIMPORTANTE: la respuesta anterior quedó cortada. "
+        "Escribe la oración COMPLETA hasta «{closing}». "
+        "Breve — 1 a 2 minutos de narración."
+    ),
+}
+
+
+async def compose_short_prayer_for_topic(
+    topic: PrayerTopic, *, lang: str = "ru"
+) -> str:
+    """Короткая молитва 1–2 мин для отдельного вертикального Short."""
+    code = normalize_lang(lang)
+    prof = profile(code)
+    system = short_prayer_system_prompt(code)
+    user_base = _USER_TASK[code].format(trend=topic.trend, brief=topic.brief)
+    retry_nudge = _RETRY_NUDGE[code].format(closing=prof.prayer_closing)
     last: Optional[str] = None
     last_finish: Optional[str] = None
     last_truncated = False
@@ -98,8 +133,8 @@ async def compose_short_prayer_for_topic(topic: PrayerTopic) -> str:
         if text:
             last_finish = finish
             last_truncated = truncated
-            last_missing_amen = not _short_text_looks_complete(text)
-        ok = bool(text) and _short_text_looks_complete(text) and not truncated
+            last_missing_amen = not _short_text_looks_complete(text, lang=code)
+        ok = bool(text) and _short_text_looks_complete(text, lang=code) and not truncated
         if ok:
             logger.info(
                 "short compose ok trend=%r attempt=%s chars=%s",
@@ -119,7 +154,7 @@ async def compose_short_prayer_for_topic(topic: PrayerTopic) -> str:
             await asyncio.sleep(0.4 * attempt)
 
     info = ShortComposeFailureInfo(
-        lang="ru",
+        lang=code,
         trend=topic.trend,
         brief=topic.brief,
         attempts=SHORT_PRAYER_COMPOSE_MAX_ATTEMPTS,

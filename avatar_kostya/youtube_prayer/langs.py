@@ -47,6 +47,13 @@ class LangProfile:
     default_tags: Tuple[str, ...]
     # Концевая карточка со ссылкой на бота.
     outro_text: str
+    # Чем молитва заканчивается — по этому проверяем, что модель не оборвалась.
+    amen_markers: Tuple[str, ...]
+    # Как молитва закрывается: эту строку требуем от модели последней.
+    prayer_closing: str
+    # Шортсы: сонастройка перед молитвой и призыв в конце (идут в озвучку).
+    attune: str
+    cta: str
     # Свой бот на каждый язык: у испанского канала свой клон библейского бота.
     bot_username_env: str = "YT_SHORTS_BOT_USERNAME"
     # Файл истории тем, чтобы языки не пересекались.
@@ -67,6 +74,10 @@ _PROFILES: Dict[str, LangProfile] = {
         default_hashtags=("#молитва", "#вера", "#христианство", "#утешение", "#Бог"),
         default_tags=("молитва", "христианская молитва", "вера", "утешение"),
         outro_text="Молитва по твоей ситуации",
+        amen_markers=("аминь",),
+        prayer_closing="Во имя Иисуса Христа, Аминь",
+        attune="Закрой глаза и давай вместе помолимся.",
+        cta="Если эта молитва про тебя — напиши «Аминь» в комментариях.",
         history_file="used_trends.json",
         themes_key="themes",
         aliases=("rus", "ru-ru"),
@@ -82,6 +93,10 @@ _PROFILES: Dict[str, LangProfile] = {
         default_hashtags=("#prayer", "#faith", "#Christianity", "#comfort", "#God"),
         default_tags=("prayer", "Christian prayer", "faith", "comfort"),
         outro_text="A prayer for what you're going through",
+        amen_markers=("amen",),
+        prayer_closing="In the name of Jesus Christ, Amen",
+        attune="Close your eyes and let us pray together.",
+        cta="If this prayer is for you, write «Amen» in the comments.",
         history_file="used_trends_en.json",
         themes_key="themes_en",
         aliases=("eng", "en-us"),
@@ -101,6 +116,10 @@ _PROFILES: Dict[str, LangProfile] = {
         default_hashtags=("#oración", "#fe", "#cristianismo", "#consuelo", "#Dios"),
         default_tags=("oración", "oración cristiana", "fe", "consuelo"),
         outro_text="Una oración para lo que estás viviendo",
+        amen_markers=("amén", "amen"),
+        prayer_closing="En el nombre de Jesucristo, amén",
+        attune="Cierra los ojos y oremos juntos.",
+        cta="Si esta oración es para ti, escribe «Amén» en los comentarios.",
         bot_username_env="YT_SHORTS_BOT_USERNAME_ES",
         history_file="used_trends_es.json",
         themes_key="themes_es",
@@ -134,6 +153,22 @@ def voice_id_for(lang: Optional[str]) -> str:
     p = profile(lang)
     override = (os.getenv(f"YT_PRAYER_VOICE_ID_{p.code.upper()}") or "").strip()
     return override or p.voice_id
+
+
+def _env_override(name: str, fallback: str) -> str:
+    """Переопределение из .env: пустая строка выключает кусок, не заданная — оставляет."""
+    raw = os.getenv(name)
+    return fallback if raw is None else raw.strip()
+
+
+def attune_text(lang: Optional[str]) -> str:
+    return _env_override(f"YT_SHORTS_ATTUNE_{profile(lang).code.upper()}",
+                         _env_override("YT_SHORTS_ATTUNE", profile(lang).attune))
+
+
+def cta_text(lang: Optional[str]) -> str:
+    return _env_override(f"YT_SHORTS_CTA_{profile(lang).code.upper()}",
+                         _env_override("YT_SHORTS_CTA", profile(lang).cta))
 
 
 def bot_username_for(lang: Optional[str]) -> str:
