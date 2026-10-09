@@ -7,17 +7,17 @@
 #   Назначение:  /home/appuser/biblia        (supervisor: bots:biblia_bot)
 #
 # Шаги:
-#   1) supervisorctl stop bots:biblia_bot
+#   1) supervisorctl stop bots:biblia_bot и biblia_es (если установлен)
 #   2) tar-снимок прод-кода в /home/appuser/backups/biblia/code/
 #      (без data/, log/, venv/, .pyc, __pycache__; хранение 7 дней)
-#   3) pg_dump БД biblia_bot в custom-формате в
+#   3) pg_dump обеих БД (biblia_bot и biblia_es) в custom-формате в
 #      /home/appuser/backups/biblia/db/biblia_db_<TS>.dump
 #   4) rsync dev → prod, ЗЕРКАЛО (--delete) кроме data/, log/, venv/, .env
 #   5) pip install -r requirements.txt в /home/appuser/biblia/venv
 #      (если есть; обновлять/создавать venv этот скрипт сам не будет)
 #   6) накат миграций — все .sql из migrations/biblia/, которые есть в dev,
 #      но отсутствуют в проде на момент старта деплоя
-#   7) supervisorctl start bots:biblia_bot
+#   7) supervisorctl start обоих ботов
 #
 # Запуск:
 #   sudo ./scripts/deploy_prod.sh         # пароль спросится один раз
@@ -50,6 +50,32 @@ DST=/home/appuser/biblia
 
 SUPERVISOR_NAME=${SUPERVISOR_NAME:-bots:biblia_bot}
 DB_NAME=${BIBLIA_DB:-biblia_bot}
+
+# Второй бот (испанский «Habla con Dios») работает из этого же каталога,
+# отличается только BOT_ENV_FILE. Код у ботов общий, поэтому накат обязан
+# останавливать и поднимать обоих, снимать обе базы и накатывать миграции
+# в обе — иначе испанская база отстанет по схеме и бот начнёт падать.
+#
+# Если второго бота в supervisor нет, все шаги по нему тихо пропускаются:
+# скрипт одинаково работает до и после его установки.
+ES_SUPERVISOR_NAME=${ES_SUPERVISOR_NAME:-biblia_es}
+ES_DB_NAME=${BIBLIA_ES_DB:-biblia_es}
+
+es_installed() {
+  sudo supervisorctl status "$ES_SUPERVISOR_NAME" >/dev/null 2>&1
+}
+es_db_exists() {
+  [[ "$(sudo -u postgres psql -tAc \
+    "SELECT 1 FROM pg_database WHERE datname='${ES_DB_NAME}'" 2>/dev/null)" == "1" ]]
+}
+
+if es_installed; then
+  echo "==> второй бот найден: ${ES_SUPERVISOR_NAME} (база ${ES_DB_NAME})"
+  ES_ACTIVE=1
+else
+  echo "==> второй бот (${ES_SUPERVISOR_NAME}) не установлен — шаги по нему пропускаю"
+  ES_ACTIVE=0
+fi
 APP_USER=${APP_USER:-appuser}
 SKIP_GIT_PUSH=${SKIP_GIT_PUSH:-0}
 GIT_REMOTE_URL=${GIT_REMOTE_URL:-git@github.com:bah677/kostya.git}
@@ -114,6 +140,10 @@ echo "    dev .py: $SRC_PY, prod .py: $DST_PY"
 # ---------- 1. stop ----------
 echo "==> supervisorctl stop $SUPERVISOR_NAME"
 sudo supervisorctl stop "$SUPERVISOR_NAME"
+if [[ "$ES_ACTIVE" == "1" ]]; then
+  echo "==> supervisorctl stop $ES_SUPERVISOR_NAME"
+  sudo supervisorctl stop "$ES_SUPERVISOR_NAME"
+fi
 
 # ---------- 2. tar прод-кода ----------
 echo "==> tar снимок прод-кода"
@@ -141,6 +171,17 @@ sudo -u postgres pg_dump \
   "$DB_NAME" > "$DB_ARCHIVE"
 chmod 644 "$DB_ARCHIVE"
 echo "    $DB_ARCHIVE"
+
+if [[ "$ES_ACTIVE" == "1" ]] && es_db_exists; then
+  ES_DB_ARCHIVE="${DB_DUMPS}/${ES_DB_NAME}_${TS}.dump"
+  echo "==> pg_dump $ES_DB_NAME (custom format)"
+  sudo -u postgres pg_dump \
+    --format=custom \
+    --no-owner \
+    "$ES_DB_NAME" > "$ES_DB_ARCHIVE"
+  chmod 644 "$ES_DB_ARCHIVE"
+  echo "    $ES_DB_ARCHIVE"
+fi
 
 # ---------- 3.0 retention: бэкапы 7д, data 7д, log/arc 30д ----------
 RETENTION_SH=/home/appuser/dev/kostya/scripts/disk_retention.sh
@@ -223,6 +264,11 @@ if [[ ${#NEW_MIGRATIONS[@]} -gt 0 ]]; then
     fi
     echo "==> psql ON_ERROR_STOP $DB_NAME ← $rel"
     sudo -u postgres psql -v ON_ERROR_STOP=1 -d "$DB_NAME" -f "$f"
+    # Та же миграция во вторую базу: код у ботов общий, схема должна совпадать.
+    if [[ "$ES_ACTIVE" == "1" ]] && es_db_exists; then
+      echo "==> psql ON_ERROR_STOP $ES_DB_NAME ← $rel"
+      sudo -u postgres psql -v ON_ERROR_STOP=1 -d "$ES_DB_NAME" -f "$f"
+    fi
   done
 else
   echo "Новых миграций нет."
@@ -232,6 +278,11 @@ fi
 echo "==> supervisorctl start $SUPERVISOR_NAME"
 sudo supervisorctl start "$SUPERVISOR_NAME"
 sudo supervisorctl status "$SUPERVISOR_NAME" || true
+if [[ "$ES_ACTIVE" == "1" ]]; then
+  echo "==> supervisorctl start $ES_SUPERVISOR_NAME"
+  sudo supervisorctl start "$ES_SUPERVISOR_NAME"
+  sudo supervisorctl status "$ES_SUPERVISOR_NAME" || true
+fi
 
 echo
 echo "Готово."

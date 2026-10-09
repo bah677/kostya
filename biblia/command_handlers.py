@@ -61,7 +61,7 @@ class AppCommandHandlers:
 
     async def _start_handler(self, message: Message, state: FSMContext):
         uid = message.from_user.id if message.from_user else 0
-        messaging = self.features.get("messaging")
+        messaging = self.features.get_optional("messaging")
         stor = getattr(messaging, "user_storage", None)
         if stor is None:
             logger.error("Biblia /start: user_storage недоступен")
@@ -81,7 +81,7 @@ class AppCommandHandlers:
         if param and param.startswith("ref_"):
             referrer_id_str = param[4:]
             try:
-                ref = self.features.get("referral")
+                ref = self.features.get_optional("referral")
                 if ref:
                     await ref.register_referral(message, referrer_id_str, is_new_user)
             except Exception as e:
@@ -90,23 +90,27 @@ class AppCommandHandlers:
         await state.clear()
         await message.answer(_BIBLIA_WELCOME, parse_mode=ParseMode.HTML)
 
-        menu = self.features.get("user_menu")
+        menu = self.features.get_optional("user_menu")
         if menu and message.chat.type == ChatType.PRIVATE:
             await menu.show_menu(message, edit=False)
 
     async def _menu_handler(self, message: Message, state: FSMContext):
-        menu = self.features.get("user_menu")
+        menu = self.features.get_optional("user_menu")
         if menu:
             await menu.cmd_menu(message, state)
         else:
             await message.answer("Меню временно недоступно.")
 
     async def _support_handler(self, message: Message, state: FSMContext):
-        support = self.features.get("support")
+        support = self.features.get_optional("support")
+        if not support:
+            return
         await support.start_support(message, state)
 
     async def _payment_handler(self, message: Message, state: FSMContext):
-        pay = self.features.get("payment")
+        pay = self.features.get_optional("payment")
+        if not pay:
+            return
         uid = message.from_user.id if message.from_user else 0
         if uid:
             try:
@@ -117,12 +121,16 @@ class AppCommandHandlers:
 
     async def _affiliate_handler(self, message: Message, state: FSMContext):
         uid = message.from_user.id if message.from_user else 0
-        ref = self.features.get("referral")
+        ref = self.features.get_optional("referral")
+        if not ref:
+            return
         await ref.show_affiliate_link(message, uid)
 
     async def _refstats_handler(self, message: Message, state: FSMContext):
         uid = message.from_user.id if message.from_user else 0
-        ref = self.features.get("referral")
+        ref = self.features.get_optional("referral")
+        if not ref:
+            return
         stor = ref.user_storage
 
         parts = (message.text or "").split(maxsplit=1)

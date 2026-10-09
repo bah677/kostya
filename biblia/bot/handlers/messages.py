@@ -72,27 +72,34 @@ async def route_message_to_feature(
     if current_state:
         current_state_lower = current_state.lower()
 
+        # get_optional, а не get: на другом языке часть фич не поднята, и
+        # get бросает KeyError. Без этого падало КАЖДОЕ сообщение — бот
+        # показывал меню, но на текст не отвечал.
         if "support" in current_state_lower:
-            feature = feature_manager.get("support")
-            await feature.handle_message(message, state, text)
-            routed = True
+            feature = feature_manager.get_optional("support")
+            if feature:
+                await feature.handle_message(message, state, text)
+                routed = True
         elif "prayer" in current_state_lower:
-            feature = feature_manager.get("personal_prayer")
-            await feature.handle_message(message, state, text)
-            routed = True
+            feature = feature_manager.get_optional("personal_prayer")
+            if feature:
+                await feature.handle_message(message, state, text)
+                routed = True
         elif "scripturechallenge" in current_state_lower.replace("_", ""):
-            feature = feature_manager.get("scripture_challenge")
-            await feature.handle_message(message, state, text)
-            routed = True
+            feature = feature_manager.get_optional("scripture_challenge")
+            if feature:
+                await feature.handle_message(message, state, text)
+                routed = True
 
     if not routed:
-        challenge_feature = feature_manager.get("scripture_challenge")
-        active = await challenge_feature.user_storage.get_user_active_scripture_challenge(
-            user_id
-        )
-        if active and active.get("status") in ("active", "intake", "planning"):
-            await challenge_feature.handle_message(message, state, text)
-            return
+        challenge_feature = feature_manager.get_optional("scripture_challenge")
+        if challenge_feature:
+            active = await challenge_feature.user_storage.get_user_active_scripture_challenge(
+                user_id
+            )
+            if active and active.get("status") in ("active", "intake", "planning"):
+                await challenge_feature.handle_message(message, state, text)
+                return
 
     if routed:
         return

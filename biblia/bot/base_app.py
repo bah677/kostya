@@ -296,7 +296,7 @@ class TelegramBotApp:
                 await feature.initialize()
 
             try:
-                self.payment_feature = self.feature_manager.get("payment")
+                self.payment_feature = self.feature_manager.get_optional("payment")
             except KeyError:
                 self.payment_feature = None
 

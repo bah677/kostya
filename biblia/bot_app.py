@@ -174,7 +174,7 @@ class BotApplication(TelegramBotApp):
         AppCommandHandlers(self.dp, self.feature_manager).register_handlers()
 
         # Фича может быть выключена для этого языка — тогда её просто нет.
-        payment = self.feature_manager.get("payment")
+        payment = self.feature_manager.get_optional("payment")
         if payment:
             payment.register_handlers(self.dp)
 

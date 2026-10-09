@@ -121,19 +121,19 @@ class UserMenuFeature(BaseFeature):
             return
 
         if data == CB_MORE:
-            faq = self.feature_manager.get("frequent_questions")
+            faq = self.feature_manager.get_optional("frequent_questions")
             if faq:
                 await faq.show_more(msg, edit=True)
             return
 
         if data == CB_PRAYER:
-            prayer = self.feature_manager.get("personal_prayer")
+            prayer = self.feature_manager.get_optional("personal_prayer")
             if prayer:
                 await prayer.start_from_menu(msg, state, edit=True)
             return
 
         if data == CB_CHALLENGE:
-            ch = self.feature_manager.get("scripture_challenge")
+            ch = self.feature_manager.get_optional("scripture_challenge")
             if ch:
                 await ch.start_from_menu(
                     msg, state, user_id=callback.from_user.id, edit=True
@@ -141,7 +141,7 @@ class UserMenuFeature(BaseFeature):
             return
 
         if data == CB_PAYMENT:
-            payment = self.feature_manager.get("payment")
+            payment = self.feature_manager.get_optional("payment")
             if payment:
                 uid = callback.from_user.id
                 try:
@@ -156,19 +156,19 @@ class UserMenuFeature(BaseFeature):
             return
 
         if data == CB_SUPPORT:
-            support = self.feature_manager.get("support")
+            support = self.feature_manager.get_optional("support")
             if support:
                 await support.start_support(msg, state, edit=True)
             return
 
         if data == CB_FEEDBACK:
-            support = self.feature_manager.get("support")
+            support = self.feature_manager.get_optional("support")
             if support:
                 await support.start_feedback(msg, state, edit=True)
             return
 
         if data == CB_AFFILIATE:
-            referral = self.feature_manager.get("referral")
+            referral = self.feature_manager.get_optional("referral")
             if referral:
                 await referral.show_affiliate_link(
                     msg, callback.from_user.id, edit=True
