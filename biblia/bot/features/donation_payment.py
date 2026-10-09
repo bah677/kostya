@@ -29,6 +29,8 @@ from bot.services.prayer_voice_quota import PAYMENT_PURPOSE_VOICE_UNLOCK
 from bot.utils.telegram_identity import resolve_telegram_bot_username
 from config import config
 
+from bot.texts import payment as PAY
+
 logger = logging.getLogger(__name__)
 
 ONE_TIME_AMOUNT_PRESETS: dict[str, List[int]] = {
@@ -44,11 +46,7 @@ SUBSCRIPTION_AMOUNT_PRESETS: dict[str, List[int]] = {
 
 _MIN_AMOUNT = {"RUB": 100, "USD": 1, "EUR": 1}
 _CURRENCY_SYMBOL = {"RUB": "₽", "USD": "$", "EUR": "€"}
-_CURRENCY_BTN = {
-    "RUB": "🇷🇺 Рубли (карты РФ)",
-    "USD": "💵 Доллары (карты не РФ)",
-    "EUR": "💶 Евро",
-}
+
 
 
 class DonationPaymentStates(StatesGroup):
@@ -106,9 +104,7 @@ class DonationPaymentFeature(BaseFeature):
 
     async def _donation_intro_text(self) -> str:
         return (
-            "🤝 **Поддержи развитие нашего проекта**\n\n"
-            "Твоя поддержка поможет сделать его лучше для всех пользователей.\n"
-            "Ты вкладываешь в Благое дело 🙏🏻\n\n"
+            PAY().INTRO
         )
 
     def _mode_keyboard(self, *, show_subscription_mgmt: bool) -> InlineKeyboardMarkup:
@@ -118,13 +114,13 @@ class DonationPaymentFeature(BaseFeature):
                 [
                     [
                         InlineKeyboardButton(
-                            text="📅 Ежемесячная поддержка",
+                            text=PAY().BTN_MONTHLY,
                             callback_data="payment_mode_monthly",
                         )
                     ],
                     [
                         InlineKeyboardButton(
-                            text="💳 Разовый платёж",
+                            text=PAY().BTN_ONE_TIME,
                             callback_data="payment_mode_one_time",
                         )
                     ],
@@ -134,12 +130,12 @@ class DonationPaymentFeature(BaseFeature):
             rows.append(
                 [
                     InlineKeyboardButton(
-                        text="📋 Моя подписка",
+                        text=PAY().BTN_MY_SUBSCRIPTION,
                         callback_data="payment_my_subscription",
                     )
                 ]
             )
-        rows.append([InlineKeyboardButton(text="❌ Отмена", callback_data="payment_cancel")])
+        rows.append([InlineKeyboardButton(text=PAY().BTN_CANCEL, callback_data="payment_cancel")])
         return InlineKeyboardMarkup(inline_keyboard=rows)
 
     def _currency_keyboard(
@@ -149,27 +145,38 @@ class DonationPaymentFeature(BaseFeature):
         show_subscription_mgmt: bool = False,
         show_back: bool = True,
     ) -> InlineKeyboardMarkup:
+        # Набор валют берётся из профиля языка. У русского все три, у
+        # испанского только доллары: рубли и евро аудитории Латинской Америки
+        # не нужны, а лишние кнопки в оплате сбивают доходимость.
+        from bot.langs import currencies as _lang_currencies
+
+        txt = PAY()
         rows = [
-            [InlineKeyboardButton(text=_CURRENCY_BTN["RUB"], callback_data="payment_currency_rub")],
-            [InlineKeyboardButton(text=_CURRENCY_BTN["USD"], callback_data="payment_currency_usd")],
-            [InlineKeyboardButton(text=_CURRENCY_BTN["EUR"], callback_data="payment_currency_eur")],
+            [
+                InlineKeyboardButton(
+                    text=txt.CURRENCY_BTN[code],
+                    callback_data=f"payment_currency_{code.lower()}",
+                )
+            ]
+            for code in _lang_currencies()
+            if code in txt.CURRENCY_BTN
         ]
         if include_crypto:
             rows.append(
-                [InlineKeyboardButton(text="₿ Криптовалюта", callback_data="payment_crypto")]
+                [InlineKeyboardButton(text=PAY().BTN_CRYPTO, callback_data="payment_crypto")]
             )
         if show_subscription_mgmt:
             rows.append(
                 [
                     InlineKeyboardButton(
-                        text="📋 Моя подписка",
+                        text=PAY().BTN_MY_SUBSCRIPTION,
                         callback_data="payment_my_subscription",
                     )
                 ]
             )
         if show_back:
-            rows.append([InlineKeyboardButton(text="◀️ Назад", callback_data="payment_back_mode")])
-        rows.append([InlineKeyboardButton(text="❌ Отмена", callback_data="payment_cancel")])
+            rows.append([InlineKeyboardButton(text=PAY().BTN_BACK, callback_data="payment_back_mode")])
+        rows.append([InlineKeyboardButton(text=PAY().BTN_CANCEL, callback_data="payment_cancel")])
         return InlineKeyboardMarkup(inline_keyboard=rows)
 
     def _amount_keyboard(self, currency: str, mode: str) -> InlineKeyboardMarkup:
@@ -188,20 +195,20 @@ class DonationPaymentFeature(BaseFeature):
         rows.append(
             [
                 InlineKeyboardButton(
-                    text="✏️ Другая сумма",
+                    text=PAY().BTN_OTHER_AMOUNT,
                     callback_data=f"payment_{cur.lower()}_custom",
                 )
             ]
         )
-        rows.append([InlineKeyboardButton(text="◀️ Назад", callback_data="payment_back_currency")])
-        rows.append([InlineKeyboardButton(text="❌ Отмена", callback_data="payment_cancel")])
+        rows.append([InlineKeyboardButton(text=PAY().BTN_BACK, callback_data="payment_back_currency")])
+        rows.append([InlineKeyboardButton(text=PAY().BTN_CANCEL, callback_data="payment_cancel")])
         return InlineKeyboardMarkup(inline_keyboard=rows)
 
     def _cancel_keyboard(self) -> InlineKeyboardMarkup:
         return InlineKeyboardMarkup(
             inline_keyboard=[
-                [InlineKeyboardButton(text="◀️ Назад", callback_data="payment_back_currency")],
-                [InlineKeyboardButton(text="❌ Отмена", callback_data="payment_cancel")],
+                [InlineKeyboardButton(text=PAY().BTN_BACK, callback_data="payment_back_currency")],
+                [InlineKeyboardButton(text=PAY().BTN_CANCEL, callback_data="payment_cancel")],
             ]
         )
 
@@ -239,7 +246,7 @@ class DonationPaymentFeature(BaseFeature):
                 await state.set_state(None)
             await render_user_screen(
                 message,
-                text=await self._donation_intro_text() + "Выберите валюту для доната:",
+                text=await self._donation_intro_text() + PAY().CHOOSE_CURRENCY,
                 reply_markup=self._currency_keyboard(
                     include_crypto=True,
                     show_subscription_mgmt=bool(active_sub),
@@ -253,7 +260,7 @@ class DonationPaymentFeature(BaseFeature):
 
         await render_user_screen(
             message,
-            text=await self._donation_intro_text() + "Выберите формат поддержки:",
+            text=await self._donation_intro_text() + PAY().CHOOSE_MODE,
             reply_markup=self._mode_keyboard(show_subscription_mgmt=bool(active_sub)),
             edit=edit,
             parse_mode=ParseMode.MARKDOWN,
@@ -309,7 +316,7 @@ class DonationPaymentFeature(BaseFeature):
         if data == "payment_mode_monthly":
             if not self._recurring_enabled():
                 await callback.answer(
-                    "Ежемесячная поддержка сейчас недоступна",
+                    PAY().MONTHLY_UNAVAILABLE,
                     show_alert=True,
                 )
                 return
@@ -353,7 +360,7 @@ class DonationPaymentFeature(BaseFeature):
         elif data == "payment_cancel":
             await self._cancel(callback, state)
         else:
-            await callback.answer("❌ Неизвестная команда")
+            await callback.answer(PAY().UNKNOWN_COMMAND)
 
     async def _show_currency_step(
         self, callback: CallbackQuery, state: FSMContext, *, include_crypto: bool
@@ -363,11 +370,11 @@ class DonationPaymentFeature(BaseFeature):
         uid = callback.from_user.id if callback.from_user else 0
         active_sub = await self.user_storage.get_user_active_donation_subscription(uid)
         if mode == "monthly":
-            title = "📅 **Ежемесячная поддержка**\n\nВыберите валюту:"
+            title = PAY().TITLE_MONTHLY
         elif self._recurring_enabled():
-            title = "💳 **Разовый платёж**\n\nВыберите валюту:"
+            title = PAY().TITLE_ONE_TIME
         else:
-            title = await self._donation_intro_text() + "Выберите валюту для доната:"
+            title = await self._donation_intro_text() + PAY().CHOOSE_CURRENCY
         await callback.message.edit_text(
             title,
             reply_markup=self._currency_keyboard(
@@ -383,7 +390,7 @@ class DonationPaymentFeature(BaseFeature):
         await state.update_data(currency=currency.lower())
         mode = (await state.get_data()).get("donation_mode", "one_time")
         await callback.message.edit_text(
-            "💎 **Любая сумма будет ценна для проекта**",
+            PAY().ANY_AMOUNT,
             reply_markup=self._amount_keyboard(currency, mode),
             parse_mode=ParseMode.MARKDOWN,
         )
@@ -403,7 +410,7 @@ class DonationPaymentFeature(BaseFeature):
         }
         await state.set_state(state_map[cur])
         await callback.message.edit_text(
-            f"💎 **Введите сумму в {cur} (минимум {min_amt} {sym}):**",
+            PAY().ENTER_AMOUNT.format(cur=cur, min_amt=min_amt, sym=sym),
             reply_markup=self._cancel_keyboard(),
             parse_mode=ParseMode.MARKDOWN,
         )
@@ -418,7 +425,7 @@ class DonationPaymentFeature(BaseFeature):
             if amount < min_amt:
                 sym = _CURRENCY_SYMBOL.get(currency, currency)
                 await message.answer(
-                    f"❌ Минимальная сумма {min_amt} {sym}. Введите сумму {min_amt} или больше."
+                    PAY().AMOUNT_TOO_SMALL.format(min_amt=min_amt, sym=sym)
                 )
                 return
             try:
@@ -428,10 +435,10 @@ class DonationPaymentFeature(BaseFeature):
             await self._create_payment_message(message, state, currency, amount)
             await state.clear()
         except ValueError:
-            await message.answer("❌ Пожалуйста, введите корректную сумму (только цифры)")
+            await message.answer(PAY().AMOUNT_NOT_A_NUMBER)
         except Exception as e:
             logger.error("❌ custom amount: %s", e, exc_info=True)
-            await message.answer("❌ Произошла ошибка. Попробуйте еще раз.")
+            await message.answer(PAY().GENERIC_ERROR)
 
     def _user_telegram_json(self, user) -> str:
         return json.dumps(
@@ -447,8 +454,8 @@ class DonationPaymentFeature(BaseFeature):
     def _payment_fail_keyboard(self) -> InlineKeyboardMarkup:
         return InlineKeyboardMarkup(
             inline_keyboard=[
-                [InlineKeyboardButton(text="◀️ Назад", callback_data="payment_back_mode")],
-                [InlineKeyboardButton(text="❌ Закрыть", callback_data="payment_cancel")],
+                [InlineKeyboardButton(text=PAY().BTN_BACK, callback_data="payment_back_mode")],
+                [InlineKeyboardButton(text=PAY().BTN_CLOSE, callback_data="payment_cancel")],
             ]
         )
 
@@ -459,7 +466,7 @@ class DonationPaymentFeature(BaseFeature):
         currency: str,
         amount: int,
     ) -> None:
-        await callback.answer("⏳ Создаю платеж...")
+        await callback.answer(PAY().CREATING_PAYMENT)
         mode = (await state.get_data()).get("donation_mode", "one_time")
         marathon_id = (await state.get_data()).get("marathon_id")
         user = callback.from_user
@@ -488,7 +495,7 @@ class DonationPaymentFeature(BaseFeature):
         except Exception as e:
             logger.error("❌ payment callback: %s", e, exc_info=True)
             await callback.message.edit_text(
-                "❌ Не удалось создать платеж. Попробуйте позже.",
+                PAY().PAYMENT_FAILED,
                 reply_markup=self._payment_fail_keyboard(),
                 parse_mode=ParseMode.MARKDOWN,
             )
@@ -528,7 +535,7 @@ class DonationPaymentFeature(BaseFeature):
         except Exception as e:
             logger.error("❌ payment message: %s", e, exc_info=True)
             await message.answer(
-                "❌ Не удалось создать платеж. Попробуйте позже.",
+                PAY().PAYMENT_FAILED,
                 reply_markup=self._payment_fail_keyboard(),
                 parse_mode=ParseMode.MARKDOWN,
             )
@@ -556,7 +563,7 @@ class DonationPaymentFeature(BaseFeature):
             provider = "bzb"
             payment_type = "subscription"
             description = f"Monthly support {amount} {cur}"
-            title = f"Ежемесячная поддержка {amount} {cur}"
+            title = PAY().SUBSCRIPTION_TITLE.format(amount=amount, cur=cur)
             create_kwargs = {
                 "currency": cur,
                 "title": title,
@@ -614,19 +621,19 @@ class DonationPaymentFeature(BaseFeature):
 
         keyboard = InlineKeyboardMarkup(
             inline_keyboard=[
-                [InlineKeyboardButton(text="🔗 Оплатить", url=confirmation_url)],
-                [InlineKeyboardButton(text="❌ Отмена", callback_data="payment_cancel")],
+                [InlineKeyboardButton(text=PAY().BTN_PAY, url=confirmation_url)],
+                [InlineKeyboardButton(text=PAY().BTN_CANCEL, callback_data="payment_cancel")],
             ]
         )
         if is_monthly:
             text = (
-                f"📅 **Ежемесячная поддержка:** {amount} {cur} / мес\n\n"
-                "Для оформления подписки перейдите по ссылке ниже:"
+                PAY().SUMMARY_MONTHLY.format(amount=amount, cur=cur)
+                + PAY().PAY_LINK_SUBSCRIPTION
             )
         else:
             text = (
-                f"💰 **Сумма:** {amount} {cur}\n\n"
-                "Для оплаты перейдите по ссылке ниже:"
+                PAY().SUMMARY_ONE_TIME.format(amount=amount, cur=cur)
+                + PAY().PAY_LINK_ONE_TIME
             )
         logger.info(
             "💰 donation payment row=%s provider=%s type=%s user=%s marathon=%s",
@@ -642,7 +649,7 @@ class DonationPaymentFeature(BaseFeature):
         uid = callback.from_user.id if callback.from_user else 0
         sub = await self.user_storage.get_user_active_donation_subscription(uid)
         if not sub:
-            await callback.answer("Активная подписка не найдена", show_alert=True)
+            await callback.answer(PAY().NO_ACTIVE_SUBSCRIPTION, show_alert=True)
             return
         cur = (sub.get("currency") or "RUB").upper()
         sym = _CURRENCY_SYMBOL.get(cur, cur)
@@ -651,25 +658,25 @@ class DonationPaymentFeature(BaseFeature):
         next_line = ""
         if next_at:
             if hasattr(next_at, "strftime"):
-                next_line = f"\n📆 Следующее списание: {next_at.strftime('%d.%m.%Y')}"
+                next_line = PAY().NEXT_CHARGE.format(when=next_at.strftime("%d.%m.%Y"))
             else:
-                next_line = f"\n📆 Следующее списание: {next_at}"
+                next_line = PAY().NEXT_CHARGE.format(when=next_at)
         keyboard = InlineKeyboardMarkup(
             inline_keyboard=[
                 [
                     InlineKeyboardButton(
-                        text="❌ Отменить подписку",
+                        text=PAY().BTN_CANCEL_SUBSCRIPTION,
                         callback_data="payment_cancel_subscription",
                     )
                 ],
-                [InlineKeyboardButton(text="◀️ Назад", callback_data="payment_back_mode")],
+                [InlineKeyboardButton(text=PAY().BTN_BACK, callback_data="payment_back_mode")],
             ]
         )
         await callback.message.edit_text(
-            f"📋 **Ваша подписка**\n\n"
-            f"💰 {sub.get('amount')} {sym} / мес\n"
-            f"📌 Статус: {status}"
-            f"{next_line}",
+            PAY().MY_SUBSCRIPTION
+            + PAY().SUBSCRIPTION_AMOUNT.format(amount=sub.get("amount"), sym=sym)
+            + PAY().SUBSCRIPTION_STATUS.format(status=status)
+            + f"{next_line}",
             reply_markup=keyboard,
             parse_mode=ParseMode.MARKDOWN,
         )
@@ -680,16 +687,15 @@ class DonationPaymentFeature(BaseFeature):
             inline_keyboard=[
                 [
                     InlineKeyboardButton(
-                        text="✅ Да, отменить",
+                        text=PAY().BTN_CONFIRM_CANCEL,
                         callback_data="payment_confirm_cancel_sub",
                     )
                 ],
-                [InlineKeyboardButton(text="◀️ Назад", callback_data="payment_my_subscription")],
+                [InlineKeyboardButton(text=PAY().BTN_BACK, callback_data="payment_my_subscription")],
             ]
         )
         await callback.message.edit_text(
-            "Вы уверены, что хотите отменить ежемесячную поддержку?\n"
-            "Новые списания производиться не будут.",
+            PAY().CONFIRM_CANCEL,
             reply_markup=keyboard,
             parse_mode=ParseMode.MARKDOWN,
         )
@@ -699,26 +705,26 @@ class DonationPaymentFeature(BaseFeature):
         uid = callback.from_user.id if callback.from_user else 0
         sub = await self.user_storage.get_user_active_donation_subscription(uid)
         if not sub:
-            await callback.answer("Подписка не найдена", show_alert=True)
+            await callback.answer(PAY().SUBSCRIPTION_NOT_FOUND, show_alert=True)
             return
         if not self.bzb_service:
-            await callback.answer("Сервис недоступен", show_alert=True)
+            await callback.answer(PAY().SERVICE_UNAVAILABLE, show_alert=True)
             return
         bzb_id = sub["bzb_subscription_id"]
         result = await self.bzb_service.cancel_subscription(bzb_id)
         if not result:
             await callback.message.edit_text(
-                "❌ Не удалось отменить подписку. Попробуйте позже или напишите в поддержку.",
+                PAY().CANCEL_FAILED,
                 parse_mode=ParseMode.MARKDOWN,
             )
             await callback.answer()
             return
         await self.user_storage.mark_donation_subscription_canceled(int(sub["id"]))
         await callback.message.edit_text(
-            "✅ Подписка отменена. Спасибо, что поддерживали проект!",
+            PAY().CANCELED_FULL,
             parse_mode=ParseMode.MARKDOWN,
         )
-        await callback.answer("Подписка отменена")
+        await callback.answer(PAY().CANCELED_TOAST)
 
     async def _handle_crypto_donation(self, callback: CallbackQuery) -> None:
         # Кошелёк берётся по языку бота. Без этого испанские донаты уходили бы
@@ -728,15 +734,15 @@ class DonationPaymentFeature(BaseFeature):
 
         address = crypto_address() or "TTq5YQ8NHowe9zT4bqW7gW79kDeioFCnpu"
         msg = (
-            "💎 **Донат криптовалютой**\n\n"
-            "Вы можете поддержать проект, отправив средства на следующий адрес:\n\n"
-            f"`{address}`\n\n"
-            "📌 **Сеть:** TRC-20 (Tron)\n"
-            "💡 **Важно:** Убедитесь, что используете правильную сеть для перевода.\n\n"
-            "Спасибо за вашу поддержку! ❤️"
+            PAY().CRYPTO_TITLE
+            + PAY().CRYPTO_LEAD
+            + f"`{address}`\n\n"
+            + PAY().CRYPTO_NETWORK
+            + PAY().CRYPTO_WARNING
+            + PAY().CRYPTO_THANKS
         )
         await callback.message.edit_text(msg, parse_mode=ParseMode.MARKDOWN)
-        await callback.answer("✅ Адрес для перевода")
+        await callback.answer(PAY().CRYPTO_TOAST)
 
     async def _back_to_mode(self, callback: CallbackQuery, state: FSMContext) -> None:
         uid = callback.from_user.id if callback.from_user else 0
@@ -746,7 +752,7 @@ class DonationPaymentFeature(BaseFeature):
             await state.update_data(donation_mode="one_time")
             await state.set_state(None)
             await callback.message.edit_text(
-                await self._donation_intro_text() + "Выберите валюту для доната:",
+                await self._donation_intro_text() + PAY().CHOOSE_CURRENCY,
                 reply_markup=self._currency_keyboard(
                     include_crypto=True,
                     show_subscription_mgmt=bool(active_sub),
@@ -759,7 +765,7 @@ class DonationPaymentFeature(BaseFeature):
 
         await state.clear()
         await callback.message.edit_text(
-            await self._donation_intro_text() + "Выберите формат поддержки:",
+            await self._donation_intro_text() + PAY().CHOOSE_MODE,
             reply_markup=self._mode_keyboard(show_subscription_mgmt=bool(active_sub)),
             parse_mode=ParseMode.MARKDOWN,
         )
@@ -792,11 +798,11 @@ class DonationPaymentFeature(BaseFeature):
         uid = callback.from_user.id if callback.from_user else 0
         active_sub = await self.user_storage.get_user_active_donation_subscription(uid)
         if mode == "monthly":
-            title = "📅 **Ежемесячная поддержка**\n\nВыберите валюту:"
+            title = PAY().TITLE_MONTHLY
         elif self._recurring_enabled():
-            title = "💳 **Разовый платёж**\n\nВыберите валюту:"
+            title = PAY().TITLE_ONE_TIME
         else:
-            title = await self._donation_intro_text() + "Выберите валюту для доната:"
+            title = await self._donation_intro_text() + PAY().CHOOSE_CURRENCY
         await callback.message.edit_text(
             title,
             reply_markup=self._currency_keyboard(
@@ -815,7 +821,7 @@ class DonationPaymentFeature(BaseFeature):
         except Exception as e:
             logger.info("donation cancel: delete skipped: %s", e)
             try:
-                await callback.message.edit_text("❌ Операция отменена")
+                await callback.message.edit_text(PAY().OPERATION_CANCELED)
             except Exception:
                 pass
-        await callback.answer("❌ Операция отменена")
+        await callback.answer(PAY().OPERATION_CANCELED)
