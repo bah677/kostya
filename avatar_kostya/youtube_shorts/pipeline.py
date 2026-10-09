@@ -142,7 +142,7 @@ async def run_daily_youtube_shorts_pipeline(
 
     if shorts_upload_enabled():
         try:
-            probe_youtube_oauth(require_upload_enabled=False)
+            probe_youtube_oauth(require_upload_enabled=False, lang=lang)
         except YoutubeOAuthError as e:
             logger.error("yt_shorts OAuth preflight failed: %s", e)
             await notify_youtube_oauth_problem(
