@@ -86,6 +86,21 @@ def _load_pending() -> dict:
         return {}
 
 
+def _whoami(creds) -> tuple[str, str]:
+    """Название и ID канала, которому выдали разрешение."""
+    try:
+        from googleapiclient.discovery import build
+
+        yt = build("youtube", "v3", credentials=creds, cache_discovery=False)
+        items = yt.channels().list(part="snippet", mine=True).execute().get("items") or []
+        if not items:
+            return "", ""
+        return items[0]["snippet"].get("title", ""), items[0].get("id", "")
+    except Exception as e:  # сеть/квота — не повод терять уже полученный токен
+        print(f"(не смог проверить канал: {e})", file=sys.stderr)
+        return "", ""
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="YouTube OAuth setup for yt_prayer uploads")
     parser.add_argument("--client-secret", default="")
@@ -94,6 +109,14 @@ def main() -> int:
         "--code",
         default="",
         help="Код или полный URL http://localhost/?code=...",
+    )
+    parser.add_argument(
+        "--expect-channel",
+        default="",
+        help=(
+            "ID канала, который должен быть авторизован (UC...). Если Google "
+            "вернул другой — токен не сохраняется."
+        ),
     )
     args = parser.parse_args()
 
@@ -156,6 +179,25 @@ def main() -> int:
             return 1
         flow.fetch_token(code=code)
         creds = flow.credentials
+
+    # Какой канал на самом деле авторизовали. При нескольких каналах в одном
+    # аккаунте Google показывает выбор, и промахнуться легко — а промах значит,
+    # что ролики одного языка молча уедут на канал другого.
+    title, channel_id = _whoami(creds)
+    if channel_id:
+        print(f"Авторизован канал: {title} ({channel_id})")
+    else:
+        print("ВНИМАНИЕ: не удалось определить канал — проверьте вручную.")
+
+    expect = (args.expect_channel or "").strip()
+    if expect and channel_id and expect != channel_id:
+        print(
+            f"ОТМЕНА: ожидали канал {expect}, а разрешение выдано для "
+            f"{channel_id} ({title}). Токен НЕ сохранён.\n"
+            "Запустите снова и на экране Google выберите нужный канал.",
+            file=sys.stderr,
+        )
+        return 1
 
     token.parent.mkdir(parents=True, exist_ok=True)
     token.write_text(creds.to_json(), encoding="utf-8")
