@@ -16,7 +16,7 @@ from typing import Dict, List, Literal, Optional
 
 from openai import AsyncOpenAI
 
-from openai_client.scripture_prompt import BIBLIA_AGENT_SYSTEM_PROMPT
+from openai_client.scripture_prompt import scripture_system_prompt
 from bot.utils.telegram_html import strip_llm_code_fence
 from storage.db.llm_token_normalize import extract_token_counts_and_extras
 
@@ -141,12 +141,17 @@ class AgentsClient:
             max_retries=2,
         )
 
+        # Промпт берётся по языку этого процесса: BOT_LANG=es поднимает
+        # испанский диалог с Писанием, всё остальное — русский, как было.
+        from bot.langs import bot_lang
+
+        lang = bot_lang()
         self.system_prompt = (
             system_prompt_override
             if system_prompt_override is not None
-            else BIBLIA_AGENT_SYSTEM_PROMPT
+            else scripture_system_prompt(lang)
         )
-        src = "override" if system_prompt_override is not None else "scripture_prompt"
+        src = "override" if system_prompt_override is not None else f"scripture_prompt[{lang}]"
         logger.info(
             "✅ AgentsClient: system prompt из %s (%s символов)",
             src,

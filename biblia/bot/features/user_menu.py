@@ -15,7 +15,9 @@ from aiogram.types import (
 )
 
 from bot.features.base import BaseFeature
-from bot.texts import ru_user_menu as menu_txt
+from bot.texts import user_menu as _user_menu_texts
+
+menu_txt = _user_menu_texts()
 from bot.utils.user_ui import CB_MAIN_MENU, render_user_screen
 
 logger = logging.getLogger(__name__)

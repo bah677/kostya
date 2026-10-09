@@ -9,7 +9,9 @@ from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 
-from bot.texts import ru_user_menu as menu_txt
+from bot.texts import user_menu as _user_menu_texts
+
+menu_txt = _user_menu_texts()
 
 logger = logging.getLogger(__name__)
 

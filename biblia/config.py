@@ -19,7 +19,19 @@ from dotenv import load_dotenv
 _CONFIG_DIR = Path(__file__).resolve().parent
 # Явно подгружаем `.env` из каталога проекта (рядом с этим файлом),
 # чтобы переменные находились независимо от текущей рабочей директории.
-load_dotenv(_CONFIG_DIR / ".env")
+#
+# BOT_ENV_FILE позволяет поднять из того же кода второй бот со своим токеном,
+# своей базой и своим языком: supervisor передаёт ему путь к .env.es.
+# Без этой переменной всё как было — читается .env рядом с config.py.
+#
+# load_dotenv не перетирает уже выставленные переменные, поэтому то, что
+# задано в конфиге supervisor, остаётся главнее файла.
+_ENV_FILE = Path(os.getenv("BOT_ENV_FILE") or (_CONFIG_DIR / ".env"))
+if not _ENV_FILE.is_file():
+    logging.getLogger(__name__).warning(
+        "BOT_ENV_FILE указывает на несуществующий файл: %s", _ENV_FILE
+    )
+load_dotenv(_ENV_FILE)
 
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)

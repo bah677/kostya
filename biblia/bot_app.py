@@ -142,6 +142,25 @@ class BotApplication(TelegramBotApp):
             background_jobs,
             user_menu,
         ]
+        # Фильтр по языку процесса. У испанского бота поднимается только то,
+        # что для него переведено; остальное даже не регистрируется, иначе
+        # человек наткнётся на русский текст в чужом боте.
+        #
+        # Отключённые фичи ищутся через feature_manager.get(...) в паре мест
+        # (меню смотрит payment и referral) — там везде стоит проверка на
+        # None, так что отсутствие фичи переносится штатно.
+        from bot.langs import bot_lang, feature_enabled, profile
+
+        lang = bot_lang()
+        skipped = [f.name for f in features if not feature_enabled(f.name, lang)]
+        features = [f for f in features if feature_enabled(f.name, lang)]
+        logger.info(
+            "Язык бота: %s. Фич поднято %s%s",
+            profile(lang).label,
+            len(features),
+            f", выключено {len(skipped)}: {', '.join(skipped)}" if skipped else "",
+        )
+
         for feature in features:
             self.feature_manager.register(feature)
             if hasattr(feature, "set_bot"):

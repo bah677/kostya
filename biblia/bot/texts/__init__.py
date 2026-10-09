@@ -1,1 +1,23 @@
-"""Тексты (RU) для админ-рассылок (`/new_mailing`)."""
+"""Тексты интерфейса. Модуль выбирается по языку процесса.
+
+Файлы называются <язык>_<экран>.py. Префикс был заведён ещё до второго бота,
+так что добавление испанского ничего не ломает: ru_user_menu остаётся на
+месте, рядом появляется es_user_menu.
+"""
+
+from __future__ import annotations
+
+from types import ModuleType
+
+
+def user_menu() -> ModuleType:
+    """Тексты /menu на языке этого бота."""
+    from bot.langs import bot_lang
+
+    if bot_lang() == "es":
+        from bot.texts import es_user_menu
+
+        return es_user_menu
+    from bot.texts import ru_user_menu
+
+    return ru_user_menu
