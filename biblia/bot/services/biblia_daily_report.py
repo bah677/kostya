@@ -1018,7 +1018,48 @@ class BibliaDailyReportCollector:
         referrals_paid = int(metrics.get("referrals_paid_referred", 0))
         day_label = metrics.get("day_label") or "за вчера"
 
-        return f"""<b>🤖 БИБЛИЯ</b>
+        # Отчёт читают русскоязычные админы, поэтому он остаётся русским —
+        # меняется только шапка, валюта и состав блоков. Боты шлют его каждый
+        # из своей базы, и в общем канале их надо различать с первой строки.
+        from bot.langs import bot_lang, feature_enabled, profile
+
+        lang = bot_lang()
+        if lang == "ru":
+            title = "🤖 БИБЛИЯ"
+            cur = "₽"
+        else:
+            title = f"🤖 БИБЛИЯ · {profile(lang).label.upper()} ({profile(lang).bot_title})"
+            cur = profile(lang).currency_symbol
+
+        # Блоки выключенных фич не печатаем: строка нулей каждый день — это
+        # не информация, а шум, в котором тонут живые цифры.
+        if feature_enabled("personal_prayer", lang):
+            prayer_lines = (
+                f"\n    • Генераций молитв: {metrics.get('prayer_generations_yesterday', 0)}"
+                f"\n    • Уников в молитвах: {metrics.get('prayer_unique_users_yesterday', 0)}"
+                f"\n    • Молитвы за 30 дней: {metrics.get('prayer_generations_30d', 0)}"
+                f" / {metrics.get('prayer_unique_users_30d', 0)} уников"
+            )
+        else:
+            prayer_lines = ""
+
+        if feature_enabled("referral", lang):
+            referral_block = f"""
+    <b>🔗 РЕФЕРАЛЬНАЯ ПРОГРАММА</b>
+    <i>без учёта {', '.join(str(uid) for uid in _EXCLUDED_STATS_USER_IDS)}</i>
+    • Переходов по ссылкам (всего): {metrics.get('referrals_total', 0):,}
+    • Уникальных пригласивших: {metrics.get('referrals_unique_referrers', 0):,}
+    • Уникальных приглашённых: {referrals_referred:,}
+    • С оплатой среди приглашённых: {referrals_paid:,} ({metrics.get('referrals_paid_pct', 0)}%)
+    • {day_label.capitalize()}: {metrics['new_referrals_yesterday']:,}
+    • За 30 дней: {metrics['new_referrals_30d']:,}
+    • Глубина дерева (макс.): {metrics.get('referral_tree_max_depth', 0)}{referral_depth_s}
+    • Топ пригласивших:{referral_top_s or chr(10) + '      – нет данных'}
+"""
+        else:
+            referral_block = ""
+
+        return f"""<b>{title}</b>
     <i>{metrics['period']}</i>
     • Подписчиков всего: {metrics['subscribers']:,}
 
@@ -1030,31 +1071,17 @@ class BibliaDailyReportCollector:
     • Сообщений: {metrics['messages']:,}
     • Глубина общения: {metrics['avg_messages_per_user']}
     • Голосовых сообщений: {metrics.get('voice_messages', 0)} ({voice_percent}%)
-    • Пользователей с аудио: {metrics.get('unique_voice_users', 0)} ({voice_users_percent}%)
-    • Генераций молитв: {metrics.get('prayer_generations_yesterday', 0)}
-    • Уников в молитвах: {metrics.get('prayer_unique_users_yesterday', 0)}
-    • Молитвы за 30 дней: {metrics.get('prayer_generations_30d', 0)} / {metrics.get('prayer_unique_users_30d', 0)} уников
+    • Пользователей с аудио: {metrics.get('unique_voice_users', 0)} ({voice_users_percent}%){prayer_lines}
 
     <b>🆕 НОВЫЕ ПОЛЬЗОВАТЕЛИ</b>
     • {day_label.capitalize()}: {metrics['new_users_yesterday']:,}
     • За 30 дней: {metrics['new_users_30d']:,}
-
-    <b>🔗 РЕФЕРАЛЬНАЯ ПРОГРАММА</b>
-    <i>без учёта {', '.join(str(uid) for uid in _EXCLUDED_STATS_USER_IDS)}</i>
-    • Переходов по ссылкам (всего): {metrics.get('referrals_total', 0):,}
-    • Уникальных пригласивших: {metrics.get('referrals_unique_referrers', 0):,}
-    • Уникальных приглашённых: {referrals_referred:,}
-    • С оплатой среди приглашённых: {referrals_paid:,} ({metrics.get('referrals_paid_pct', 0)}%)
-    • {day_label.capitalize()}: {metrics['new_referrals_yesterday']:,}
-    • За 30 дней: {metrics['new_referrals_30d']:,}
-    • Глубина дерева (макс.): {metrics.get('referral_tree_max_depth', 0)}{referral_depth_s}
-    • Топ пригласивших:{referral_top_s or chr(10) + '      – нет данных'}
-
+{referral_block}
     <b>💰 ДОНАТЫ</b>
-    • Сумма {day_label}: {metrics['donations_yesterday']:,.0f} ₽
+    • Сумма {day_label}: {metrics['donations_yesterday']:,.0f} {cur}
     • Количество донатов: {metrics.get('donations_count', 0)}
     • Уникальных донатеров: {metrics.get('unique_donors', 0)}
-    • {metrics['month_period']}: {metrics['donations_month_to_date']:,.0f} ₽{donations_by_month_s}
+    • {metrics['month_period']}: {metrics['donations_month_to_date']:,.0f} {cur}{donations_by_month_s}
     • Медиана вопросов до доната (всего): {median_questions_s}{median_by_month_s}
 
     • Среднее донатов на донатера (всего): {avg_donations_s}{donor_distribution_s}

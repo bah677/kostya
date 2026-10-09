@@ -37,6 +37,10 @@ class BotLang:
     # Переменная с адресом кошелька USDT TRC-20. У каждого бота свой, иначе
     # в поступлениях не видно, с какого канала пришёл человек.
     crypto_env: str = "BIBLIA_CRYPTO_USDT_TRON_ADDRESS"
+    # Как бот называется в шапке ночного отчёта: в общем админском канале
+    # отчёты двух ботов должны различаться с первой строки.
+    bot_title: str = "Библия"
+    currency_symbol: str = "₽"
 
 
 _PROFILES: Dict[str, BotLang] = {
@@ -56,7 +60,18 @@ _PROFILES: Dict[str, BotLang] = {
         code="es",
         label="испанский",
         iso="es",
-        features=frozenset({"messaging", "user_menu", "background_jobs", "payment"}),
+        features=frozenset(
+            {
+                "messaging",
+                "user_menu",
+                "background_jobs",
+                "payment",
+                # Свой ночной отчёт в 00:01 МСК, из своей базы.
+                "daily_admin_report",
+            }
+        ),
+        bot_title="Habla con Dios",
+        currency_symbol="$",
         # Только доллары: рубли и евро аудитории Латинской Америки не нужны,
         # а лишние кнопки в оплате снижают доходимость.
         currencies=("USD",),
