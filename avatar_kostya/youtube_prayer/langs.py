@@ -61,6 +61,10 @@ class LangProfile:
     cta: str
     # Свой бот на каждый язык: у испанского канала свой клон библейского бота.
     bot_username_env: str = "YT_SHORTS_BOT_USERNAME"
+    # Куда звать, если в .env ничего не задано. Для русского это исторический
+    # хардкод из metadata.py — переменной YT_SHORTS_BOT_USERNAME в боевом .env
+    # нет, и без этого значения карточка осталась бы без адреса.
+    default_destination: str = ""
     # Файл истории тем, чтобы языки не пересекались.
     history_file: str = "used_trends.json"
     themes_key: str = "themes"
@@ -81,6 +85,7 @@ _PROFILES: Dict[str, LangProfile] = {
         default_hashtags=("#молитва", "#вера", "#христианство", "#утешение", "#Бог"),
         default_tags=("молитва", "христианская молитва", "вера", "утешение"),
         outro_text="Молитва по твоей ситуации",
+        default_destination="Talk_God_Bot",
         amen_markers=("аминь",),
         prayer_closing="Во имя Иисуса Христа, Аминь",
         attune="Закрой глаза и давай вместе помолимся.",
@@ -278,6 +283,8 @@ def destination_for(lang: Optional[str]) -> tuple[str, str]:
         shared = (os.getenv("YT_SHORTS_BOT_USERNAME") or "").strip().lstrip("@")
         if shared:
             return f"@{shared}", ""
+    if p.default_destination:
+        return f"@{p.default_destination}", ""
     return "", ""
 
 
