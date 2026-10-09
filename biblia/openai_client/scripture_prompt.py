@@ -101,7 +101,11 @@ _SCRIPTURE_BY_LANG = {
 
 
 def scripture_system_prompt(lang: str | None = None) -> str:
-    """Системный промпт диалога с Писанием на языке этого бота."""
-    from bot.langs import normalize_lang
+    """Системный промпт диалога с Писанием на языке этого бота.
 
-    return _SCRIPTURE_BY_LANG[normalize_lang(lang)]
+    Без аргумента берётся язык процесса, а не русский: иначе вызов по
+    умолчанию молча отдавал бы испанскому боту русский промпт.
+    """
+    from bot.langs import bot_lang, normalize_lang
+
+    return _SCRIPTURE_BY_LANG[normalize_lang(lang) if lang else bot_lang()]

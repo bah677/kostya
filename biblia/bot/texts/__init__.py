@@ -10,6 +10,19 @@ from __future__ import annotations
 from types import ModuleType
 
 
+def donation() -> ModuleType:
+    """Тексты кнопок поддержки на языке этого бота."""
+    from bot.langs import bot_lang
+
+    if bot_lang() == "es":
+        from bot.texts import es_donation
+
+        return es_donation
+    from bot.texts import ru_donation
+
+    return ru_donation
+
+
 def user_menu() -> ModuleType:
     """Тексты /menu на языке этого бота."""
     from bot.langs import bot_lang

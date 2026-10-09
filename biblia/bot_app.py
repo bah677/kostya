@@ -173,8 +173,10 @@ class BotApplication(TelegramBotApp):
     def _register_handlers(self) -> None:
         AppCommandHandlers(self.dp, self.feature_manager).register_handlers()
 
+        # Фича может быть выключена для этого языка — тогда её просто нет.
         payment = self.feature_manager.get("payment")
-        payment.register_handlers(self.dp)
+        if payment:
+            payment.register_handlers(self.dp)
 
         # До MessageHandlers: иначе universal message/callback перехватят /new_mailing и aml:*
         admin_mailing.register_admin_mailing_handlers(

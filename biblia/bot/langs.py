@@ -32,6 +32,11 @@ class BotLang:
     iso: str
     # Какие фичи поднимать. Пусто — значит все (русский, как было).
     features: FrozenSet[str] = frozenset()
+    # Валюты в меню доната. Рубли мексиканцу предлагать незачем.
+    currencies: tuple = ("RUB", "USD", "EUR")
+    # Переменная с адресом кошелька USDT TRC-20. У каждого бота свой, иначе
+    # в поступлениях не видно, с какого канала пришёл человек.
+    crypto_env: str = "BIBLIA_CRYPTO_USDT_TRON_ADDRESS"
 
 
 _PROFILES: Dict[str, BotLang] = {
@@ -51,7 +56,11 @@ _PROFILES: Dict[str, BotLang] = {
         code="es",
         label="испанский",
         iso="es",
-        features=frozenset({"messaging", "user_menu", "background_jobs"}),
+        features=frozenset({"messaging", "user_menu", "background_jobs", "payment"}),
+        # Только доллары: рубли и евро аудитории Латинской Америки не нужны,
+        # а лишние кнопки в оплате снижают доходимость.
+        currencies=("USD",),
+        crypto_env="BIBLIA_CRYPTO_USDT_TRON_ADDRESS_ES",
     ),
 }
 
@@ -89,6 +98,24 @@ def feature_enabled(name: str, lang: Optional[str] = None) -> bool:
     """Поднимать ли фичу на этом языке. Пустой список в профиле — все можно."""
     allowed = profile(lang).features
     return (not allowed) or (name in allowed)
+
+
+def currencies(lang: Optional[str] = None) -> List[str]:
+    """Валюты доната на этом языке."""
+    return list(profile(lang).currencies)
+
+
+def crypto_address(lang: Optional[str] = None) -> str:
+    """Адрес USDT TRC-20 этого бота."""
+    p = profile(lang)
+    own = (os.getenv(p.crypto_env) or "").strip()
+    if own:
+        return own
+    # Общая переменная — только для языка по умолчанию: иначе испанские
+    # донаты молча пошли бы на русский кошелёк.
+    if p.code == DEFAULT_LANG:
+        return (os.getenv("BIBLIA_CRYPTO_USDT_TRON_ADDRESS") or "").strip()
+    return ""
 
 
 def known_langs() -> List[str]:

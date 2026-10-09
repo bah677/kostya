@@ -12,25 +12,44 @@ from bot.services.crisis_classifier import is_crisis_context
 
 logger = logging.getLogger(__name__)
 
-_CLUB_REF_URL = "https://t.me/Talk_God_Bot?start=ref_202604123451"
-_CLUB_BUTTON_TEXT = "Клуб Любящие Бога"
 DONATION_CLUB_RANDOM_META_KEY = "__donation_club_random"
 
 
-def build_random_inline_button() -> InlineKeyboardButton:
-    """Случайно: поддержать / клуб / молитва."""
-    r = random.randint(1, 3)
-    if r == 1:
-        return InlineKeyboardButton(
-            text="💳 Поддержать проект",
-            callback_data="payment_start",
-        )
-    if r == 2:
-        return InlineKeyboardButton(text=_CLUB_BUTTON_TEXT, url=_CLUB_REF_URL)
+def _support_button() -> InlineKeyboardButton:
+    from bot.texts import donation as _txt
+
     return InlineKeyboardButton(
-        text="🙏 Помолиться",
-        callback_data="prayer_start",
+        text=_txt().BTN_SUPPORT,
+        callback_data="payment_start",
     )
+
+
+def build_random_inline_button() -> InlineKeyboardButton:
+    """Случайная кнопка под ответом: поддержать / клуб / молитва.
+
+    Набор вариантов собирается из того, что на этом языке реально включено.
+    Раньше он был жёстко из трёх, и на испанском боте человеку выпадала бы
+    то кнопка русского клуба, то «Помолиться» от выключенной фичи — то есть
+    в двух случаях из трёх кнопка никуда не ведёт.
+    """
+    from bot.langs import feature_enabled
+    from bot.texts import donation as _txt
+
+    txt = _txt()
+    variants: list[InlineKeyboardButton] = []
+    if feature_enabled("payment"):
+        variants.append(_support_button())
+    if txt.CLUB_URL and txt.BTN_CLUB:
+        variants.append(InlineKeyboardButton(text=txt.BTN_CLUB, url=txt.CLUB_URL))
+    if feature_enabled("personal_prayer"):
+        variants.append(
+            InlineKeyboardButton(text=txt.BTN_PRAYER, callback_data="prayer_start")
+        )
+    if not variants:
+        # Ни одной осмысленной кнопки: отдаём поддержку, вызывающая сторона
+        # всё равно проверит, включены ли платежи.
+        return _support_button()
+    return random.choice(variants)
 
 
 def build_random_donation_club_inline_button() -> InlineKeyboardButton:
@@ -150,10 +169,7 @@ async def maybe_donation_keyboard(
     btn = build_random_inline_button()
     # При owed после кризиса предпочитаем коммерческую кнопку
     if force_owed and not _is_commerce_button(btn):
-        btn = InlineKeyboardButton(
-            text="💳 Поддержать проект",
-            callback_data="payment_start",
-        )
+        btn = _support_button()
 
     if crisis and _is_commerce_button(btn):
         try:

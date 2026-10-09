@@ -721,10 +721,12 @@ class DonationPaymentFeature(BaseFeature):
         await callback.answer("Подписка отменена")
 
     async def _handle_crypto_donation(self, callback: CallbackQuery) -> None:
-        address = (
-            os.getenv("BIBLIA_CRYPTO_USDT_TRON_ADDRESS", "").strip()
-            or "TTq5YQ8NHowe9zT4bqW7gW79kDeioFCnpu"
-        )
+        # Кошелёк берётся по языку бота. Без этого испанские донаты уходили бы
+        # на русский адрес, и в поступлениях не было бы видно, какой канал их
+        # привёл. Жёсткий адрес ниже — исторический запасной для русского.
+        from bot.langs import crypto_address
+
+        address = crypto_address() or "TTq5YQ8NHowe9zT4bqW7gW79kDeioFCnpu"
         msg = (
             "💎 **Донат криптовалютой**\n\n"
             "Вы можете поддержать проект, отправив средства на следующий адрес:\n\n"
