@@ -330,6 +330,20 @@ class YoutubePrayerFeature(BaseFeature):
                         progress_chat_id=progress_chat_id,
                     )
                 )
+                es_count = int(getattr(config, "YT_SHORTS_ES_COUNT", 0) or 0)
+                if es_count > 0:
+                    notes.append(
+                        await self._run_shorts(
+                            count=es_count,
+                            chat_id=chat_id,
+                            topic_id=topic_id,
+                            horizontal_work=None,
+                            history_days=history_days,
+                            force=force,
+                            progress_chat_id=progress_chat_id,
+                            lang="es",
+                        )
+                    )
             await self._say(progress_chat_id, "\n".join(n for n in notes if n))
             # Срез и разбор — после публикации, чтобы вчерашний день был закрыт.
             await self._channel_report(chat_id, topic_id, progress_chat_id)
@@ -384,19 +398,33 @@ class YoutubePrayerFeature(BaseFeature):
         count: int,
         chat_id: int,
         topic_id: int,
-        horizontal_work: Path,
+        horizontal_work: Optional[Path],
         history_days: int,
         force: bool,
         progress_chat_id: Optional[int],
+        lang: str = "ru",
     ) -> str:
+        from youtube_prayer.langs import normalize_lang, profile
+
+        lang = normalize_lang(lang)
+        tag = "Shorts" if lang == "ru" else f"Shorts {profile(lang).label}"
         if count <= 0:
-            logger.info("[%s] Shorts пропущены (count=0)", self.name)
-            return "Shorts: пропущены (count=0)."
+            logger.info("[%s] %s пропущены (count=0)", self.name, tag)
+            return f"{tag}: пропущены (count=0)."
         from youtube_shorts.pipeline import run_daily_youtube_shorts_pipeline
 
-        shorts_work = _abs_dir(
-            getattr(config, "YT_SHORTS_WORK_DIR", None), "data/youtube_shorts"
-        )
+        # Каждому языку — свой рабочий каталог. Иначе второй прогон за день
+        # увидит отметку «готово» от первого и молча ничего не сделает,
+        # а истории тем двух каналов перемешаются.
+        if lang == "ru":
+            shorts_work = _abs_dir(
+                getattr(config, "YT_SHORTS_WORK_DIR", None), "data/youtube_shorts"
+            )
+        else:
+            shorts_work = _abs_dir(
+                getattr(config, f"YT_SHORTS_WORK_DIR_{lang.upper()}", None),
+                f"data/youtube_shorts_{lang}",
+            )
         shorts_topic = int(getattr(config, "YT_SHORTS_TOPIC_ID", 0) or 0) or topic_id
         result = await run_daily_youtube_shorts_pipeline(
             self._app.bot,
@@ -408,12 +436,13 @@ class YoutubePrayerFeature(BaseFeature):
             progress_chat_id=progress_chat_id,
             history_days=history_days,
             horizontal_work_root=horizontal_work,
+            lang=lang,
         )
         if result.skipped:
-            return f"Shorts: уже готовы за {result.day}. Повтор — /yt_shorts force"
+            return f"{tag}: уже готовы за {result.day}. Повтор — /yt_shorts force"
         if not result.ok:
-            return f"⛔ Shorts остановлены: {result.error}"
-        return f"Shorts за {result.day}: ×{len(result.themes)}"
+            return f"⛔ {tag} остановлены: {result.error}"
+        return f"{tag} за {result.day}: ×{len(result.themes)}"
 
     async def _channel_report(
         self, chat_id: int, topic_id: int, progress_chat_id: Optional[int]
