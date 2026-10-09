@@ -11,6 +11,11 @@
 #
 set -euo pipefail
 
+# Без этого молчаливый выход выглядит как «скрипт ничего не сделал». Так и
+# случилось в первый раз: grep не нашёл ключа, pipefail убил скрипт, а на
+# экране не появилось ни строчки.
+trap 'rc=$?; [[ $rc -ne 0 ]] && echo "ОБОРВАЛОСЬ на строке ${LINENO}, код ${rc}" >&2; exit $rc' ERR
+
 ROOT="${BIBLIA_ROOT:-/home/appuser/biblia}"
 ENV_ES="${ROOT}/.env.es"
 CONF="${SUPERVISOR_CONF:-/etc/supervisor/conf.d/bots.conf}"
@@ -37,12 +42,30 @@ if grep -qE '^BIBLIA_BOT_TOKEN=(ПОДСТАВЬТЕ_ТОКЕН)?[[:space:]]*$' 
 fi
 
 # dotenv берёт ПОСЛЕДНЕЕ значение ключа — сверяем именно последние.
-last_val() { grep -E "^$1=" "$2" | tail -1 | cut -d= -f2- | tr -d '[:space:]'; }
+# "|| true" обязательно: без него отсутствие ключа валит скрипт молча.
+last_val() {
+  grep -E "^$1=" "$2" 2>/dev/null | tail -1 | cut -d= -f2- | tr -d '[:space:]' || true
+}
+
+# Имя базы русского бота: в его .env может стоять только общий DB_NAME —
+# config.py подхватывает его как запасной (см. _biblia_db_name).
+ru_db_name() {
+  local v
+  v=$(last_val BIBLIA_DB_NAME "${ROOT}/.env")
+  [[ -n "$v" ]] || v=$(last_val DB_NAME "${ROOT}/.env")
+  printf '%s' "$v"
+}
+
 es_lang=$(last_val BOT_LANG "${ENV_ES}")
 es_db=$(last_val BIBLIA_DB_NAME "${ENV_ES}")
-ru_db=$(last_val BIBLIA_DB_NAME "${ROOT}/.env")
+ru_db=$(ru_db_name)
 es_token=$(last_val BIBLIA_BOT_TOKEN "${ENV_ES}")
 ru_token=$(last_val BIBLIA_BOT_TOKEN "${ROOT}/.env")
+
+if [[ -z "${ru_db}" ]]; then
+  echo "Не нашёл имя базы русского бота в ${ROOT}/.env (ни BIBLIA_DB_NAME, ни DB_NAME)." >&2
+  exit 1
+fi
 
 [[ "${es_lang}" == "es" ]] || {
   echo "В ${ENV_ES} BOT_LANG=${es_lang:-пусто}, ожидали es." >&2; exit 1; }
