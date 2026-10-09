@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 DEFAULT_LANG = "ru"
 
@@ -171,6 +171,25 @@ def voice_id_for(lang: Optional[str]) -> str:
     p = profile(lang)
     override = (os.getenv(f"YT_PRAYER_VOICE_ID_{p.code.upper()}") or "").strip()
     return override or p.voice_id
+
+
+def setting(name: str, default: Any = None) -> Any:
+    """Настройка из config, а если такого поля нет — прямо из окружения.
+
+    Объект config содержит только объявленные поля. Переменные с суффиксом
+    языка (YT_SHORTS_ES_COUNT, YT_SHORTS_TG_CHANNEL_ID_ES) там не объявлены,
+    и getattr молча возвращал бы значение по умолчанию: настройка прописана
+    в .env, а код её не видит и ведёт себя так, будто её нет.
+    """
+    try:
+        from config import config as cfg
+
+        if hasattr(cfg, name):
+            return getattr(cfg, name)
+    except Exception:
+        pass
+    raw = os.getenv(name)
+    return default if raw is None else raw
 
 
 def lang_text(lang: Optional[str], *, env_prefix: str, fallback: str) -> str:

@@ -26,6 +26,7 @@ from aiogram.types import Message
 from bot.features.base import BaseFeature
 from bot.filters.private_only import PRIVATE_CHAT
 from config import config
+from youtube_prayer.langs import setting
 from youtube_prayer.pipeline import run_daily_youtube_prayer_pipeline
 
 logger = logging.getLogger(__name__)
@@ -330,7 +331,10 @@ class YoutubePrayerFeature(BaseFeature):
                         progress_chat_id=progress_chat_id,
                     )
                 )
-                es_count = int(getattr(config, "YT_SHORTS_ES_COUNT", 0) or 0)
+                # Через setting, а не getattr: поля с суффиксом языка в
+                # объекте config не объявлены, и настройка из .env терялась
+                # молча — испанская пачка просто не запускалась.
+                es_count = int(setting("YT_SHORTS_ES_COUNT", 0) or 0)
                 if es_count > 0:
                     notes.append(
                         await self._run_shorts(
@@ -422,7 +426,7 @@ class YoutubePrayerFeature(BaseFeature):
             )
         else:
             shorts_work = _abs_dir(
-                getattr(config, f"YT_SHORTS_WORK_DIR_{lang.upper()}", None),
+                setting(f"YT_SHORTS_WORK_DIR_{lang.upper()}", None),
                 f"data/youtube_shorts_{lang}",
             )
         shorts_topic = int(getattr(config, "YT_SHORTS_TOPIC_ID", 0) or 0) or topic_id
