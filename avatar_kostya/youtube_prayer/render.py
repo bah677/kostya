@@ -361,14 +361,13 @@ def outro_card_parts(lang: str = "ru") -> Tuple[str, str]:
     зритель запоминает имя и ищет его в Telegram руками. Поэтому короткое
     @имя важнее красивой формулировки.
     """
-    from youtube_prayer.langs import bot_username_for, outro_text_for, profile
+    from youtube_prayer.langs import destination_for, outro_text_for, profile
 
     handle = (os.getenv(f"YT_PRAYER_OUTRO_HANDLE_{profile(lang).code.upper()}") or "").strip()
     if not handle and profile(lang).code == "ru":
         handle = (os.getenv("YT_PRAYER_OUTRO_HANDLE") or "").strip()
     if not handle:
-        user = bot_username_for(lang) or "Talk_God_Bot"
-        handle = f"@{user}" if user else ""
+        handle, _ = destination_for(lang)
     return outro_text_for(lang), handle
 
 
