@@ -173,20 +173,42 @@ def voice_id_for(lang: Optional[str]) -> str:
     return override or p.voice_id
 
 
-def _env_override(name: str, fallback: str) -> str:
-    """Переопределение из .env: пустая строка выключает кусок, не заданная — оставляет."""
-    raw = os.getenv(name)
-    return fallback if raw is None else raw.strip()
+def lang_text(lang: Optional[str], *, env_prefix: str, fallback: str) -> str:
+    """Текст языка: <PREFIX>_<LANG> → профиль.
+
+    Общая переменная без суффикса читается ТОЛЬКО для языка по умолчанию.
+
+    Так сделано после живого промаха. Раньше общая читалась для всех, а в
+    боевом .env лежит YT_SHORTS_CTA по-русски — и испанский ролик с испанской
+    молитвой заканчивался словами «напиши „Аминь“ в комментариях». Настройка
+    одного канала не должна протекать в другой.
+
+    Пустая строка в переменной — это «выключить кусок», а не «нет значения»:
+    YT_SHORTS_CTA_ES= уберёт призыв только у испанских роликов.
+    """
+    p = profile(lang)
+    raw = os.getenv(f"{env_prefix}_{p.code.upper()}")
+    if raw is not None:
+        return raw.strip()
+    if p.code == DEFAULT_LANG:
+        raw = os.getenv(env_prefix)
+        if raw is not None:
+            return raw.strip()
+    return fallback
 
 
 def attune_text(lang: Optional[str]) -> str:
-    return _env_override(f"YT_SHORTS_ATTUNE_{profile(lang).code.upper()}",
-                         _env_override("YT_SHORTS_ATTUNE", profile(lang).attune))
+    return lang_text(lang, env_prefix="YT_SHORTS_ATTUNE", fallback=profile(lang).attune)
 
 
 def cta_text(lang: Optional[str]) -> str:
-    return _env_override(f"YT_SHORTS_CTA_{profile(lang).code.upper()}",
-                         _env_override("YT_SHORTS_CTA", profile(lang).cta))
+    return lang_text(lang, env_prefix="YT_SHORTS_CTA", fallback=profile(lang).cta)
+
+
+def outro_text_for(lang: Optional[str]) -> str:
+    return lang_text(
+        lang, env_prefix="YT_PRAYER_OUTRO_TEXT", fallback=profile(lang).outro_text
+    )
 
 
 def premiere_hours_for(lang: Optional[str], *, env_prefix: str) -> List[int]:

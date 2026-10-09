@@ -32,6 +32,7 @@ from youtube_prayer.premiere_schedule import (
     premiere_slot_datetime,
     premiere_slot_label,
 )
+from youtube_prayer.langs import profile
 from youtube_shorts.uploader import shorts_premiere_hours_msk
 
 logger = logging.getLogger(__name__)
@@ -64,7 +65,25 @@ def tg_channel_publish_enabled() -> bool:
 
 
 def tg_channel_chat_id() -> int:
-    return int(_cfg("YT_SHORTS_TG_CHANNEL_ID", 0) or 0)
+    return tg_channel_id_for("ru")
+
+
+def tg_channel_id_for(lang: str = "ru") -> int:
+    """Телеграм-канал этого языка.
+
+    Общая переменная без суффикса — только для языка по умолчанию. Иначе
+    испанские молитвы ушли бы голосом в русский канал: пайплайн ставит голос
+    в очередь для каждого ролика, а id брался один на всех.
+    """
+    from youtube_prayer.langs import DEFAULT_LANG, profile
+
+    code = profile(lang).code
+    own = int(_cfg(f"YT_SHORTS_TG_CHANNEL_ID_{code.upper()}", 0) or 0)
+    if own:
+        return own
+    if code == DEFAULT_LANG:
+        return int(_cfg("YT_SHORTS_TG_CHANNEL_ID", 0) or 0)
+    return 0
 
 
 def tg_queue_root(work_root: Path) -> Path:
@@ -231,13 +250,19 @@ def enqueue_short_voice(
     tags: Optional[Sequence[str]] = None,
     audio_src: Optional[Path] = None,
     publish_at_msk: Optional[datetime] = None,
+    lang: str = "ru",
 ) -> Optional[Path]:
     """Готовит voice.ogg + job.json в очереди. Возвращает путь к job-директории."""
     if not tg_channel_publish_enabled():
         return None
-    chat_id = tg_channel_chat_id()
+    chat_id = tg_channel_id_for(lang)
     if not chat_id:
-        logger.warning("YT_SHORTS_TG_CHANNEL_ID не задан — голос в канал пропущен")
+        logger.info(
+            "tg voice пропущен: канал для языка %s не задан "
+            "(YT_SHORTS_TG_CHANNEL_ID_%s)",
+            lang,
+            lang.upper(),
+        )
         return None
 
     src = audio_src
@@ -257,7 +282,8 @@ def enqueue_short_voice(
         publish_at_msk = premiere_slot_datetime(
             day=day,
             index=index,
-            slots_msk=shorts_premiere_hours_msk(),
+            slots_msk=shorts_premiere_hours_msk(lang),
+            tz=profile(lang).tz,
         )
 
     tag_list = [str(t) for t in (tags or []) if str(t).strip()]
@@ -280,7 +306,7 @@ def enqueue_short_voice(
         "tags": tag_list[:3],
         "caption": _caption(title=title, trend=trend, tags=tag_list),
         "publish_at_msk": publish_at_msk.astimezone(_MSK).isoformat(),
-        "premiere_label": premiere_slot_label(publish_at_msk),
+        "premiere_label": premiere_slot_label(publish_at_msk, tz=profile(lang).tz),
         "status": "pending",
         "voice": "voice.ogg",
         "source_item": str(item_dir),
