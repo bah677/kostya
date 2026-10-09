@@ -283,8 +283,7 @@ async def run_daily_youtube_shorts_pipeline(
                 work_dir=item_dir,
                 theme_label=theme_label,
                 word_timings=word_timings,
-                outro_text=prof.outro_text,
-                outro_handle=(f"@{bot_username_for(lang)}" if bot_username_for(lang) else ""),
+                lang=lang,
             )
 
             premiere_label = ""
@@ -334,6 +333,7 @@ async def run_daily_youtube_shorts_pipeline(
                     tags=tg_tags,
                     audio_src=audio_src,
                     publish_at_msk=publish_at,
+                    lang=lang,
                 )
                 if job is not None:
                     try:

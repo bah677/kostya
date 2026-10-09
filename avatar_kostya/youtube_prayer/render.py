@@ -354,19 +354,22 @@ def _kinetic_caption_text(text: str) -> str:
     return " ".join(parts)
 
 
-def outro_card_parts() -> Tuple[str, str]:
+def outro_card_parts(lang: str = "ru") -> Tuple[str, str]:
     """Что писать на концевой карточке: призыв и адрес бота.
 
     Адрес даём текстом, а не ссылкой: из плеера Shorts никуда не кликнуть,
     зритель запоминает имя и ищет его в Telegram руками. Поэтому короткое
     @имя важнее красивой формулировки.
     """
-    handle = (os.getenv("YT_PRAYER_OUTRO_HANDLE") or "").strip()
+    from youtube_prayer.langs import bot_username_for, outro_text_for, profile
+
+    handle = (os.getenv(f"YT_PRAYER_OUTRO_HANDLE_{profile(lang).code.upper()}") or "").strip()
+    if not handle and profile(lang).code == "ru":
+        handle = (os.getenv("YT_PRAYER_OUTRO_HANDLE") or "").strip()
     if not handle:
-        user = (os.getenv("YT_SHORTS_BOT_USERNAME") or "Talk_God_Bot").strip().lstrip("@")
+        user = bot_username_for(lang) or "Talk_God_Bot"
         handle = f"@{user}" if user else ""
-    text = (os.getenv("YT_PRAYER_OUTRO_TEXT") or "Молитва по твоей ситуации").strip()
-    return text, handle
+    return outro_text_for(lang), handle
 
 
 def _write_video_ass(
@@ -978,6 +981,7 @@ def render_vertical_full(
     hook_question: str = "",
     outro_text: Optional[str] = None,
     outro_handle: Optional[str] = None,
+    lang: str = "ru",
 ) -> Path:
     """9:16: b-roll + аудио + hook + кинетические субтитры + концевая карточка."""
     ffmpeg = _ffmpeg()
@@ -1006,7 +1010,7 @@ def render_vertical_full(
     from youtube_prayer.audio_pipeline import outro_tail_sec
 
     o_sec = outro_tail_sec()
-    default_text, default_handle = outro_card_parts()
+    default_text, default_handle = outro_card_parts(lang)
     o_text = default_text if outro_text is None else outro_text
     o_handle = default_handle if outro_handle is None else outro_handle
     _write_video_ass(
