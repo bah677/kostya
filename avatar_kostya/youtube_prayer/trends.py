@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from youtube_prayer.langs import normalize_lang
+
 import json
 import logging
 import re
@@ -81,13 +83,89 @@ async def fetch_google_trends_us(*, limit: int = 12) -> List[str]:
     return await fetch_google_trends(geo="US", limit=limit)
 
 
+# Приписка к заданию отбора: на каком языке формулировать темы.
+_LANG_NOTE = {
+    "ru": "",
+    "en": " Brief и формулировки — на английском.",
+    "es": " Brief и формулировки — на испанском (нейтральный латиноамериканский).",
+}
+
+# Запасной brief, когда модель не вернула своего.
+_BRIEF_TMPL = {
+    "ru": (
+        "Молитва о сердце человека в связи с темой «{cand}»: "
+        "утешение, сила и надежда на Бога."
+    ),
+    "en": (
+        "A prayer for the human heart around «{cand}»: "
+        "comfort, strength, and hope in God."
+    ),
+    "es": (
+        "Una oración por el corazón humano en torno a «{cand}»: "
+        "consuelo, fuerza y esperanza en Dios."
+    ),
+}
+
+
 def _fallback_topics(
     n: int,
     *,
     exclude: Sequence[str] = (),
     lang: str = "ru",
 ) -> List[PrayerTopic]:
-    if (lang or "ru").lower() == "en":
+    code = normalize_lang(lang)
+    if code == "es":
+        # Запасные темы на случай, когда тренды ничего пригодного не дали.
+        # Раньше их было только две ветки — en и «всё остальное, то есть
+        # русский», и испанский ролик выходил на русскую тему.
+        seeds = [
+            PrayerTopic(
+                "ansiedad y preocupación",
+                "Una oración por la paz interior y la libertad de la ansiedad.",
+                "calm ocean sunrise soft light",
+            ),
+            PrayerTopic(
+                "cansancio y agotamiento",
+                "Una oración por descanso, fuerzas renovadas y esperanza.",
+                "quiet forest mist morning",
+            ),
+            PrayerTopic(
+                "soledad y cercanía",
+                "Una oración por un corazón que vuelve a sentirse acompañado.",
+                "warm candle light window rain",
+            ),
+            PrayerTopic(
+                "la paz en la familia",
+                "Una oración por la paz en casa, el perdón y el amor.",
+                "soft sunset field peaceful",
+            ),
+            PrayerTopic(
+                "esperanza en un día difícil",
+                "Una oración por la fe y la luz en los días que pesan.",
+                "golden hour sky clouds slow",
+            ),
+            PrayerTopic(
+                "gratitud por lo sencillo",
+                "Una oración de gratitud por un día común y el cuidado de Dios.",
+                "sunlight through leaves gentle",
+            ),
+            PrayerTopic(
+                "perdonar y reconciliarse",
+                "Una oración por la fuerza de perdonar y recuperar la paz.",
+                "quiet lake reflection dawn",
+            ),
+            PrayerTopic(
+                "miedo a lo que viene",
+                "Una oración por confiar en Dios cuando el futuro no está claro.",
+                "mountain path fog soft light",
+            ),
+            PrayerTopic(
+                "no poder dormir",
+                "Una oración para las noches en que la mente no se apaga.",
+                "night sky stars slow calm",
+            ),
+        ]
+    elif code == "en":
         seeds = [
             PrayerTopic(
                 "anxiety and worry",
@@ -375,11 +453,7 @@ async def select_prayer_topics(
             f"Недавно использовали:\n{recent_block}\n\n"
             f"Одобренные тренды:\n{approved}\n\n"
             f"Выбери до {n} тем только из одобренных."
-            + (
-                " Brief и формулировки — на английском."
-                if lang == "en"
-                else ""
-            )
+            + _LANG_NOTE.get(normalize_lang(lang), "")
         )
         pick_raw = await complete_fn(TREND_FILTER_SYSTEM, pick_user)
         picked = _parse_topics_json(pick_raw or "", n=n * 2)
@@ -405,16 +479,7 @@ async def select_prayer_topics(
                     continue
                 if any(trends_similar(cand, r) for r in recent):
                     continue
-                if lang == "en":
-                    brief = (
-                        f"A prayer for the human heart around «{cand}»: "
-                        "comfort, strength, and hope in God."
-                    )
-                else:
-                    brief = (
-                        f"Молитва о сердце человека в связи с темой «{cand}»: "
-                        "утешение, сила и надежда на Бога."
-                    )
+                brief = _BRIEF_TMPL[normalize_lang(lang)].format(cand=cand)
                 topics.append(
                     PrayerTopic(
                         trend=cand,

@@ -32,7 +32,7 @@ from youtube_prayer.premiere_schedule import (
     premiere_slot_datetime,
     premiere_slot_label,
 )
-from youtube_prayer.langs import profile
+from youtube_prayer.langs import profile, setting
 from youtube_shorts.uploader import shorts_premiere_hours_msk
 
 logger = logging.getLogger(__name__)
@@ -78,7 +78,7 @@ def tg_channel_id_for(lang: str = "ru") -> int:
     from youtube_prayer.langs import DEFAULT_LANG, profile
 
     code = profile(lang).code
-    own = int(_cfg(f"YT_SHORTS_TG_CHANNEL_ID_{code.upper()}", 0) or 0)
+    own = int(setting(f"YT_SHORTS_TG_CHANNEL_ID_{code.upper()}", 0) or 0)
     if own:
         return own
     if code == DEFAULT_LANG:
