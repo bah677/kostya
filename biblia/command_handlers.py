@@ -17,16 +17,6 @@ logger = logging.getLogger(__name__)
 _PRIVATE = F.chat.type == ChatType.PRIVATE
 
 # Текст после /start — правьте константу ниже.
-_BIBLIA_WELCOME = (
-    "Привет 👋\n"
-    "Бог любит тебя и я тоже!\n\n"
-    "Я не буду учить тебя жить и раздавать советы, со мной все просто и по-человечески комфортно 🤝\n\n"
-    "💬 Здесь тебе не нужно подбирать правильные слова. Просто напиши, что с тобой сейчас происходит, что беспокоит, своими словами, как есть…\n\n"
-    "📖 Я подберу слова из Священного Писания и помогу увидеть, как через них Бог отвечает именно в твою ситуацию.🙏\n\n"
-    "👉 Открой <b>/menu</b> — там частые запросы, молитва, поддержка проекта и другие возможности\n\n📖\n"
-    "<blockquote>Придите ко Мне все труждающиеся и обременённые, и Я успокою вас\n\n"
-    "<i>(Мф. 11:28)</i></blockquote>"
-)
 
 
 class AppCommandHandlers:
@@ -88,7 +78,9 @@ class AppCommandHandlers:
                 logger.error("Biblia ref link: %s", e)
 
         await state.clear()
-        await message.answer(_BIBLIA_WELCOME, parse_mode=ParseMode.HTML)
+        from bot.texts import start as _start_texts
+
+        await message.answer(_start_texts().WELCOME, parse_mode=ParseMode.HTML)
 
         menu = self.features.get_optional("user_menu")
         if menu and message.chat.type == ChatType.PRIVATE:

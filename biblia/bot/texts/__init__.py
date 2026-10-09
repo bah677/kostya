@@ -10,6 +10,19 @@ from __future__ import annotations
 from types import ModuleType
 
 
+def start() -> ModuleType:
+    """Приветствие по /start на языке этого бота."""
+    from bot.langs import bot_lang
+
+    if bot_lang() == "es":
+        from bot.texts import es_start
+
+        return es_start
+    from bot.texts import ru_start
+
+    return ru_start
+
+
 def payment() -> ModuleType:
     """Тексты интерфейса донатов на языке этого бота."""
     from bot.langs import bot_lang
