@@ -23,6 +23,9 @@ PRAYER_260425_FILE_ID = (
 # file_id у каждого бота свой: загрузите PDF в бота Насти и возьмите id через /code_id.
 PUBLIC_OFFER_PDF_FILE_ID = ""
 
+# План «Библия и финансы» — только клубный бот.
+BIBLE_FINANCE_PDF_FILE_ID = ""
+
 PRIVACY_POLICY_PDF_FILE_ID = (
     "BQACAgIAAxkBAALu8GpE5b9X9QZAzq8BLC1D3fIbqP_lAALNpQACvzUpSjC93rcNTlZnPAQ"
 )

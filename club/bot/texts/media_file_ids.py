@@ -37,6 +37,11 @@ PUBLIC_OFFER_PDF_FILE_ID = (
     "BQACAgIAAxkBAAIHHWn2gLClUcHdksGPX2qe9unfZbTIAALznQACVgqwS_EsowffoNBDOwQ"
 )
 
+# BibleFinanceFeature — PDF плана чтения (deep link /start finplan)
+BIBLE_FINANCE_PDF_FILE_ID = (
+    "BQACAgIAAxkBAAEB4qBqyWR3W2rzwc4VWbyJadH-BFpi6QADrQACJr9RSXeq8fULQ-TyPQQ"
+)
+
 # LegalConsentFeature — политика и согласие на ПДн (кнопки экрана согласия)
 PRIVACY_POLICY_PDF_FILE_ID = (
     "BQACAgIAAxkBAALu8GpE5b9X9QZAzq8BLC1D3fIbqP_lAALNpQACvzUpSjC93rcNTlZnPAQ"
