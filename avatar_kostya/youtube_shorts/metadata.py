@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Awaitable, Callable, List, Optional, Sequence
 from zoneinfo import ZoneInfo
 
+from youtube_prayer.langs import bot_username_for, normalize_lang, profile
 from youtube_prayer.metadata import VideoMetadata, _clamp_title, _normalize_hashtags
 
 logger = logging.getLogger(__name__)
@@ -64,8 +65,29 @@ def _title_quality_ok(title: str) -> bool:
     return True
 
 
-def _viral_fallback_title(trend: str) -> str:
+def _viral_fallback_title(trend: str, *, lang: str = "ru") -> str:
     t = re.sub(r"\s+", " ", (trend or "").strip(" .,—–-"))
+    code = normalize_lang(lang)
+    if code == "es":
+        t = re.sub(r"^oraci[oó]n\s+(de|por|para|:)\s*", "", t, flags=re.I).strip()
+        if not t:
+            t = "el alma pesada"
+        title = (
+            f"{t} — una oración que sostiene"
+            if "?" in t
+            else f"Cuando {t} — una oración que sostiene"
+        )
+        return _ensure_shorts_title(title)
+    if code == "en":
+        t = re.sub(r"^prayer\s+(for|about|of|:)\s*", "", t, flags=re.I).strip()
+        if not t:
+            t = "your heart feels heavy"
+        title = (
+            f"{t} — a prayer that holds you"
+            if "?" in t
+            else f"When {t} — a prayer that holds you"
+        )
+        return _ensure_shorts_title(title)
     t = re.sub(r"^молитва\s+(о|об|про|за|:)\s*", "", t, flags=re.I).strip()
     if not t:
         t = "тяжело на душе"
@@ -92,29 +114,39 @@ def theme_overlay_label(meta: VideoMetadata, trend: str = "") -> str:
 _DEFAULT_BOT_USERNAME = "Talk_God_Bot"
 
 
-def bot_start_link(*, day: str, index: int) -> str:
+def bot_start_link(*, day: str, index: int, lang: str = "ru") -> str:
     """Ссылка на клубного бота с меткой, какой ролик привёл человека.
 
     Клуб распознаёт payload yt_* как маркетинговое касание и кладёт его в
     users.first_touch_key. Так видно не «что набрало просмотры», а «что
     привело людей» — это разные ролики.
     """
-    user = (os.getenv("YT_SHORTS_BOT_USERNAME") or _DEFAULT_BOT_USERNAME).strip().lstrip("@")
+    user = bot_username_for(lang) or _DEFAULT_BOT_USERNAME
     if not user:
         return ""
     tag = f"yt_{day.replace('-', '')}_{int(index):02d}"
     return f"https://t.me/{user}?start={tag}"
 
 
-def _inject_bot_link(description: str, link: str) -> str:
-    """Ставим ссылку перед блоком Keywords — там её видно до «ещё»."""
+def _inject_bot_link(description: str, link: str, *, lang: str = "ru") -> str:
+    """Ссылка — ПЕРВОЙ строкой описания.
+
+    Раньше она стояла перед блоком Keywords, то есть после трёх абзацев.
+    В плеере Shorts описание свёрнуто целиком, и до ссылки не доходил никто:
+    за 37 тысяч просмотров в базе клуба ноль касаний с меткой yt_* — при
+    том, что метка проставлялась верно и код её разбора стоял в проде.
+
+    Первая строка — единственное место описания, которое вообще где-то
+    показывается: на странице просмотра, в поиске и в превью канала.
+    Рядом со ссылкой даём @имя текстом: из Shorts никуда не кликнуть,
+    зато имя можно запомнить и найти в Telegram поиском.
+    """
     if not link or link in description:
         return description
-    line = f"Молитва по твоей ситуации — в боте: {link}"
-    if "\n---" in description:
-        head, sep, tail = description.partition("\n---")
-        return f"{head.rstrip()}\n\n{line}\n{sep}{tail}"
-    return f"{description.rstrip()}\n\n{line}"
+    user = bot_username_for(lang) or _DEFAULT_BOT_USERNAME
+    handle = f" — @{user}" if user else ""
+    line = f"🙏 {profile(lang).outro_text}{handle}: {link}"
+    return f"{line}\n\n{description.lstrip()}"
 
 
 def _order_hashtags(tags: list[str]) -> list[str]:
@@ -128,8 +160,43 @@ def _order_hashtags(tags: list[str]) -> list[str]:
     return rest + ["#Shorts"]
 
 
-def _metadata_system_prompt(*, strict: bool = False) -> str:
+_ES_SYSTEM = """Escribes los metadatos de un YouTube Short: oraciones verticales cortas (1–2 min).
+Respuesta ESTRICTAMENTE en JSON:
+{{"title":"...","thumbnail_title":"...","description":"...","hashtags":["#Shorts",...]}}
+{extra}
+Español neutro latinoamericano. Usa «tú», nunca «vosotros». Sin regionalismos:
+debe sonar natural en México, Colombia y Perú por igual.
+
+title: 40–85 caracteres ANTES del sufijo #Shorts. Un gancho viral — dolor,
+pregunta o reconocerse en ello.
+Buenos formatos:
+· «¿No puedes dormir? Una oración que calma el alma»
+· «Cuando tus padres enferman — palabras que sostienen»
+· «¿Angustia por los que amas? Una oración que vale escuchar»
+PROHIBIDO: cortar en «—», imperativos después del guion, lenguaje burocrático,
+listas de palabras clave sin emoción.
+
+thumbnail_title: 3–6 palabras cortas para el texto SOBRE EL VIDEO (grande), sin #Shorts.
+
+description: 2–3 párrafos cortos. OBLIGATORIO una línea aparte invitando a
+escribir «Amén» en los comentarios — pero como intercambio, no como orden:
+la persona escribe «Amén» y recibe algo a cambio (se ora por ella, su nombre
+suena en la oración de hoy, se une a quienes oran). Nada de «dale like y
+suscríbete» en lista: eso no funciona. Al final, Keywords tras ---.
+
+hashtags: 6–10 etiquetas del tema de la oración. No escribas #Shorts, se añade solo."""
+
+
+def _metadata_system_prompt(*, strict: bool = False, lang: str = "ru") -> str:
     extra = ""
+    code = normalize_lang(lang)
+    if code == "es":
+        if strict:
+            extra = (
+                "\nEl title anterior estaba mal construido o no enganchaba. "
+                "Reescríbelo desde cero: frase completa, gancho viral.\n"
+            )
+        return _ES_SYSTEM.format(extra=extra)
     if strict:
         extra = (
             "\nПРЕДЫДУЩИЙ title был грамматически кривым или нецепляющим. "
@@ -158,19 +225,39 @@ def _metadata_system_prompt(*, strict: bool = False) -> str:
     )
 
 
-def _fallback_short_metadata(*, trend: str, brief: str) -> VideoMetadata:
-    title = _viral_fallback_title(trend)
-    core = _strip_shorts_suffix(title)
-    desc = (
-        f"Короткая молитва на 1–2 минуты: {brief}\n\n"
+_FALLBACK_DESC = {
+    "ru": (
+        "Короткая молитва на 1–2 минуты: {brief}\n\n"
         "Спокойный голос, можно слушать с закрытыми глазами.\n"
-        "Лайк, подписка и комментарий «Аминь», если молитва откликнулась.\n\n"
+        "Напиши «Аминь» в комментариях — и за тебя помолятся.\n\n"
         "---\n"
-        f"Keywords: молитва, shorts, христианская молитва, {trend}, вера, утешение"
-    )
-    tags = _order_hashtags(
-        ["#молитва", "#вера", "#христианство", "#утешение", "#Shorts"]
-    )
+        "Keywords: молитва, shorts, христианская молитва, {trend}, вера, утешение"
+    ),
+    "en": (
+        "A short 1–2 minute prayer: {brief}\n\n"
+        "A calm voice — you can listen with your eyes closed.\n"
+        "Write «Amen» in the comments and someone will pray for you.\n\n"
+        "---\n"
+        "Keywords: prayer, shorts, Christian prayer, {trend}, faith, comfort"
+    ),
+    "es": (
+        "Una oración breve de 1 a 2 minutos: {brief}\n\n"
+        "Voz tranquila — puedes escucharla con los ojos cerrados.\n"
+        "Escribe «Amén» en los comentarios y alguien orará por ti.\n\n"
+        "---\n"
+        "Keywords: oración, shorts, oración cristiana, {trend}, fe, consuelo"
+    ),
+}
+
+
+def _fallback_short_metadata(
+    *, trend: str, brief: str, lang: str = "ru"
+) -> VideoMetadata:
+    code = normalize_lang(lang)
+    title = _viral_fallback_title(trend, lang=code)
+    core = _strip_shorts_suffix(title)
+    desc = _FALLBACK_DESC[code].format(brief=brief, trend=trend)
+    tags = _order_hashtags(list(profile(code).default_hashtags) + ["#Shorts"])
     return VideoMetadata(
         title=title,
         thumbnail_title=core[:42],
@@ -180,7 +267,7 @@ def _fallback_short_metadata(*, trend: str, brief: str) -> VideoMetadata:
 
 
 async def _parse_metadata_response(
-    raw: Optional[str], *, trend: str, brief: str
+    raw: Optional[str], *, trend: str, brief: str, lang: str = "ru"
 ) -> Optional[VideoMetadata]:
     try:
         data = _parse_json_obj(raw or "")
@@ -190,7 +277,7 @@ async def _parse_metadata_response(
             thumb = _strip_shorts_suffix(title)[:42]
         description = str(data.get("description") or "").strip()
         hashtags = _order_hashtags(
-            _normalize_hashtags(data.get("hashtags") or [], lang="ru")
+            _normalize_hashtags(data.get("hashtags") or [], lang=lang)
         )
         if len(title) < 8 or len(description) < 40:
             raise ValueError("metadata too short")
@@ -229,7 +316,9 @@ async def generate_short_metadata(
     work_dir: Optional[Path] = None,
     day: str = "",
     index: int = 0,
+    lang: str = "ru",
 ) -> VideoMetadata:
+    lang = normalize_lang(lang)
     today = datetime.now(_MSK).strftime("%d.%m.%Y")
     pool = [t for t in (trend_pool or []) if t and t != trend][:10]
     pool_txt = "\n".join(f"- {t}" for t in pool) if pool else "(нет доп. трендов)"
@@ -242,8 +331,8 @@ async def generate_short_metadata(
 
     meta: Optional[VideoMetadata] = None
     for attempt, strict in enumerate((False, True)):
-        raw = await complete_fn(_metadata_system_prompt(strict=strict), user)
-        meta = await _parse_metadata_response(raw, trend=trend, brief=brief)
+        raw = await complete_fn(_metadata_system_prompt(strict=strict, lang=lang), user)
+        meta = await _parse_metadata_response(raw, trend=trend, brief=brief, lang=lang)
         if meta is not None:
             break
         if attempt == 0:
@@ -253,12 +342,14 @@ async def generate_short_metadata(
             )
 
     if meta is None:
-        meta = _fallback_short_metadata(trend=trend, brief=brief)
+        meta = _fallback_short_metadata(trend=trend, brief=brief, lang=lang)
 
     if day and index:
-        link = bot_start_link(day=day, index=index)
+        link = bot_start_link(day=day, index=index, lang=lang)
         if link:
-            meta = replace(meta, description=_inject_bot_link(meta.description, link))
+            meta = replace(
+                meta, description=_inject_bot_link(meta.description, link, lang=lang)
+            )
 
     if work_dir is not None:
         work_dir.mkdir(parents=True, exist_ok=True)

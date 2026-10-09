@@ -63,6 +63,11 @@ _V_CAPTION_MARGIN_V = 820
 _V_CAPTION_WRAP = 18
 # При кегле 132 в строку помещается ~11 символов (полезная ширина ~780 px).
 _V_HOOK_SIZE = 132
+# Концевая карточка: призыв мельче, адрес бота крупно — его запоминают
+# и ищут в Telegram руками, кликнуть из плеера Shorts нельзя.
+_V_OUTRO_SIZE = 86
+_V_OUTRO_HANDLE_SIZE = 118
+_V_OUTRO_WRAP = 18
 _V_HOOK_WRAP = 11
 # 4 слова при кегле 96 не помещаются в строку (~780 px полезной ширины)
 # и оставляют висячее слово отдельной плашкой.
@@ -349,6 +354,21 @@ def _kinetic_caption_text(text: str) -> str:
     return " ".join(parts)
 
 
+def outro_card_parts() -> Tuple[str, str]:
+    """Что писать на концевой карточке: призыв и адрес бота.
+
+    Адрес даём текстом, а не ссылкой: из плеера Shorts никуда не кликнуть,
+    зритель запоминает имя и ищет его в Telegram руками. Поэтому короткое
+    @имя важнее красивой формулировки.
+    """
+    handle = (os.getenv("YT_PRAYER_OUTRO_HANDLE") or "").strip()
+    if not handle:
+        user = (os.getenv("YT_SHORTS_BOT_USERNAME") or "Talk_God_Bot").strip().lstrip("@")
+        handle = f"@{user}" if user else ""
+    text = (os.getenv("YT_PRAYER_OUTRO_TEXT") or "Молитва по твоей ситуации").strip()
+    return text, handle
+
+
 def _write_video_ass(
     path: Path,
     *,
@@ -361,12 +381,16 @@ def _write_video_ass(
     kinetic: bool = True,
     hook_question: str = "",
     hook_sec: float = 2.0,
+    outro_text: str = "",
+    outro_handle: str = "",
+    outro_sec: float = 0.0,
 ) -> None:
     """
-    ASS с тремя слоями:
+    ASS с четырьмя слоями:
     - Hook — крупный вопрос в первые ~2 с (центр)
     - Theme — постоянная подпись «Молитва о…» сверху
     - Caption — кинетическая строка молитвы крупно снизу
+    - Outro — концевая карточка с адресом бота в последние ~2.5 с
     """
     if vertical:
         # Цифры — из замеров живого плеера, см. комментарий к _V_* выше.
@@ -378,11 +402,15 @@ def _write_video_ass(
         hook_size = _env_int("YT_PRAYER_HOOK_SIZE", _V_HOOK_SIZE)
         wrap_hook = _env_int("YT_PRAYER_HOOK_WRAP_CHARS", _V_HOOK_WRAP)
         margin_lr = _env_int("YT_PRAYER_MARGIN_LR", _V_MARGIN_LR)
+        outro_size = _env_int("YT_PRAYER_OUTRO_SIZE", _V_OUTRO_SIZE)
+        outro_handle_size = _env_int("YT_PRAYER_OUTRO_HANDLE_SIZE", _V_OUTRO_HANDLE_SIZE)
+        wrap_outro = _env_int("YT_PRAYER_OUTRO_WRAP_CHARS", _V_OUTRO_WRAP)
     else:
         theme_size, theme_margin_v = 54, 60
         cap_size, cap_margin_v, wrap_chars = 58, 72, 36
         hook_size, wrap_hook = 78, 28
         margin_lr = 72
+        outro_size, outro_handle_size, wrap_outro = 56, 76, 34
     cap_pad = _env_int("YT_PRAYER_CAPTION_BOX_PAD", _V_CAPTION_BOX_PAD)
     # Резкое появление плашки читается как вспышка. 60 мс — это полтора кадра,
     # то есть практически мгновенно; 150 мс уже мягко и всё ещё быстро.
@@ -404,6 +432,7 @@ Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour,
 Style: Theme,{font},{theme_size},{_COL_THEME},&H000000FF,{_COL_OUTLINE},{_COL_SHADOW},{bold},0,0,0,100,100,-0.5,0,1,4.2,2.6,8,{margin_lr},{margin_lr},{theme_margin_v},1
 Style: Caption,{font},{cap_size},{_COL_CAPTION_TEXT},&H000000FF,{_COL_CAPTION_BOX},&H00000000,{bold},0,0,0,100,100,-0.5,0,3,{cap_pad},0,2,{margin_lr},{margin_lr},{cap_margin_v},1
 Style: Hook,{font},{hook_size},{_COL_THEME},&H000000FF,{_COL_OUTLINE},{_COL_SHADOW},{bold},0,0,0,100,100,-1.0,0,1,5.0,3.0,5,{margin_lr},{margin_lr},0,1
+Style: Outro,{font},{outro_size},{_COL_THEME},&H000000FF,{_COL_OUTLINE},{_COL_SHADOW},{bold},0,0,0,100,100,-0.5,0,1,5.0,3.0,5,{margin_lr},{margin_lr},0,1
 Style: Shade,{font},40,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1
 
 [Events]
@@ -438,6 +467,16 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 f"Hook,,0,0,0,,{{\\fad({fade_in},350)\\fscx108\\fscy108"
                 f"\\t(0,280,\\fscx100\\fscy100)}}{wrapped_hook}"
             )
+    # Окно концевой карточки: тема и субтитры в него заходить не должны.
+    outro = (outro_text or "").strip()
+    handle = (outro_handle or "").strip()
+    o_sec = max(0.0, min(5.0, float(outro_sec)))
+    o_start = dur
+    if (outro or handle) and o_sec >= 1.0 and dur > o_sec + 2.0:
+        o_start = dur - o_sec
+    else:
+        outro = handle = ""
+
     theme = (theme_label or "").strip()
     if theme:
         theme_lines = _fit_theme_lines(
@@ -452,12 +491,16 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             # тема появляется после hook, чтобы не конкурировать
             theme_start = h_sec if hook else 0.0
             lines.append(
-                f"Dialogue: 1,{_sec_to_ass_time(theme_start)},{_sec_to_ass_time(dur)},"
+                f"Dialogue: 1,{_sec_to_ass_time(theme_start)},{_sec_to_ass_time(o_start)},"
                 f"Theme,,0,0,0,,{{\\fad(400,0)}}{wrapped_theme}"
             )
     for start, end, text in chunks:
         if end <= start or not (text or "").strip():
             continue
+        if end > o_start:
+            end = o_start
+            if end <= start:
+                continue
         # не перекрывать hook крупными субтитрами
         if hook and start < h_sec:
             start = h_sec
@@ -474,6 +517,37 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             f"Dialogue: 0,{_sec_to_ass_time(start)},{_sec_to_ass_time(end)},"
             f"Caption,,0,0,0,,{{\\fad({cap_fade_in},{cap_fade_out})}}{body}"
         )
+
+    if outro or handle:
+        o_from, o_to = _sec_to_ass_time(o_start), _sec_to_ass_time(dur)
+        # Затемняем кадр: на светлом видеоряде белый текст иначе теряется,
+        # а карточку надо прочитать за две секунды.
+        lines.append(
+            f"Dialogue: 3,{o_from},{o_to},"
+            f"Shade,,0,0,0,,{{\\fad(260,0)\\p1\\pos(0,0)"
+            f"\\c&H000000&\\alpha&H5A&}}"
+            f"m 0 0 l {play_w} 0 l {play_w} {play_h} l 0 {play_h}"
+        )
+        parts: List[str] = []
+        if outro:
+            parts.append(
+                _ass_line_break(_wrap_line(outro, max_chars=wrap_outro, max_lines=2))
+            )
+        if handle:
+            # Пустая строка мелким кеглем — воздух между призывом и адресом.
+            if parts:
+                parts.append("{\\fs34}\\h")
+            parts.append(
+                f"{{\\fs{outro_handle_size}}}{_ass_escape_text(handle)}{{\\fs{outro_size}}}"
+            )
+        body = "\\N".join(p for p in parts if p)
+        if body:
+            lines.append(
+                f"Dialogue: 4,{o_from},{o_to},"
+                f"Outro,,0,0,0,,{{\\fad(260,0)\\fscx106\\fscy106"
+                f"\\t(0,320,\\fscx100\\fscy100)}}{body}"
+            )
+
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
@@ -902,8 +976,10 @@ def render_vertical_full(
     theme_label: str = "",
     word_timings: Optional[Sequence[Tuple[float, float, str]]] = None,
     hook_question: str = "",
+    outro_text: Optional[str] = None,
+    outro_handle: Optional[str] = None,
 ) -> Path:
-    """9:16: b-roll + аудио + hook + кинетические субтитры по таймкодам TTS."""
+    """9:16: b-roll + аудио + hook + кинетические субтитры + концевая карточка."""
     ffmpeg = _ffmpeg()
     dur = max(10.0, float(duration_sec))
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -925,6 +1001,14 @@ def render_vertical_full(
     # вопроса пайплайн не передаёт. Показываем ту же фразу крупно в первые
     # секунды и уводим наверх: кадр 0 становится готовым превью для полки.
     hook = (hook_question or "").strip() or (theme_label or "").strip()
+    # Концевая карточка. Длина хвоста та же, что добавил микшер аудио, —
+    # иначе карточка наедет на последние слова молитвы.
+    from youtube_prayer.audio_pipeline import outro_tail_sec
+
+    o_sec = outro_tail_sec()
+    default_text, default_handle = outro_card_parts()
+    o_text = default_text if outro_text is None else outro_text
+    o_handle = default_handle if outro_handle is None else outro_handle
     _write_video_ass(
         ass_path,
         play_w=width,
@@ -936,6 +1020,9 @@ def render_vertical_full(
         kinetic=True,
         hook_question=hook,
         hook_sec=hook_sec,
+        outro_text=o_text,
+        outro_handle=o_handle,
+        outro_sec=o_sec,
     )
     ass_esc = ass_path.resolve().as_posix().replace("\\", "/").replace(":", "\\:")
 

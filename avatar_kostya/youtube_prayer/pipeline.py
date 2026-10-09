@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from youtube_prayer.langs import profile
+
 import asyncio
 import json
 import logging
@@ -138,7 +140,7 @@ async def _run_lang_pack(
     metadata_complete_fn=None,
 ) -> List[str]:
     lang = (lang or "ru").lower()
-    label = "EN/US" if lang == "en" else "RU"
+    label = profile(lang).label
     recent = load_recent_trends(work_root, history_days=history_days, lang=lang)
     if recent:
         await notify(

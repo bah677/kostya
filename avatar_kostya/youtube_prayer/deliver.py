@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from youtube_prayer.langs import profile
+
 import logging
 from pathlib import Path
 from typing import Any, Optional
@@ -30,7 +32,7 @@ async def deliver_topic_pack(
 ) -> None:
     """Шлёт шапку, описание YouTube, обложки и видео 16:9 в forum topic."""
     lang_l = (lang or "ru").lower()
-    lang_tag = "EN · US" if lang_l == "en" else "RU"
+    lang_tag = profile(lang_l).label.replace("/", " · ")
     yt_title = (metadata.title if metadata else "") or (covers.title if covers else "")
     thumb_title = ""
     if metadata is not None:

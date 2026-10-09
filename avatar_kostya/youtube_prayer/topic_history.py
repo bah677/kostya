@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from youtube_prayer.langs import profile
+
 import json
 import logging
 import re
@@ -17,7 +19,7 @@ _MSK = ZoneInfo("Europe/Moscow")
 
 def _history_filename(lang: str = "ru") -> str:
     lang = (lang or "ru").lower()
-    return "used_trends_en.json" if lang == "en" else "used_trends.json"
+    return profile(lang).history_file
 
 
 def normalize_trend_key(text: str) -> str:
@@ -122,7 +124,7 @@ def load_recent_trends(
                     payload = json.loads(done.read_text(encoding="utf-8"))
                 except Exception:
                     continue
-                key_themes = "themes_en" if lang_l == "en" else "themes"
+                key_themes = profile(lang_l).themes_key
                 themes = payload.get(key_themes) if isinstance(payload, dict) else None
                 if themes is None and isinstance(payload, dict):
                     themes = payload.get("themes")

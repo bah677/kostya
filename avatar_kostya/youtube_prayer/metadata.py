@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from youtube_prayer.langs import profile
+
 import json
 import logging
 import re
@@ -101,12 +103,11 @@ def _clamp_hook_question(q: str, *, max_len: int = 56) -> str:
 
 
 def _hook_from_thumb(thumb: str, *, lang: str) -> str:
+    p = profile(lang)
     base = (thumb or "").strip().rstrip("?!.")
     if not base:
-        return "Тебе это знакомо?" if lang != "en" else "Does this feel familiar?"
-    if lang == "en":
-        return _clamp_hook_question(f"Is this your story — {base}?")
-    return _clamp_hook_question(f"Это про тебя — {base}?")
+        return p.hook_fallback
+    return _clamp_hook_question(p.hook_template.format(base))
 
 
 def _thumbnail_from_title(title: str, *, lang: str) -> str:
@@ -133,12 +134,7 @@ def _normalize_hashtags(raw: Sequence[str], *, lang: str) -> List[str]:
         if tag.lower() not in {t.lower() for t in out}:
             out.append(tag)
     if len(out) < 3:
-        defaults = (
-            ["#молитва", "#вера", "#христианство", "#утешение", "#Бог"]
-            if lang != "en"
-            else ["#prayer", "#faith", "#Christianity", "#comfort", "#God"]
-        )
-        for d in defaults:
+        for d in profile(lang).default_hashtags:
             if d.lower() not in {t.lower() for t in out}:
                 out.append(d)
             if len(out) >= 8:
