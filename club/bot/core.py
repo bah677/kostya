@@ -12,6 +12,7 @@ from typing import Optional
 from bot.base_app import TelegramBotApp
 from bot.features.auto_react import AutoReactFeature
 from bot.features.benefit import BenefitFeature
+from bot.features.bible_finance import BibleFinanceFeature
 from bot.features.admin_console import AdminConsoleFeature
 from bot.features.club_digest import ClubDigestFeature
 from bot.features.club_scripture_pulse import ClubScripturePulseFeature
@@ -209,6 +210,10 @@ class TelegramBot(TelegramBotApp):
             user_storage=self.user_storage,
             feature_manager=self.feature_manager,
         )
+        bible_finance_feature = BibleFinanceFeature(
+            user_storage=self.user_storage,
+            feature_manager=self.feature_manager,
+        )
 
         subscription_reminder_feature = SubscriptionReminderFeature(
             user_storage=self.user_storage,
@@ -291,6 +296,7 @@ class TelegramBot(TelegramBotApp):
             subscription_reminder_feature,
             member_proactive_feature,
             benefit_feature,
+            bible_finance_feature,
             user_menu_feature,
             member_gift_extension_feature,
             wish_board_feature,

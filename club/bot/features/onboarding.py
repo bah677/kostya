@@ -162,6 +162,27 @@ class OnboardingFeature(BaseFeature):
         param = start_args
 
         if param and self.feature_manager:
+            try:
+                bible_finance = self.feature_manager.get("bible_finance")
+            except KeyError:
+                bible_finance = None
+            if bible_finance and await bible_finance.try_open_from_start(message, param):
+                if is_new_user:
+                    followup = self.feature_manager.get("followup")
+                    if followup:
+                        await followup.on_start(
+                            user_id, is_new_user=True, start_param=param
+                        )
+                await state.clear()
+                logger.info(
+                    "[%s] Bible finance deep link handled for user %s param=%r",
+                    self.name,
+                    user_id,
+                    param,
+                )
+                return
+
+        if param and self.feature_manager:
             benefit = self.feature_manager.get("benefit")
             if benefit and await benefit.try_deliver_gratitude_from_start(
                 message, param, is_new_user=is_new_user

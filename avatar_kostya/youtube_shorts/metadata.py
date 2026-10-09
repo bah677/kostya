@@ -182,11 +182,16 @@ listas de palabras clave sin emoción.
 
 thumbnail_title: 3–6 palabras cortas para el texto SOBRE EL VIDEO (grande), sin #Shorts.
 
-description: 2–3 párrafos cortos. OBLIGATORIO una línea aparte invitando a
-escribir «Amén» en los comentarios — pero como intercambio, no como orden:
-la persona escribe «Amén» y recibe algo a cambio (se ora por ella, su nombre
-suena en la oración de hoy, se une a quienes oran). Nada de «dale like y
-suscríbete» en lista: eso no funciona. Al final, Keywords tras ---.
+description: 2–3 párrafos cortos. Luego, en líneas aparte:
+1) invita a escribir «Amén» en los comentarios — como forma de orar junto,
+   no a cambio de nada;
+2) invita a compartir el video con alguien que lo necesite hoy.
+
+NO PROMETAS lo que no ocurre: aquí nadie reza por el que comenta ni dice su
+nombre en voz alta. Escribirlo sería mentir al que confía. Nada de «oraremos
+por ti», «tu nombre sonará en la oración de hoy» ni parecidos.
+Nada de «dale like y suscríbete» en lista: eso no funciona.
+Al final, Keywords tras ---.
 
 hashtags: 6–10 etiquetas del tema de la oración. No escribas #Shorts, se añade solo."""
 
@@ -219,11 +224,15 @@ def _metadata_system_prompt(*, strict: bool = False, lang: str = "ru") -> str:
         "ЗАПРЕЩЕНО: обрыв на «—», «Молитва, когда X — обратись…», повелительное после тире, "
         "канцелярит, SEO-простыня без эмоции.\n"
         "thumbnail_title: 3–6 коротких слов для подписи НА ВИДЕО (крупно), без #Shorts.\n"
-        "description: 2–3 коротких абзаца. ОБЯЗАТЕЛЬНО отдельной строкой "
-        "призыв написать «Аминь» в комментариях — но как обмен, а не команду: "
-        "человек пишет «Аминь» и получает что-то в ответ (за него помолятся, "
-        "его имя прозвучит в молитве, он присоединяется к тем, кто молится "
-        "сегодня). Не «поставьте лайк и подпишитесь» списком — это не работает. "
+        "description: 2–3 коротких абзаца. Дальше отдельными строками:\n"
+        "1) призыв написать «Аминь» в комментариях — как способ помолиться "
+        "вместе, а не в обмен на что-то;\n"
+        "2) призыв переслать ролик тому, кому он сегодня нужен.\n"
+        "НЕ ОБЕЩАЙ того, чего нет: за написавшего «Аминь» здесь никто не "
+        "молится и его имя вслух не произносят. Написать так — значит обмануть "
+        "доверившегося. Никаких «за тебя помолятся», «твоё имя прозвучит в "
+        "сегодняшней молитве» и подобного.\n"
+        "Не «поставьте лайк и подпишитесь» списком — это не работает. "
         "В конце Keywords через ---.\n"
         "hashtags: 6–10 тегов по теме молитвы. #Shorts не пиши, он добавится сам.\n"
     )
@@ -233,21 +242,24 @@ _FALLBACK_DESC = {
     "ru": (
         "Короткая молитва на 1–2 минуты: {brief}\n\n"
         "Спокойный голос, можно слушать с закрытыми глазами.\n"
-        "Напиши «Аминь» в комментариях — и за тебя помолятся.\n\n"
+        "Напиши «Аминь» в комментариях — помолимся вместе.\n"
+        "Перешли тому, кому это сегодня нужно.\n\n"
         "---\n"
         "Keywords: молитва, shorts, христианская молитва, {trend}, вера, утешение"
     ),
     "en": (
         "A short 1–2 minute prayer: {brief}\n\n"
         "A calm voice — you can listen with your eyes closed.\n"
-        "Write «Amen» in the comments and someone will pray for you.\n\n"
+        "Write «Amen» in the comments — let us pray together.\n"
+        "Share it with someone who needs it today.\n\n"
         "---\n"
         "Keywords: prayer, shorts, Christian prayer, {trend}, faith, comfort"
     ),
     "es": (
         "Una oración breve de 1 a 2 minutos: {brief}\n\n"
         "Voz tranquila — puedes escucharla con los ojos cerrados.\n"
-        "Escribe «Amén» en los comentarios y alguien orará por ti.\n\n"
+        "Escribe «Amén» en los comentarios — oremos juntos.\n"
+        "Compártelo con alguien que hoy lo necesite.\n\n"
         "---\n"
         "Keywords: oración, shorts, oración cristiana, {trend}, fe, consuelo"
     ),

@@ -101,6 +101,8 @@ def _is_marketing_start_payload(token: str) -> bool:
         return True
     if token == "benefit3":
         return True
+    if token == "finplan":
+        return True
     if token.startswith("gift_") and token[5:] in {"bib", "tg", "ig", "yt", "bot"}:
         return True
     # Приход с YouTube: yt_<день>_<номер ролика в пачке>. Ставится в описании
