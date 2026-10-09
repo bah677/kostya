@@ -298,6 +298,7 @@ async def run_daily_youtube_shorts_pipeline(
                 day=day,
                 index=i,
                 work_dir=item_dir,
+                lang=lang,
             )
             if yt is not None:
                 premiere_label = yt.premiere_label
