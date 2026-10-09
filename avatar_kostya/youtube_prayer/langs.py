@@ -35,6 +35,11 @@ class LangProfile:
     label: str
     # Регион для подбора тем и для YouTube.
     geo: str
+    # Часовой пояс аудитории: в нём считаются часы премьер. Зритель смотрит по
+    # своим часам, а не по московским.
+    tz: str
+    # Часы премьер в этом поясе, по умолчанию.
+    premiere_hours: Tuple[int, ...]
     # Код языка в метаданных ролика (snippet.defaultLanguage).
     youtube_lang: str
     voice_id: str
@@ -67,6 +72,8 @@ _PROFILES: Dict[str, LangProfile] = {
         code="ru",
         label="RU",
         geo="RU",
+        tz="Europe/Moscow",
+        premiere_hours=(7, 12, 16, 19, 22),
         youtube_lang="ru",
         voice_id=_SHARED_VOICE,
         hook_fallback="Тебе это знакомо?",
@@ -86,6 +93,8 @@ _PROFILES: Dict[str, LangProfile] = {
         code="en",
         label="EN/US",
         geo="US",
+        tz="America/New_York",
+        premiere_hours=(7, 12, 16, 19, 22),
         youtube_lang="en",
         voice_id=_SHARED_VOICE,
         hook_fallback="Does this feel familiar?",
@@ -109,6 +118,15 @@ _PROFILES: Dict[str, LangProfile] = {
         code="es",
         label="ES/LatAm",
         geo="MX",
+        # Мехико: самая большая аудитория испаноязычного молитвенного контента.
+        # Богота и Лима на час впереди, Буэнос-Айрес на три — для утренних и
+        # вечерних слотов разброс терпимый. Мексика с 2022 года без перехода
+        # на летнее время, ZoneInfo это учитывает.
+        tz="America/Mexico_City",
+        # Под мексиканский распорядок: 6 — перед выходом из дома, 12 — полдень,
+        # 18 — дорога домой, 21 — после позднего ужина, 23 — бессонница, одна
+        # из главных тем канала.
+        premiere_hours=(6, 12, 18, 21, 23),
         youtube_lang="es",
         voice_id=_SHARED_VOICE,
         hook_fallback="¿Te suena familiar?",
@@ -169,6 +187,33 @@ def attune_text(lang: Optional[str]) -> str:
 def cta_text(lang: Optional[str]) -> str:
     return _env_override(f"YT_SHORTS_CTA_{profile(lang).code.upper()}",
                          _env_override("YT_SHORTS_CTA", profile(lang).cta))
+
+
+def premiere_hours_for(lang: Optional[str], *, env_prefix: str) -> List[int]:
+    """Часы премьер языка — в его собственном поясе.
+
+    Порядок: <PREFIX>_<LANG> → профиль, а общий <PREFIX> без суффикса читается
+    ТОЛЬКО для языка по умолчанию.
+
+    Так сделано нарочно. Общая переменная в боевом .env настроена под Москву
+    (7,12,16,19,22). Если бы её наследовали все языки, испанский канал молча
+    взял бы эти же числа и трактовал их как время Мехико — а при любой правке
+    русского расписания так же молча поехал бы следом. Часы чужого канала
+    должны задаваться явно.
+
+    Старое имя с суффиксом _MSK сохранено, чтобы не трогать боевой .env.
+    """
+    from youtube_prayer.premiere_schedule import parse_premiere_hours
+
+    p = profile(lang)
+    names = [f"{env_prefix}_{p.code.upper()}"]
+    if p.code == DEFAULT_LANG:
+        names.append(env_prefix)
+    for name in names:
+        raw = (os.getenv(name) or "").strip()
+        if raw:
+            return parse_premiere_hours(raw)
+    return list(p.premiere_hours)
 
 
 def bot_username_for(lang: Optional[str]) -> str:

@@ -10,7 +10,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, List, Optional, Sequence
 
-from youtube_prayer.langs import DEFAULT_LANG, normalize_lang, profile
+from youtube_prayer.langs import (
+    DEFAULT_LANG,
+    normalize_lang,
+    premiere_hours_for,
+    profile,
+)
 from youtube_prayer.metadata import VideoMetadata
 from youtube_prayer.premiere_schedule import (
     premiere_slot_datetime,
@@ -345,7 +350,7 @@ def _upload_sync(
         except Exception as e:
             logger.warning("YouTube thumbnail set failed video=%s: %s", video_id, e)
 
-    label = premiere_slot_label(publish_at_msk)
+    label = premiere_slot_label(publish_at_msk, tz=profile(lang).tz)
     return YoutubeUploadResult(
         video_id=video_id,
         url=f"https://www.youtube.com/watch?v={video_id}",
@@ -384,11 +389,21 @@ async def upload_premiere_if_enabled(
             premiere_label=str(existing.get("premiere_label") or ""),
         )
 
-    hours = list(slots_msk) if slots_msk else premiere_hours_msk()
+    tz = profile(lang_l).tz
+    hours = (
+        list(slots_msk)
+        if slots_msk
+        else premiere_hours_for(
+            lang_l, env_prefix="YT_PRAYER_YOUTUBE_PREMIERE_HOURS_MSK"
+        )
+    )
+    # Часы понимаются в поясе аудитории канала: «утро по дороге» должно быть
+    # утром у зрителя, а не у нас.
     publish_at = premiere_slot_datetime(
         day=day,
         index=index,
         slots_msk=hours,
+        tz=tz,
     )
     category_id = str(_cfg("YT_PRAYER_YOUTUBE_CATEGORY_ID", "22") or "22")
     notify = bool(_cfg("YT_PRAYER_YOUTUBE_NOTIFY_SUBSCRIBERS", True))
