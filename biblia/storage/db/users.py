@@ -431,6 +431,33 @@ class UsersMixin:
             logger.debug("get_owed_donation_ask uid=%s: %s", user_id, e)
             return False
 
+    async def remember_start_source(self, user_id: int, source: str) -> bool:
+        """Запоминает, с какой ссылки человек пришёл. Только первый раз.
+
+        Перезаписывать нельзя: повторный заход по другой ссылке стёр бы
+        настоящий источник, и воронка показывала бы последнее касание вместо
+        первого. Отсюда «WHERE start_source IS NULL».
+        """
+        src = (source or "").strip()[:128]
+        if not src:
+            return False
+        try:
+            async with self.get_connection() as conn:
+                await conn.execute(
+                    """
+                    UPDATE users
+                    SET start_source = $1,
+                        start_source_at = NOW()
+                    WHERE user_id = $2 AND start_source IS NULL
+                    """,
+                    src,
+                    int(user_id),
+                )
+                return True
+        except Exception as e:
+            logger.error("remember_start_source uid=%s: %s", user_id, e)
+            return False
+
     async def set_owed_donation_ask(self, user_id: int, value: bool = True) -> bool:
         try:
             async with self.get_connection() as conn:

@@ -61,34 +61,31 @@ class UserMenuFeature(BaseFeature):
         )
 
     def build_keyboard(self) -> InlineKeyboardMarkup:
+        """Кнопки только тех фич, что реально подняты на этом языке.
+
+        Раньше список был жёстким. На испанском боте это давало меню из семи
+        пунктов, из которых работал один: остальные вели в фичи, которых в
+        процессе нет, — нажатие просто ничего не делало. Хуже пустой кнопки
+        только кнопка, которая молчит.
+
+        Фича появится — пункт встанет на место сам, править здесь не придётся.
+        """
+        from bot.langs import feature_enabled
+
+        # (нужная фича, текст, callback)
+        candidates = (
+            ("payment", menu_txt.BTN_PAYMENT, CB_PAYMENT),
+            ("personal_prayer", menu_txt.BTN_PRAYER, CB_PRAYER),
+            ("scripture_challenge", menu_txt.BTN_CHALLENGE, CB_CHALLENGE),
+            ("frequent_questions", menu_txt.BTN_MORE, CB_MORE),
+            ("support", menu_txt.BTN_SUPPORT, CB_SUPPORT),
+            ("support", menu_txt.BTN_FEEDBACK, CB_FEEDBACK),
+            ("referral", menu_txt.BTN_AFFILIATE, CB_AFFILIATE),
+        )
         rows = [
-            [
-                InlineKeyboardButton(
-                    text=menu_txt.BTN_PAYMENT, callback_data=CB_PAYMENT
-                )
-            ],
-            [InlineKeyboardButton(text=menu_txt.BTN_PRAYER, callback_data=CB_PRAYER)],
-            [
-                InlineKeyboardButton(
-                    text=menu_txt.BTN_CHALLENGE, callback_data=CB_CHALLENGE
-                )
-            ],
-            [InlineKeyboardButton(text=menu_txt.BTN_MORE, callback_data=CB_MORE)],
-            [
-                InlineKeyboardButton(
-                    text=menu_txt.BTN_SUPPORT, callback_data=CB_SUPPORT
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text=menu_txt.BTN_FEEDBACK, callback_data=CB_FEEDBACK
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text=menu_txt.BTN_AFFILIATE, callback_data=CB_AFFILIATE
-                )
-            ],
+            [InlineKeyboardButton(text=text, callback_data=cb)]
+            for feature, text, cb in candidates
+            if feature_enabled(feature) and self.feature_manager.get_optional(feature)
         ]
         return InlineKeyboardMarkup(inline_keyboard=rows)
 

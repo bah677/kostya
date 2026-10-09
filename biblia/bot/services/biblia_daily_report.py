@@ -761,6 +761,31 @@ class BibliaDailyReportCollector:
             or 0
         )
 
+    async def get_start_sources_30d(self, limit: int = 8) -> list:
+        """Откуда приходили за 30 дней: метка из /start → сколько людей.
+
+        Для воронки с YouTube это главная таблица: показывает не «что набрало
+        просмотры», а «что привело людей» — обычно это разные ролики.
+        """
+        try:
+            async with self.pool.acquire() as conn:
+                rows = await conn.fetch(
+                    """
+                    SELECT start_source AS src, COUNT(*) AS people
+                    FROM users
+                    WHERE start_source IS NOT NULL
+                      AND start_source_at >= NOW() - INTERVAL '30 days'
+                    GROUP BY start_source
+                    ORDER BY people DESC, src
+                    LIMIT $1
+                    """,
+                    int(limit),
+                )
+            return [(r["src"], int(r["people"])) for r in rows]
+        except Exception as e:
+            logger.warning("get_start_sources_30d: %s", e)
+            return []
+
     async def get_users_never_received_blessings(self) -> int:
         """Активные пользователи без успешной рассылки из кампаний с «(авто)» в названии."""
         return int(
@@ -938,6 +963,7 @@ class BibliaDailyReportCollector:
             "donation_button_clicks": donation_daily["donation_button_clicks"],
             "donation_proposals": donation_daily["donation_proposals"],
             "users_never_mailed": await self.get_users_never_received_blessings(),
+            "start_sources_30d": await self.get_start_sources_30d(),
         }
 
         clicks = metrics["donation_clicks_yesterday"]
@@ -1033,6 +1059,13 @@ class BibliaDailyReportCollector:
 
         # Блоки выключенных фич не печатаем: строка нулей каждый день — это
         # не информация, а шум, в котором тонут живые цифры.
+        sources = metrics.get("start_sources_30d") or []
+        if sources:
+            lines = "".join(f"\n      – {src}: {n}" for src, n in sources)
+            sources_block = f"\n\n    <b>🚪 ОТКУДА ПРИХОДЯТ (30 дней)</b>{lines}"
+        else:
+            sources_block = ""
+
         if feature_enabled("personal_prayer", lang):
             prayer_lines = (
                 f"\n    • Генераций молитв: {metrics.get('prayer_generations_yesterday', 0)}"
@@ -1094,4 +1127,4 @@ class BibliaDailyReportCollector:
     • Конверсия (нажатие кнопки -> оплата): {conversion}%
 
     <b>📨 НИ РАЗУ НЕ ПОЛУЧИВШИЕ БЛАГОСЛОВЕНИЯ</b>
-    • Без рассылок: {metrics.get('users_never_mailed', 0)}"""
+    • Без рассылок: {metrics.get('users_never_mailed', 0)}{sources_block}"""

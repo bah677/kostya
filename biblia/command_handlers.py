@@ -68,6 +68,15 @@ class AppCommandHandlers:
         if not ok:
             logger.warning("Biblia /start: не удалось сохранить пользователя %s", uid)
 
+        # Откуда пришёл — пишем один раз, при первом /start. Для воронки с
+        # YouTube это единственный способ узнать, какой ролик привёл человека:
+        # ссылка под роликом содержит метку yt_<день>_<номер>.
+        if param:
+            try:
+                await stor.remember_start_source(uid, param)
+            except Exception as e:
+                logger.warning("Biblia /start source uid=%s: %s", uid, e)
+
         if param and param.startswith("ref_"):
             referrer_id_str = param[4:]
             try:
