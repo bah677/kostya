@@ -115,6 +115,13 @@ _DEFAULT_BOT_USERNAME = "Talk_God_Bot"
 
 
 def bot_start_link(*, day: str, index: int, lang: str = "ru") -> str:
+    """Ссылка с меткой ролика.
+
+    В описании Shorts больше не используется: кликнуть её там нельзя, а
+    перепечатывать хвост ?start=yt_<день>_<номер> никто не станет. Оставлена
+    для мест, где ссылка кликабельна, — раздел «Ссылки» в шапке канала,
+    обычные горизонтальные видео, посты в телеграм-канале.
+    """
     """Ссылка на клубного бота с меткой, какой ролик привёл человека.
 
     Клуб распознаёт payload yt_* как маркетинговое касание и кладёт его в
@@ -132,24 +139,25 @@ def bot_start_link(*, day: str, index: int, lang: str = "ru") -> str:
     return f"https://t.me/{user}?start={tag}"
 
 
-def _inject_bot_link(description: str, link: str, *, lang: str = "ru") -> str:
-    """Ссылка — ПЕРВОЙ строкой описания.
+def _inject_bot_handle(description: str, *, lang: str = "ru") -> str:
+    """Первой строкой — куда идти. Только @имя, без URL.
 
-    Раньше она стояла перед блоком Keywords, то есть после трёх абзацев.
-    В плеере Shorts описание свёрнуто целиком, и до ссылки не доходил никто:
-    за 37 тысяч просмотров в базе клуба ноль касаний с меткой yt_* — при
-    том, что метка проставлялась верно и код её разбора стоял в проде.
+    Ссылку из описания Shorts кликнуть нельзя: YouTube отключил там
+    гиперссылки в августе 2023 из-за спама, и адрес приходит обычным текстом.
+    Длинный URL с меткой ?start=yt_<день>_<номер> никто не перепечатает, он
+    только занимал первую строку — самое видное место описания.
 
-    Первая строка — единственное место описания, которое вообще где-то
-    показывается: на странице просмотра, в поиске и в превью канала.
-    Рядом со ссылкой даём @имя текстом: из Shorts никуда не кликнуть,
-    зато имя можно запомнить и найти в Telegram поиском.
+    Осталось @имя: его запоминают и ищут в Telegram поиском. Там же, где
+    ссылка ВСЁ ЕЩЁ кликабельна, — в разделе «Ссылки» в шапке канала, — метку
+    можно оставить, но она будет одна на весь канал, не на ролик.
     """
-    if not link or link in description:
-        return description
     name, _ = destination_for(lang)
-    suffix = f" — {name}" if name else ""
-    line = f"🙏 {profile(lang).outro_text}{suffix}: {link}"
+    if not name:
+        return description
+    p = profile(lang)
+    line = f"🙏 {p.outro_text} — {name} {p.telegram_hint}"
+    if line in description:
+        return description
     return f"{line}\n\n{description.lstrip()}"
 
 
@@ -190,6 +198,9 @@ description: 2–3 párrafos cortos. Luego, en líneas aparte:
 NO PROMETAS lo que no ocurre: aquí nadie reza por el que comenta ni dice su
 nombre en voz alta. Escribirlo sería mentir al que confía. Nada de «oraremos
 por ti», «tu nombre sonará en la oración de hoy» ni parecidos.
+Y NO MENCIONES la promesa para negarla: «no es una promesa de que alguien
+rezará por ti» suena a disculpa y mete en la cabeza del lector justo lo que
+no ofrecemos. Simplemente invita a escribir «Amén» y sigue adelante.
 Nada de «dale like y suscríbete» en lista: eso no funciona.
 Al final, Keywords tras ---.
 
@@ -232,6 +243,10 @@ def _metadata_system_prompt(*, strict: bool = False, lang: str = "ru") -> str:
         "молится и его имя вслух не произносят. Написать так — значит обмануть "
         "доверившегося. Никаких «за тебя помолятся», «твоё имя прозвучит в "
         "сегодняшней молитве» и подобного.\n"
+        "И НЕ УПОМИНАЙ это обещание, чтобы его отрицать: «за тебя здесь никто "
+        "не молится» звучит как оправдание и кладёт читателю в голову ровно "
+        "то, чего мы не предлагаем. Просто позови написать «Аминь» и иди "
+        "дальше.\n"
         "Не «поставьте лайк и подпишитесь» списком — это не работает. "
         "В конце Keywords через ---.\n"
         "hashtags: 6–10 тегов по теме молитвы. #Shorts не пиши, он добавится сам.\n"
@@ -360,12 +375,7 @@ async def generate_short_metadata(
     if meta is None:
         meta = _fallback_short_metadata(trend=trend, brief=brief, lang=lang)
 
-    if day and index:
-        link = bot_start_link(day=day, index=index, lang=lang)
-        if link:
-            meta = replace(
-                meta, description=_inject_bot_link(meta.description, link, lang=lang)
-            )
+    meta = replace(meta, description=_inject_bot_handle(meta.description, lang=lang))
 
     if work_dir is not None:
         work_dir.mkdir(parents=True, exist_ok=True)

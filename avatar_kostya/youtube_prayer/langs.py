@@ -52,6 +52,9 @@ class LangProfile:
     default_tags: Tuple[str, ...]
     # Концевая карточка со ссылкой на бота.
     outro_text: str
+    # Куда идти: «в Telegram». Ссылку в описании Shorts не кликнуть, поэтому
+    # в тексте называем площадку словом, а имя даём как @имя для поиска.
+    telegram_hint: str
     # Чем молитва заканчивается — по этому проверяем, что модель не оборвалась.
     amen_markers: Tuple[str, ...]
     # Как молитва закрывается: эту строку требуем от модели последней.
@@ -85,6 +88,7 @@ _PROFILES: Dict[str, LangProfile] = {
         default_hashtags=("#молитва", "#вера", "#христианство", "#утешение", "#Бог"),
         default_tags=("молитва", "христианская молитва", "вера", "утешение"),
         outro_text="Молитва по твоей ситуации",
+        telegram_hint="в Telegram",
         default_destination="Talk_God_Bot",
         amen_markers=("аминь",),
         prayer_closing="Во имя Иисуса Христа, Аминь",
@@ -107,6 +111,7 @@ _PROFILES: Dict[str, LangProfile] = {
         default_hashtags=("#prayer", "#faith", "#Christianity", "#comfort", "#God"),
         default_tags=("prayer", "Christian prayer", "faith", "comfort"),
         outro_text="A prayer for what you're going through",
+        telegram_hint="on Telegram",
         amen_markers=("amen",),
         prayer_closing="In the name of Jesus Christ, Amen",
         attune="Close your eyes and let us pray together.",
@@ -139,6 +144,7 @@ _PROFILES: Dict[str, LangProfile] = {
         default_hashtags=("#oración", "#fe", "#cristianismo", "#consuelo", "#Dios"),
         default_tags=("oración", "oración cristiana", "fe", "consuelo"),
         outro_text="Una oración para lo que estás viviendo",
+        telegram_hint="en Telegram",
         amen_markers=("amén", "amen"),
         prayer_closing="En el nombre de Jesucristo, amén",
         attune="Cierra los ojos y oremos juntos.",
