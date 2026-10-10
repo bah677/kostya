@@ -31,3 +31,9 @@ def test_finplan_is_marketing_touch():
     assert touch is not None
     assert touch.touch_key == "finplan"
     assert touch.touch_kind == "start_payload"
+
+
+def test_finplan_group_post_copy():
+    assert "план чтения" in txt.GROUP_POST_HTML.lower()
+    assert txt.BTN_GET_PLAN == "Получить план чтения"
+    assert txt.GROUP_TOPIC_ID == 1503

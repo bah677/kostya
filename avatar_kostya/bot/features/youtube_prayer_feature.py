@@ -116,6 +116,63 @@ class YoutubePrayerFeature(BaseFeature):
     async def start_background_tasks(self) -> None:
         # Очередь голосовых в канал Shorts — даже если ночной cron выключен:
         # иначе /yt_shorts force поставит job'ы, а отправлять будет некому.
+        #
+        # Цикл поднимается на КАЖДЫЙ язык со своим каталогом очереди. Раньше
+        # он был один и смотрел только в русский: испанские job'ы копились в
+        # data/youtube_shorts_es/tg_voice_queue, и разбирать их было некому —
+        # в испанском канале не появилось ни одного ролика.
+        if self._app and getattr(config, "YT_SHORTS_TG_CHANNEL_ENABLED", True):
+            from youtube_prayer.langs import known_langs, profile, setting
+            from youtube_shorts.tg_channel_publish import (
+                tg_channel_id_for,
+                tg_voice_poll_loop,
+            )
+
+            for lang in known_langs():
+                if not tg_channel_id_for(lang):
+                    continue
+                task_name = f"yt_shorts_tg_voice_poll_{lang}"
+                if any(t.get_name() == task_name and not t.done() for t in self._tasks):
+                    continue
+                if lang == "ru":
+                    work = _abs_dir(
+                        getattr(config, "YT_SHORTS_WORK_DIR", None),
+                        "data/youtube_shorts",
+                    )
+                else:
+                    work = _abs_dir(
+                        setting(f"YT_SHORTS_WORK_DIR_{lang.upper()}", None),
+                        f"data/youtube_shorts_{lang}",
+                    )
+                self._tasks.append(
+                    asyncio.create_task(
+                        tg_voice_poll_loop(self._app.bot, work_root=work),
+                        name=task_name,
+                    )
+                )
+                self.log(
+                    f"TG voice poll [{profile(lang).label}] {work.name} "
+                    f"→ chat {tg_channel_id_for(lang)}"
+                )
+
+        if not getattr(config, "YT_PRAYER_ENABLED", True):
+            self.log("YT_PRAYER_ENABLED=0 — хендлеры не регистрируются")
+            return
+        dispatcher.message.register(
+            self.cmd_horiz, PRIVATE_CHAT, Command("yt_prayer")
+        )
+        dispatcher.message.register(
+            self.cmd_horiz, PRIVATE_CHAT, Command("yt_prayer_run")
+        )
+        dispatcher.message.register(
+            self.cmd_shorts, PRIVATE_CHAT, Command("yt_shorts")
+        )
+        dispatcher.message.register(self.cmd_all, PRIVATE_CHAT, Command("yt_run"))
+        self.log("/yt_prayer, /yt_shorts, /yt_run зарегистрированы")
+
+    async def start_background_tasks(self) -> None:
+        # Очередь голосовых в канал Shorts — даже если ночной cron выключен:
+        # иначе /yt_shorts force поставит job'ы, а отправлять будет некому.
         if (
             self._app
             and getattr(config, "YT_SHORTS_TG_CHANNEL_ENABLED", True)
