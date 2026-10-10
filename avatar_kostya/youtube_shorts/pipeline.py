@@ -160,7 +160,15 @@ async def run_daily_youtube_shorts_pipeline(
         return text
 
     async def _complete_metadata(system: str, user: str) -> Optional[str]:
-        text, _ = await deepseek_complete(system, user, temperature=0.35, max_tokens=1800)
+        # thinking=disabled обязательно. По умолчанию deepseek-v4-flash
+        # размышляет, и на испанском это съедало весь лимит: ответ приходил
+        # пустым с finish=length, срабатывали запасные метаданные, и на канал
+        # уходил шаблонный заголовок вроде «Cuando gratitud por lo sencillo —
+        # una oración que sostiene». Подбор заголовка и описания — работа на
+        # форматирование, рассуждения ей не нужны, а платятся как выход.
+        text, _ = await deepseek_complete(
+            system, user, temperature=0.35, max_tokens=1800, thinking="disabled"
+        )
         return text
 
     try:
