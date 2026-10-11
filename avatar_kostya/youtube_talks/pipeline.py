@@ -32,6 +32,11 @@ from youtube_prayer.stock_broll import build_broll_montage
 from youtube_prayer.topic_history import append_used_trends, load_recent_trends
 from youtube_prayer.trends import fetch_google_trends
 from youtube_prayer.work_cleanup import cleanup_item_media_after_youtube_upload
+from youtube_prayer.youtube_uploader import (
+    YoutubeOAuthError,
+    notify_youtube_oauth_problem,
+    probe_youtube_oauth,
+)
 from youtube_shorts.metadata import generate_short_metadata, theme_overlay_label
 from youtube_shorts.uploader import upload_short_premiere_if_enabled
 from youtube_talks import compose as talks_compose
@@ -146,6 +151,19 @@ async def run_daily_talks_pipeline(
 
     done_topics: List[str] = []
     try:
+        # Токен проверяем ДО тяжёлой части: рендер одного ролика — это
+        # четверть часа процессора и оплаченная озвучка. Узнать про мёртвый
+        # токен в конце, после всех трат, — худший момент.
+        try:
+            probe_youtube_oauth(require_upload_enabled=True, lang=lang)
+        except YoutubeOAuthError as e:
+            logger.error("[talks %s] токен недействителен: %s", lang, e)
+            await notify_youtube_oauth_problem(
+                bot, chat_id=chat_id, topic_id=topic_id, detail=str(e), force=True
+            )
+            await _notify(f"⛔ [{tag}] OAuth: {e}")
+            return TalksPipelineResult(day=day, ok=False, error=str(e))
+
         recent = load_recent_trends(work_root, history_days=history_days, lang=lang)
         trends = await fetch_google_trends(geo=prof.geo, limit=24)
         await _notify(f"🗣 [{tag}] старт, тем в истории: {len(recent)}")
