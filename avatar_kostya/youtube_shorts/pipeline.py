@@ -19,7 +19,6 @@ from youtube_prayer.compose import deepseek_complete
 from youtube_prayer.pipeline import is_done, mark_done, run_dir_for_day
 from youtube_prayer.langs import (
     attune_text,
-
     cta_text,
     normalize_lang,
     profile,

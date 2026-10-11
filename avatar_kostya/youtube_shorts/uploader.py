@@ -56,8 +56,13 @@ async def upload_short_premiere_if_enabled(
     index: int,
     work_dir: Path,
     lang: str = "ru",
+    slots_override: Optional[List[int]] = None,
 ) -> Optional[YoutubeUploadResult]:
-    """Идемпотентная загрузка Short с премьерой в слот index (1–8)."""
+    """Идемпотентная загрузка Short с премьерой в слот index (1–8).
+
+    slots_override — свои часы вместо общих для шортсов. Нужен разговорным
+    роликам: у них один слот в день, в промежутке между молитвенными.
+    """
     if not shorts_upload_enabled():
         return None
     # Раньше здесь стояло lang="ru" наглухо: испанский ролик уехал бы на
@@ -71,5 +76,5 @@ async def upload_short_premiere_if_enabled(
         day=day,
         index=index,
         work_dir=work_dir,
-        slots_msk=shorts_premiere_hours_msk(lang),
+        slots_msk=list(slots_override) if slots_override else shorts_premiere_hours_msk(lang),
     )

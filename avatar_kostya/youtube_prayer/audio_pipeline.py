@@ -496,16 +496,21 @@ async def synthesize_prayer_audio(
     voice_id: Optional[str] = None,
     lang: str = "ru",
     stress_amen: bool = True,
+    atempo: Optional[float] = None,
 ) -> Tuple[Path, Optional[Path], float, str, List[WordTiming]]:
     """
     Returns: (wav_path, ogg_path|None, duration_sec, tts_text, word_timings)
     word_timings уже с учётом atempo.
+
+    atempo — явная скорость. Молитвы читаются медленнее обычного (0.85), а
+    разговорным роликам замедление мешает: это объяснение, а не молитва.
+    Не задан — берётся PRAYER_TTS_ATEMPO, как было.
     """
     import json
 
     work_dir.mkdir(parents=True, exist_ok=True)
     tts_text = format_prayer_for_tts(prayer_text, lang=lang, stress_amen=stress_amen)
-    tempo = resolve_atempo()
+    tempo = resolve_atempo() if atempo is None else max(0.5, min(1.2, float(atempo)))
     mp3, raw_timings = await _elevenlabs_mp3_with_timings(
         prayer_text, voice_id=voice_id, lang=lang, stress_amen=stress_amen
     )

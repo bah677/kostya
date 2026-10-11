@@ -348,6 +348,18 @@ class YoutubePrayerFeature(BaseFeature):
                             lang="es",
                         )
                     )
+            # Разговорные ролики — ПОСЛЕ молитв и только если молитвы уже
+            # отработали. Это отдельный прогон: упадёт — молитвы всё равно
+            # выпущены, а ошибка видна отдельной строкой.
+            if KIND_SHORTS in kinds:
+                notes.extend(
+                    await self._run_talks(
+                        chat_id=chat_id,
+                        topic_id=topic_id,
+                        force=force,
+                        progress_chat_id=progress_chat_id,
+                    )
+                )
             await self._say(progress_chat_id, "\n".join(n for n in notes if n))
             # Срез и разбор — после публикации, чтобы вчерашний день был закрыт.
             await self._channel_report(chat_id, topic_id, progress_chat_id)
@@ -447,6 +459,50 @@ class YoutubePrayerFeature(BaseFeature):
         if not result.ok:
             return f"⛔ {tag} остановлены: {result.error}"
         return f"{tag} за {result.day}: ×{len(result.themes)}"
+
+    async def _run_talks(
+        self,
+        *,
+        chat_id: int,
+        topic_id: int,
+        force: bool,
+        progress_chat_id: Optional[int],
+    ) -> List[str]:
+        """Разговорные шортсы по всем языкам, где они включены."""
+        from youtube_talks.pipeline import (
+            run_daily_talks_pipeline,
+            talks_count,
+            talks_enabled,
+        )
+
+        if not talks_enabled():
+            return []
+        out: List[str] = []
+        for lang in ("ru", "es"):
+            count = talks_count(lang)
+            if count <= 0:
+                continue
+            try:
+                r = await run_daily_talks_pipeline(
+                    self._app.bot,
+                    chat_id=chat_id,
+                    topic_id=topic_id,
+                    count=count,
+                    force=force,
+                    progress_chat_id=progress_chat_id,
+                    lang=lang,
+                )
+            except Exception as e:
+                logger.exception("[%s] разговорные %s упали: %s", self.name, lang, e)
+                out.append(f"⛔ Разговорные {lang}: {e}")
+                continue
+            if r.skipped:
+                out.append(f"Разговорные {lang}: уже есть за {r.day}.")
+            elif r.ok:
+                out.append(f"Разговорные {lang} за {r.day}: {', '.join(r.topics)}")
+            else:
+                out.append(f"⚠️ Разговорные {lang}: {r.error}")
+        return out
 
     async def _channel_report(
         self, chat_id: int, topic_id: int, progress_chat_id: Optional[int]
