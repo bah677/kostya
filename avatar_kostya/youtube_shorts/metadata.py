@@ -139,7 +139,9 @@ def bot_start_link(*, day: str, index: int, lang: str = "ru") -> str:
     return f"https://t.me/{user}?start={tag}"
 
 
-def _inject_bot_handle(description: str, *, lang: str = "ru") -> str:
+def _inject_bot_handle(
+    description: str, *, lang: str = "ru", lead: Optional[str] = None
+) -> str:
     """Первой строкой — куда идти. Только @имя, без URL.
 
     Ссылку из описания Shorts кликнуть нельзя: YouTube отключил там
@@ -155,7 +157,11 @@ def _inject_bot_handle(description: str, *, lang: str = "ru") -> str:
     if not name:
         return description
     p = profile(lang)
-    line = f"🙏 {p.outro_text} — {name} {p.telegram_hint}"
+    # lead — вводная строка под формат ролика. У молитвы одна, у разговорного
+    # разбора другая: «Молитва по твоей ситуации» над разбором долгов читается
+    # как чужая подпись.
+    head = lead if lead is not None else f"🙏 {p.outro_text}"
+    line = f"{head} — {name} {p.telegram_hint}"
     if line in description:
         return description
     return f"{line}\n\n{description.lstrip()}"
@@ -348,8 +354,18 @@ async def generate_short_metadata(
     day: str = "",
     index: int = 0,
     lang: str = "ru",
+    system_builder: Optional[Callable[..., str]] = None,
+    link_lead: Optional[str] = None,
+    fallback_builder: Optional[Callable[..., VideoMetadata]] = None,
 ) -> VideoMetadata:
+    """system_builder — свой промпт метаданных для другого формата ролика.
+
+    Нужен разговорным шортсам: у них не молитва, а разбор житейской беды, и
+    название пишется иначе. Всё остальное — проверка качества заголовка,
+    подстановка ссылки, хэштеги — общее, дублировать незачем.
+    """
     lang = normalize_lang(lang)
+    build_system = system_builder or _metadata_system_prompt
     today = datetime.now(_MSK).strftime("%d.%m.%Y")
     pool = [t for t in (trend_pool or []) if t and t != trend][:10]
     pool_txt = "\n".join(f"- {t}" for t in pool) if pool else "(нет доп. трендов)"
@@ -362,7 +378,7 @@ async def generate_short_metadata(
 
     meta: Optional[VideoMetadata] = None
     for attempt, strict in enumerate((False, True)):
-        raw = await complete_fn(_metadata_system_prompt(strict=strict, lang=lang), user)
+        raw = await complete_fn(build_system(strict=strict, lang=lang), user)
         meta = await _parse_metadata_response(raw, trend=trend, brief=brief, lang=lang)
         if meta is not None:
             break
@@ -373,9 +389,12 @@ async def generate_short_metadata(
             )
 
     if meta is None:
-        meta = _fallback_short_metadata(trend=trend, brief=brief, lang=lang)
+        builder = fallback_builder or _fallback_short_metadata
+        meta = builder(trend=trend, brief=brief, lang=lang)
 
-    meta = replace(meta, description=_inject_bot_handle(meta.description, lang=lang))
+    meta = replace(
+        meta, description=_inject_bot_handle(meta.description, lang=lang, lead=link_lead)
+    )
 
     if work_dir is not None:
         work_dir.mkdir(parents=True, exist_ok=True)
