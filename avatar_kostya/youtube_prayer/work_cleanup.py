@@ -11,6 +11,8 @@ logger = logging.getLogger(__name__)
 # Маркеры / мелкий текст — оставляем для идемпотентности и отладки.
 _KEEP_NAMES = frozenset(
     {
+        # По нему ищут заявленный отрывок музыки при жалобе Content ID.
+        "audio_mix.json",
         "youtube_upload.json",
         "meta.json",
         "topic.json",

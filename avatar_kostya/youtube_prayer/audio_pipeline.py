@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import random
@@ -492,6 +493,26 @@ def _mix_voice_bg_to_files(
             subprocess.run(ogg_cmd, capture_output=True, text=True, timeout=180, check=False)
 
         dur = probe_duration_sec(out_wav) or 0.0
+        # Какой трек и с какой секунды подмешан. Нужно, чтобы по жалобе
+        # Content ID можно было найти заявленный отрывок: фон берётся со
+        # случайного места часового файла, а само аудио после выгрузки
+        # подчищается — в логах эта строка доживает до первой ротации.
+        try:
+            (out_wav.parent / "audio_mix.json").write_text(
+                json.dumps(
+                    {
+                        "bg_track": track.name if tracks else None,
+                        "bg_start_sec": round(start_sec, 2) if tracks else None,
+                        "atempo": tempo,
+                        "duration_sec": round(dur, 2),
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+        except Exception:
+            logger.debug("audio_mix.json не записан", exc_info=True)
         return dur
 
 
