@@ -16,15 +16,29 @@ logger = logging.getLogger(__name__)
 
 # Замер на живой озвучке: 1080 знаков дали 119.5 с при atempo 0.85, то есть
 # 101.6 с в обычном темпе — примерно 10.6 знака в секунду. Отсюда и границы.
-CHARS_PER_SEC = 10.6
+_CHARS_PER_SEC = {"ru": 11.0, "es": 9.5, "en": 10.0}
+_CPS_DEFAULT = 9.5
+
+
+def chars_per_sec(lang: str = "ru") -> float:
+    return _CHARS_PER_SEC.get(normalize_lang(lang), _CPS_DEFAULT)
 
 MIN_SEC = 45
 # Предел Shorts — 180 секунд; за ним YouTube считает ролик обычным видео.
 # Держим запас: призыв в конце тоже занимает время, и реальная озвучка может
 # разойтись с оценкой на несколько секунд.
 MAX_TOTAL_SEC = 155
-MIN_CHARS = 700          # ≈ 66 с — с запасом над требуемыми 45
-MAX_CHARS = 1450         # ≈ 137 с, плюс призыв ≈ 12 с
+_TARGET_MIN_SEC = 66     # нижний ориентир, с запасом над требуемыми 45
+
+
+def min_chars_for(lang: str = "ru") -> int:
+    return int(_TARGET_MIN_SEC * chars_per_sec(lang))
+
+
+def max_chars_for(lang: str = "ru") -> int:
+    """Потолок ответа с учётом призыва, который тоже звучит."""
+    cps = chars_per_sec(lang)
+    return max(400, int(MAX_TOTAL_SEC * cps) - len(prompts.cta_text(lang)) - 20)
 _MAX_ATTEMPTS = 3
 
 
@@ -38,8 +52,8 @@ class TalkTopic:
         return self.topic
 
 
-def est_seconds(text: str) -> float:
-    return len(text or "") / CHARS_PER_SEC
+def est_seconds(text: str, lang: str = "ru") -> float:
+    return len(text or "") / chars_per_sec(lang)
 
 
 def _parse_json_obj(raw: str) -> dict:
@@ -112,12 +126,13 @@ class TalkAnswerTooShort(RuntimeError):
 async def compose_answer(topic: TalkTopic, *, lang: str = "ru") -> str:
     """Развёрнутый ответ из Писания. Длину держим в границах по знакам."""
     code = normalize_lang(lang)
+    lo, hi = min_chars_for(code), max_chars_for(code)
     system = prompts.answer_system(
         code,
-        min_chars=MIN_CHARS,
-        max_chars=MAX_CHARS,
-        min_sec=int(MIN_CHARS / CHARS_PER_SEC),
-        max_sec=int(MAX_CHARS / CHARS_PER_SEC),
+        min_chars=lo,
+        max_chars=hi,
+        min_sec=int(lo / chars_per_sec(code)),
+        max_sec=int(hi / chars_per_sec(code)),
     )
     ask = {
         "ru": (
@@ -159,23 +174,26 @@ async def compose_answer(topic: TalkTopic, *, lang: str = "ru") -> str:
             "talks answer attempt=%s chars=%s (~%.0f с) finish=%s topic=%r",
             attempt,
             len(text),
-            est_seconds(text),
+            est_seconds(text, code),
             finish,
             topic.topic,
         )
-        if len(text) >= MIN_CHARS:
-            return _clamp_long(text)
-    if len(best) >= int(MIN_SEC * CHARS_PER_SEC):
+        if len(text) >= lo:
+            warn_foreign_words(text, lang=code, topic=topic.topic)
+            return _clamp_long(text, limit=hi)
+    floor = int(MIN_SEC * chars_per_sec(code))
+    if len(best) >= floor:
         # Короче цели, но длиннее минимума по ТЗ — выпускаем.
         logger.warning(
             "talks: ответ %s знаков (~%.0f с) — короче цели, но выше минимума",
             len(best),
-            est_seconds(best),
+            est_seconds(best, code),
         )
-        return _clamp_long(best)
+        warn_foreign_words(best, lang=code, topic=topic.topic)
+        return _clamp_long(best, limit=hi)
     raise TalkAnswerTooShort(
-        f"ответ {len(best)} знаков (~{est_seconds(best):.0f} с), "
-        f"нужно минимум {int(MIN_SEC * CHARS_PER_SEC)}"
+        f"ответ {len(best)} знаков (~{est_seconds(best, code):.0f} с), "
+        f"нужно минимум {floor}"
     )
 
 
@@ -212,7 +230,7 @@ def warn_foreign_words(text: str, *, lang: str, topic: str) -> None:
 
 def _clamp_long(text: str, *, limit: Optional[int] = None) -> str:
     """Обрезаем по границе предложения, а не по знаку посреди слова."""
-    cap = MAX_CHARS if limit is None else limit
+    cap = max_chars_for("ru") if limit is None else limit
     if len(text) <= cap:
         return text
     head = text[:cap]
@@ -232,7 +250,7 @@ def spoken_text(answer: str, *, lang: str = "ru") -> str:
     body = (answer or "").rstrip()
     if not cta:
         return body
-    budget = int(MAX_TOTAL_SEC * CHARS_PER_SEC) - len(cta) - 10
+    budget = max_chars_for(lang)
     if len(body) > budget > 200:
         body = _clamp_long(body, limit=budget)
         logger.info("talks: ответ подрезан до %s знаков под бюджет озвучки", len(body))
