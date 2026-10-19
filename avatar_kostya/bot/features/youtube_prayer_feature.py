@@ -364,6 +364,10 @@ class YoutubePrayerFeature(BaseFeature):
             )
             notes: List[str] = []
 
+            # Сверка жалоб ДО генерации: если вчерашний ролик забанили за
+            # музыку, сегодняшние на этот отрезок уже не попадут.
+            notes.extend(await self._scan_music_claims(progress_chat_id))
+
             if KIND_HORIZ in kinds:
                 notes.append(
                     await self._run_horizontal(
@@ -516,6 +520,21 @@ class YoutubePrayerFeature(BaseFeature):
         if not result.ok:
             return f"⛔ {tag} остановлены: {result.error}"
         return f"{tag} за {result.day}: ×{len(result.themes)}"
+
+    async def _scan_music_claims(self, progress_chat_id: Optional[int]) -> List[str]:
+        """Какие ролики заблокированы и из-за какого куска музыки."""
+        try:
+            from youtube_prayer.claims_scan import format_report, scan_and_update
+
+            summary = await asyncio.to_thread(scan_and_update)
+        except Exception as e:
+            logger.warning("[%s] сверка жалоб не прошла: %s", self.name, e)
+            return []
+        report = format_report(summary)
+        if report:
+            await self._say(progress_chat_id, report)
+            return [report]
+        return []
 
     async def _run_talks(
         self,

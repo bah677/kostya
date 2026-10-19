@@ -391,6 +391,9 @@ def _mix_filter_complex(*, tempo: float, vol: float, outro_sec: float = 0.0) -> 
     )
 
 
+from youtube_prayer.bg_claims import pick_safe_start
+
+
 def _mix_voice_bg_to_files(
     voice_mp3: bytes,
     *,
@@ -422,7 +425,14 @@ def _mix_voice_bg_to_files(
             else:
                 # Не заходим в outro; длину голоса закрывает aloop.
                 max_start = max(0.0, duration - _OUTRO_AVOID_SEC)
-                start_sec = random.uniform(0.0, max_start) if max_start > 1.0 else 0.0
+                # Обходим отрезки, на которые уже заявился Content ID: ролик,
+                # попавший на такой кусок, YouTube закрывает во всех странах.
+                start_sec = pick_safe_start(
+                    track.name,
+                    track_duration=duration,
+                    window_sec=out_dur,
+                    max_start=max_start,
+                )
             filter_complex = _mix_filter_complex(
                 tempo=tempo, vol=vol, outro_sec=outro
             )
