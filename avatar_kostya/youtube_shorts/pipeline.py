@@ -22,9 +22,11 @@ from youtube_prayer.langs import (
     cta_text,
     normalize_lang,
     profile,
+    setting,
     voice_id_for,
 )
 from youtube_prayer.render import SHORT_H, SHORT_W, format_prayer_theme_label, render_vertical_full
+from youtube_prayer.cast_broll import build_cast_montage
 from youtube_prayer.stock_broll import build_broll_montage
 from youtube_prayer.topic_history import append_used_trends, load_recent_trends
 from youtube_prayer.trends import fetch_google_trends, select_prayer_topics
@@ -48,6 +50,20 @@ logger = logging.getLogger(__name__)
 # Пустая строка в env отключает соответствующий кусок.
 # Многоточие между блоками — пауза для ElevenLabs (чуть дольше обычного абзаца).
 _SPOKEN_PAUSE = "..."
+
+
+def _cast_count(lang: str) -> int:
+    """Сколько роликов пачки собирать из банка героев. 0 — только сток."""
+    code = normalize_lang(lang)
+    name = (
+        "YT_PRAYER_CAST_COUNT"
+        if code == "ru"
+        else f"YT_PRAYER_CAST_COUNT_{code.upper()}"
+    )
+    try:
+        return max(0, int(setting(name, 0) or 0))
+    except (TypeError, ValueError):
+        return 0
 
 
 def _spoken_prayer(prayer: str, *, lang: str = "ru") -> str:
@@ -121,6 +137,7 @@ async def run_daily_youtube_shorts_pipeline(
 ) -> ShortsPipelineResult:
     lang = normalize_lang(lang)
     prof = profile(lang)
+    cast_count = _cast_count(lang)
     day = datetime.now(_MSK).strftime("%Y-%m-%d")
     day_dir = run_dir_for_day(work_root, day)
     day_dir.mkdir(parents=True, exist_ok=True)
@@ -261,14 +278,29 @@ async def run_daily_youtube_shorts_pipeline(
             await _notify(
                 f"🖼 [Short {i}/{len(topics)}] b-roll 9:16 + обложка + рендер ({dur:.0f}с)…"
             )
-            broll = await build_broll_montage(
-                item_dir,
-                query=topic.broll_query,
-                duration_sec=dur,
-                width=SHORT_W,
-                height=SHORT_H,
-                prayer_text=spoken,
-            )
+            # Первые N роликов пачки собираем из банка героев, остальные —
+            # стоком. Так в один день видно оба видеоряда рядом и можно
+            # сравнить, не рискуя всей пачкой.
+            broll = None
+            if i <= cast_count:
+                broll = await build_cast_montage(
+                    item_dir,
+                    topic=topic.trend,
+                    duration_sec=dur,
+                    width=SHORT_W,
+                    height=SHORT_H,
+                )
+                if broll is not None:
+                    await _notify(f"🎭 [Short {i}/{len(topics)}] видеоряд с героями")
+            if broll is None:
+                broll = await build_broll_montage(
+                    item_dir,
+                    query=topic.broll_query,
+                    duration_sec=dur,
+                    width=SHORT_W,
+                    height=SHORT_H,
+                    prayer_text=spoken,
+                )
             covers = await generate_vertical_cover_pack(
                 item_dir,
                 title=meta.title,

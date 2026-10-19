@@ -60,6 +60,8 @@ class Scene:
     key: str
     # Кого показываем: woman | jesus | both
     who: str
+    # Ракурс и крупность — идут ПЕРВЫМИ в промпте, иначе модель их теряет.
+    shot: str
     prompt: str
     # Темы, к которым кадр подходит. Пусто — подходит к любой.
     topics: Tuple[str, ...] = field(default_factory=tuple)
@@ -72,57 +74,71 @@ class Scene:
 SCENES: Tuple[Scene, ...] = (
     # — беда —
     Scene("kitchen_night", "woman",
+          "medium shot, camera at eye level across the table",
           "sitting alone at a small kitchen table late in the evening, "
           "a cooling cup of tea in front of her, looking down at her hands, "
           "warm lamp light from above",
           ("тревога", "одиночество", "усталость", "долги")),
     Scene("window_rain", "woman",
+          "medium shot from the side, she is in profile against the window",
           "standing by a window, forehead almost touching the glass, warm "
           "light behind her, soft rain outside catching the golden light",
           ("тревога", "страх", "одиночество")),
     Scene("bills_table", "woman",
+          "medium shot slightly above, the table and papers visible",
           "at a table with papers and bills spread out, one hand on her "
           "forehead, warm desk lamp, quiet evening",
           ("долги", "деньги", "работа")),
     Scene("bed_sleepless", "woman",
+          "wide shot from the side, she is small in the frame",
           "lying awake in bed in the early morning twilight, eyes open, warm "
           "amber light beginning to come through the curtains",
           ("бессонница", "тревога", "страх")),
     Scene("bus_window", "woman",
+          "close shot through the bus window from outside, reflections on glass",
           "sitting by a bus window on the way to work, soft morning light on "
           "her face, city blurred warmly outside",
           ("усталость", "работа", "дорога")),
     Scene("doorway_quarrel", "woman",
-          "standing in a doorway of a warm home interior, looking back into "
-          "another room, quiet after an argument, soft evening light",
+          "wide shot, she is small in a warm home interior, seen from behind",
+          "standing in a doorway looking back into another room, quiet after "
+          "an argument, soft evening light",
           ("семья", "ссора", "прощение")),
     # — присутствие —
     Scene("jesus_light", "jesus",
-          "standing in a field at golden hour, seen from a respectful "
-          "distance, light falling around him, arms open and welcoming",
+          "wide shot from a respectful distance, full figure in the frame",
+          "standing in a field at golden hour, light falling around him, "
+          "arms open and welcoming",
           ()),
     Scene("jesus_hands", "jesus",
-          "his open hands shown gently in warm light, close but not his face, "
-          "soft golden background",
+          "extreme close-up of hands only, his face is NOT in the frame",
+          "open palms held gently forward in warm light, soft golden "
+          "background, nothing else in the shot",
           ()),
     Scene("jesus_path", "jesus",
-          "walking along a quiet path at sunrise, seen from behind, warm "
-          "light ahead of him",
+          "wide shot from directly BEHIND him, we see his back and the road "
+          "ahead, his face is NOT visible",
+          "walking away along a quiet path at sunrise, warm light ahead of him",
           ()),
     # — утешение, главные кадры канала —
     Scene("hand_shoulder", "both",
-          "Jesus standing behind her chair, one hand resting gently on her "
-          "shoulder, she does not see him, warm kitchen light, tender",
+          "medium shot, she is seated in the foreground, he stands behind her",
+          "his hand resting gently on her shoulder, she does not see him, "
+          "warm kitchen light, tender",
           ()),
     Scene("walk_together", "both",
-          "walking together along a quiet road at golden hour, seen from "
-          "behind, unhurried, warm light ahead",
+          "wide shot from BEHIND both of them, we see only their backs and "
+          "the road ahead, no faces visible at all",
+          "walking side by side along a quiet country road at golden hour, "
+          "unhurried, warm light ahead of them",
           ()),
     Scene("sitting_beside", "both",
-          "sitting beside each other on a wooden bench in a sunlit park, "
-          "she is talking, he is listening, warm afternoon light",
+          "wide shot from the side, both seen in profile on the bench",
+          "sitting beside each other on a wooden bench in a sunlit park, she "
+          "is talking, he is listening, warm afternoon light",
           ()),
     Scene("table_together", "both",
+          "medium shot from the side, both at the table in profile",
           "sitting across a small kitchen table from each other, two cups of "
           "tea, warm morning light through the window, peaceful",
           ()),
@@ -138,11 +154,26 @@ def character_prompt(who: str) -> str:
         return WOMAN
     if who == "jesus":
         return JESUS
-    return f"{WOMAN}, together with {JESUS}"
+    # Два персонажа описываем раздельно и проговариваем, чьи признаки чьи.
+    # Иначе они перетекают: на первом же парном кадре обручальное кольцо
+    # героини оказалось на руке Иисуса.
+    return (
+        f"TWO PEOPLE. First person: {WOMAN}. "
+        f"Second person: {JESUS}. "
+        "Only the woman wears a ring; his hands are bare. "
+        "Their clothing never mixes: her knitted cardigan is hers alone, "
+        "his linen robe and red mantle are his alone"
+    )
 
 
 def full_prompt(scene: Scene) -> str:
-    return f"{character_prompt(scene.who)}, {scene.prompt}. {STYLE}"
+    """Сначала кадр, потом герои, потом действие.
+
+    Порядок важен: если начинать с описания лиц, модель уходит в портрет и
+    игнорирует ракурс. На кадре «идут по дороге со спины» так и вышло —
+    получился фронтальный двойной портрет.
+    """
+    return f"{scene.shot}. {character_prompt(scene.who)}. {scene.prompt}. {STYLE}"
 
 
 def scenes_for_topic(topic: str, *, count: int = 8) -> List[Scene]:
