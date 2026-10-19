@@ -9,10 +9,12 @@
 # Шаги:
 #   1) supervisorctl stop bots:biblia_bot и biblia_es (если установлен)
 #   2) tar-снимок прод-кода в /home/appuser/backups/biblia/code/
-#      (без data/, log/, venv/, .pyc, __pycache__; хранение 7 дней)
+#      (без data/, log/, venv/, .pyc, __pycache__, без mp3 фона молитв;
+#      хранение 7 дней)
 #   3) pg_dump обеих БД (biblia_bot и biblia_es) в custom-формате в
 #      /home/appuser/backups/biblia/db/biblia_db_<TS>.dump
 #   4) rsync dev → prod, ЗЕРКАЛО (--delete) кроме data/, log/, venv/, .env
+#      и mp3 фона молитв (assets/prayer_bg_music/*.mp3 остаются на проде)
 #   5) pip install -r requirements.txt в /home/appuser/biblia/venv
 #      (если есть; обновлять/создавать venv этот скрипт сам не будет)
 #   6) накат миграций — все .sql из migrations/biblia/, которые есть в dev,
@@ -33,6 +35,7 @@
 #   sudo supervisorctl stop bots:biblia_bot
 #   cd /home/appuser/biblia && sudo tar -xzf /home/appuser/backups/biblia/code/biblia_code_<TS>.tgz
 #   sudo supervisorctl start bots:biblia_bot
+#   (mp3 фона в архиве нет — на проде остаются как были)
 #
 # Переменные окружения (можно переопределить):
 #   SUPERVISOR_NAME    программа supervisor       (по умолчанию bots:biblia_bot)
@@ -146,12 +149,17 @@ if [[ "$ES_ACTIVE" == "1" ]]; then
 fi
 
 # ---------- 2. tar прод-кода ----------
+# mp3 фона (~300 МБ) живут только на проде (setup_prayer_bg_music.sh), в git их нет.
+# В снимок не кладём — иначе каждый деплой +300 МБ. Откат tar -xzf их не затрёт:
+# файлов нет в архиве, на диске они остаются.
 echo "==> tar снимок прод-кода"
 sudo mkdir -p "$CODE_SNAPS"
 sudo tar \
   --exclude='./data' \
   --exclude='./log' \
   --exclude='./venv' \
+  --exclude='./assets/prayer_bg_music/*.mp3' \
+  --exclude='assets/prayer_bg_music/*.mp3' \
   --exclude='__pycache__' \
   --exclude='*.pyc' \
   -czf "$CODE_ARCHIVE" \
@@ -208,14 +216,15 @@ done
 
 # ---------- 4. rsync dev → prod (ЗЕРКАЛО) ----------
 # --delete: всё, чего нет в dev, удаляется из prod.
-# Исключённые пути (data/, log/, venv/, .env) защищены и от копирования, и от удаления.
-echo "==> rsync dev → prod (зеркало, без data/, log/, venv/, .env)"
+# Исключённые пути защищены и от копирования, и от удаления (нет --delete-excluded).
+# mp3 фона нет в git/dev — не копируем и не стираем прод-копии.
+echo "==> rsync dev → prod (зеркало, без data/, log/, venv/, .env, mp3 фона молитв)"
 sudo rsync -a -h --info=stats1 --delete \
   --exclude='__pycache__/' \
   --exclude='*.pyc' \
   --exclude='*.log' \
   --exclude='/data/' \
-  --exclude='/assets/prayer_bg_music/' \
+  --exclude='/assets/prayer_bg_music/*.mp3' \
   --exclude='/log/' \
   --exclude='/venv/' \
   --exclude='.env' \
