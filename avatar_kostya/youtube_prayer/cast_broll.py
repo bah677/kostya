@@ -70,8 +70,8 @@ async def build_cast_montage(
 
     from youtube_prayer.stock_broll import (
         _apply_cinematic_grade,
+        _env_flag,
         _env_float,
-        _env_int,
         _image_ken_burns,
         _trim_or_loop_to_duration,
         _xfade_concat,
@@ -114,11 +114,18 @@ async def build_cast_montage(
         concat = work_dir / "cast_concat.mp4"
         if not _xfade_concat(clips, concat, fade_sec=fade):
             return None
-        graded = work_dir / "cast_graded.mp4"
-        if not _apply_cinematic_grade(concat, graded):
-            graded = concat
+        # Киногрейд кадрам банка не нужен и вредит. Он настраивался под сток
+        # с Pexels: тот приходит плоским и холодноватым, его надо вытягивать
+        # и утеплять. Кадры банка уже сгенерированы в тёплой гамме, и второй
+        # слой утепления даёт не «тепло», а духоту: светлый кадр с бессонницей
+        # уходил в тёмно-оранжевый, лицо почти тонуло.
+        source = concat
+        if _env_flag("YT_PRAYER_CAST_GRADE", False):
+            graded = work_dir / "cast_graded.mp4"
+            if _apply_cinematic_grade(concat, graded):
+                source = graded
         out = work_dir / "cast_montage.mp4"
-        if not _trim_or_loop_to_duration(graded, out, duration_sec=dur):
+        if not _trim_or_loop_to_duration(source, out, duration_sec=dur):
             return None
         return out
 
