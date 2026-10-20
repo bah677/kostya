@@ -7,6 +7,7 @@
 
     .venv/bin/python3 scripts/build_cast_bank.py            # всё недостающее
     .venv/bin/python3 scripts/build_cast_bank.py --only hand_shoulder,kitchen_night
+    .venv/bin/python3 scripts/build_cast_bank.py --heroine bright  # вторая героиня
     .venv/bin/python3 scripts/build_cast_bank.py --variants 2   # по 2 дубля на кадр
     .venv/bin/python3 scripts/build_cast_bank.py --dry-run      # только показать промпты
 """
@@ -23,7 +24,7 @@ _ROOT = Path(__file__).resolve().parents[1]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from youtube_prayer.cast import full_prompt, scenes  # noqa: E402
+from youtube_prayer.cast import bank_folder, full_prompt, heroine, scenes  # noqa: E402
 from youtube_prayer.cast_bank import (  # noqa: E402
     bank_dir,
     generate_one,
@@ -37,12 +38,14 @@ logger = logging.getLogger("cast_bank")
 async def main() -> int:
     ap = argparse.ArgumentParser(description="Банк кадров с постоянными героями")
     ap.add_argument("--only", default="", help="ключи кадров через запятую")
+    ap.add_argument("--heroine", default="", help="ключ героини: real | bright")
     ap.add_argument("--variants", type=int, default=1, help="дублей на кадр")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--model", default="")
     args = ap.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
+    who = (args.heroine or "").strip()
     wanted = {k.strip() for k in args.only.split(",") if k.strip()}
     chosen = [s for s in scenes() if not wanted or s.key in wanted]
     if not chosen:
@@ -52,8 +55,8 @@ async def main() -> int:
 
     if args.dry_run:
         for s in chosen:
-            print(f"\n=== {s.who}/{s.key}")
-            print(full_prompt(s))
+            print(f"\n=== {bank_folder(s.who, who)}/{s.key}")
+            print(full_prompt(s, who))
         return 0
 
     model = model_name(args.model)
@@ -66,9 +69,9 @@ async def main() -> int:
     made = skipped = failed = 0
     for s in chosen:
         for v in range(1, max(1, args.variants) + 1):
-            dest = image_path(s, v)
+            dest = image_path(s, v, who)
             try:
-                if await generate_one(client, s, v, model):
+                if await generate_one(client, s, v, model, who):
                     made += 1
                     print(f"  + {s.who}/{dest.name}")
                 else:
@@ -79,6 +82,7 @@ async def main() -> int:
                 print(f"  ! {s.who}/{dest.name}: {e}", file=sys.stderr)
 
     print(f"\nготово: новых {made}, пропущено {skipped}, ошибок {failed}")
+    print(f"героиня: {heroine(who).label}")
     print(f"банк: {bank_dir()}")
     return 0 if not failed else 1
 
