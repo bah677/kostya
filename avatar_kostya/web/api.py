@@ -362,6 +362,43 @@ def create_app(bot_app) -> FastAPI:
             ]
         }
 
+    # ── Ключи YouTube ─────────────────────────────────────────────────────
+    # Токены живут около недели и умирают молча. Раньше перевыпуск шёл через
+    # разработчика: сгенерировать ссылку, открыть, прислать обратно адрес.
+
+    @app.get("/api/youtube/keys")
+    async def youtube_keys(uid: int = Depends(auth)):
+        from web.youtube_keys import all_key_statuses
+
+        return {"keys": await asyncio.to_thread(all_key_statuses)}
+
+    @app.post("/api/youtube/keys/{lang}/auth-url")
+    async def youtube_key_auth_url(lang: str, uid: int = Depends(auth)):
+        from web.youtube_keys import build_auth_url
+
+        try:
+            return await asyncio.to_thread(build_auth_url, lang)
+        except FileNotFoundError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
+
+    @app.post("/api/youtube/keys/{lang}/exchange")
+    async def youtube_key_exchange(
+        lang: str, payload: Dict[str, Any] = Body(default={}), uid: int = Depends(auth)
+    ):
+        from web.youtube_keys import exchange_code
+
+        raw = str(payload.get("code") or payload.get("url") or "").strip()
+        if not raw:
+            raise HTTPException(status_code=400, detail="пустой адрес")
+        try:
+            return await asyncio.to_thread(exchange_code, lang, raw)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
+
     @app.get("/api/llm-settings")
     async def get_llm_settings(request: Request, uid: int = Depends(auth)):
         refresh = str(request.query_params.get("refresh") or "").strip().lower() in {
