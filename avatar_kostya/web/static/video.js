@@ -755,24 +755,29 @@ function sceneCard(sc) {
   top.append(kill);
   fields.append(top);
 
+  // Подписи, а не только подсказки в пустом поле: заполненное поле
+  // подсказку прячет, и три одинаковые строки текста уже не различить.
+  const labelled = (title, node, hint) => {
+    fields.append(el("div", "scene-label", title));
+    node.placeholder = hint;
+    fields.append(node);
+  };
+
   const shot = el("input", "field");
   shot.value = sc.shot;
   shot.dataset.f = "shot";
-  shot.placeholder = "ракурс и крупность — идут первыми в промпте";
-  fields.append(shot);
+  labelled("Ракурс", shot, "крупность и точка съёмки — идут первыми в промпте");
 
   const prompt = el("textarea", "field");
   prompt.rows = 2;
   prompt.value = sc.prompt;
   prompt.dataset.f = "prompt";
-  prompt.placeholder = "что происходит в кадре";
-  fields.append(prompt);
+  labelled("Что происходит", prompt, "действие и свет в кадре");
 
   const topics = el("input", "field");
   topics.value = (sc.topics || []).join(", ");
   topics.dataset.f = "topics";
-  topics.placeholder = "темы через запятую; пусто — кадр подходит к любой";
-  fields.append(topics);
+  labelled("Темы", topics, "через запятую; пусто — кадр подходит к любой");
 
   card.append(fields);
   $$("[data-f]", card).forEach((n) => {
