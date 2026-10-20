@@ -19,7 +19,11 @@
 **/log/
 **/LogFromProd/
 **/exports/
+# Со слэшем правило ловит только каталоги. Симлинка с тем же именем — не
+# каталог, она проскакивала в индекс, а слияние подменяло ею боевой каталог
+# с индексом RAG. Поэтому обе формы.
 **/chroma_data/
+**/chroma_data
 
 # Nested legacy git (archived locally, do not publish)
 **/.git_archived_*/
