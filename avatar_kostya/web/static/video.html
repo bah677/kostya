@@ -79,9 +79,24 @@
       <div id="yt-stats" class="yt-stats muted">Загрузка…</div>
     </section>
 
-    <section class="block card">
-      <div class="block-head"><h2>Герои и сцены</h2></div>
-      <p class="muted small">ДНК героев, список сцен, галерея банка — скоро здесь.</p>
+    <section class="block card wide">
+      <div class="block-head">
+        <h2>Герои и сцены</h2>
+        <span class="saved small" id="cast-saved" hidden>Сохранено</span>
+      </div>
+      <p class="muted small">
+        Этот текст уходит в каждый кадр — пока он неизменен, героиня остаётся
+        собой. Менять его после сборки банка стоит только вместе с
+        перерисовкой кадров.
+      </p>
+      <div id="cast-dna" class="cast-dna muted">Загрузка…</div>
+      <div id="cast-scenes" class="cast-scenes"></div>
+      <div class="gen-actions">
+        <button type="button" class="btn primary" id="btn-cast-save">Сохранить</button>
+        <button type="button" class="btn" id="btn-cast-reload">Отменить правки</button>
+        <button type="button" class="btn" id="btn-cast-add">Добавить кадр</button>
+        <span class="muted small" id="cast-bank-note"></span>
+      </div>
     </section>
   </main>
 </div>

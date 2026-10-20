@@ -94,3 +94,43 @@
 @media (max-width: 560px) {
   .stats { grid-template-columns: 1fr 1fr; }
 }
+
+/* Герои и сцены: ДНК сверху, ниже карточки кадров с превью из банка. */
+.cast-dna { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); margin-bottom: 18px; }
+.cast-dna.muted { display: block; }
+.dna-field { display: grid; gap: 4px; align-content: start; }
+.dna-head { display: flex; align-items: baseline; gap: 8px; }
+.dna-head label { font-size: .88rem; }
+.dna-head .link { margin-left: auto; }
+.dna-field textarea.field { width: 100%; resize: vertical; font-size: .82rem; line-height: 1.4; }
+.dna-field.changed .dna-head label::after { content: " • изменено"; color: var(--accent); font-size: .74rem; }
+
+.cast-scenes { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); }
+.scene {
+  display: grid; gap: 10px; grid-template-columns: 96px minmax(0, 1fr);
+  padding: 10px; border: 1px solid var(--rule);
+  border-radius: var(--radius-sm, 10px); background: var(--surface-2);
+}
+.scene-frames { display: grid; gap: 6px; align-content: start; }
+.scene-frames .frame {
+  display: block; border-radius: 8px; overflow: hidden;
+  border: 1px solid var(--rule); background: var(--surface-3); line-height: 0;
+}
+.scene-frames .frame img { width: 100%; height: auto; display: block; }
+.scene-frames .frame.empty {
+  display: grid; place-items: center; aspect-ratio: 2 / 3;
+  font-size: .72rem; color: var(--muted); line-height: 1.2; text-align: center;
+}
+.scene-frames .btn.small { width: 100%; justify-content: center; }
+
+.scene-fields { display: grid; gap: 6px; align-content: start; min-width: 0; }
+.scene-top { display: flex; gap: 6px; align-items: center; }
+.scene-top .field.key { font-family: var(--mono); font-size: .78rem; flex: 1 1 auto; min-width: 0; }
+.scene-top select.field { flex: 0 0 auto; }
+.scene-fields .field { width: 100%; font-size: .82rem; }
+.scene-fields textarea.field { resize: vertical; line-height: 1.4; }
+
+@media (max-width: 560px) {
+  .cast-scenes { grid-template-columns: 1fr; }
+  .scene { grid-template-columns: 76px minmax(0, 1fr); }
+}

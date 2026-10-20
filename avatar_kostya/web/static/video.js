@@ -447,6 +447,214 @@ $("#btn-stats-refresh")?.addEventListener("click", async (ev) => {
   }
 });
 
+/* ── герои и сцены ───────────────────────────────────────────────────── */
+/* ДНК героев — не настройка, а то, что держит узнаваемость: один и тот же
+   абзац уходит в каждый кадр. Поэтому правку видно рядом с исходным
+   текстом из кода и её можно откатить одним нажатием. */
+
+let _cast = null;
+
+function dnaField(title, hint, f) {
+  const wrap = el("div", "dna-field");
+  const head = el("div", "dna-head");
+  head.append(el("label", null, title));
+  if (f.overridden) {
+    const back = el("button", "link small", "вернуть как в коде");
+    back.type = "button";
+    back.addEventListener("click", () => {
+      area.value = f.default;
+      wrap.classList.add("changed");
+    });
+    head.append(back);
+  }
+  wrap.append(head);
+  const area = el("textarea", "field");
+  area.rows = 4;
+  area.value = f.value || "";
+  area.dataset.dna = f.key;
+  area.addEventListener("input", () => {
+    wrap.classList.toggle("changed", area.value !== (f.value || ""));
+  });
+  wrap.append(area);
+  if (hint) wrap.append(el("div", "gen-hint", hint));
+  if (f.overridden) wrap.append(el("div", "gen-env", "правка из студии, в коде другой текст"));
+  return wrap;
+}
+
+function sceneCard(sc) {
+  const card = el("div", "scene");
+  card.dataset.key = sc.key;
+
+  const shelf = el("div", "scene-frames");
+  if (sc.frames.length) {
+    sc.frames.forEach((fr) => {
+      const a = el("a", "frame");
+      a.href = fr.url;
+      a.target = "_blank";
+      a.rel = "noopener noreferrer";
+      a.title = `${fr.name} · ${fr.kb} КБ`;
+      const img = el("img");
+      img.src = fr.thumb || fr.url;
+      img.alt = sc.key;
+      img.loading = "lazy";
+      a.append(img);
+      shelf.append(a);
+    });
+  } else {
+    shelf.append(el("div", "frame empty", "нет кадра"));
+  }
+  const draw = el("button", "btn small", "Дорисовать");
+  draw.type = "button";
+  draw.title = `дубль №${sc.next_variant}, примерно $${(_cast?.price ?? 0.04).toFixed(2)}`;
+  draw.addEventListener("click", () => drawFrame(sc.key, draw));
+  shelf.append(draw);
+  card.append(shelf);
+
+  const fields = el("div", "scene-fields");
+  const top = el("div", "scene-top");
+  const key = el("input", "field key");
+  key.value = sc.key;
+  key.dataset.f = "key";
+  key.placeholder = "ключ кадра";
+  top.append(key);
+  const who = el("select", "field");
+  who.dataset.f = "who";
+  (_cast?.who_values || []).forEach((w) => {
+    const o = el("option", null, w.label);
+    o.value = w.key;
+    who.append(o);
+  });
+  who.value = sc.who;
+  top.append(who);
+  const kill = el("button", "icon-btn", "×");
+  kill.type = "button";
+  kill.title = "убрать кадр из списка";
+  kill.addEventListener("click", () => card.remove());
+  top.append(kill);
+  fields.append(top);
+
+  const shot = el("input", "field");
+  shot.value = sc.shot;
+  shot.dataset.f = "shot";
+  shot.placeholder = "ракурс и крупность — идут первыми в промпте";
+  fields.append(shot);
+
+  const prompt = el("textarea", "field");
+  prompt.rows = 2;
+  prompt.value = sc.prompt;
+  prompt.dataset.f = "prompt";
+  prompt.placeholder = "что происходит в кадре";
+  fields.append(prompt);
+
+  const topics = el("input", "field");
+  topics.value = (sc.topics || []).join(", ");
+  topics.dataset.f = "topics";
+  topics.placeholder = "темы через запятую; пусто — кадр подходит к любой";
+  fields.append(topics);
+
+  card.append(fields);
+  return card;
+}
+
+function renderCast(d) {
+  _cast = d;
+  const dna = $("#cast-dna");
+  dna.classList.remove("muted");
+  dna.textContent = "";
+  dna.append(dnaField("Общая гамма", "Свет, цвет и настроение — общие для всех кадров.", d.style));
+  dna.append(dnaField("Героиня", "Та самая зрительница: обычное лицо, обычная одежда.", d.woman));
+  dna.append(dnaField("Иисус", "Иконографическая традиция, без портретов в упор.", d.jesus));
+
+  const box = $("#cast-scenes");
+  box.textContent = "";
+  d.scenes.forEach((sc) => box.append(sceneCard(sc)));
+
+  const note = $("#cast-bank-note");
+  const price = Number(d.price || 0).toFixed(2);
+  note.textContent =
+    `${d.frames_total} кадров в банке · ${d.model}, примерно $${price} за кадр` +
+    (d.scenes_overridden ? " · список кадров правлен из студии" : "");
+}
+
+function collectCast() {
+  const out = { scenes: [] };
+  document.querySelectorAll("#cast-dna [data-dna]").forEach((n) => {
+    out[n.dataset.dna] = n.value || "";
+  });
+  document.querySelectorAll("#cast-scenes .scene").forEach((card) => {
+    const get = (f) => (card.querySelector(`[data-f="${f}"]`)?.value || "").trim();
+    const topics = get("topics").split(",").map((t) => t.trim()).filter(Boolean);
+    out.scenes.push({
+      key: get("key"),
+      who: get("who"),
+      shot: get("shot"),
+      prompt: get("prompt"),
+      topics,
+    });
+  });
+  return out;
+}
+
+async function loadCast() {
+  const box = $("#cast-dna");
+  if (!box) return;
+  box.textContent = "Загружаю…";
+  try {
+    renderCast(await api("/api/cast"));
+  } catch (e) {
+    if (e.message !== "auth") box.textContent = `Не удалось загрузить: ${e.message}`;
+  }
+}
+
+async function drawFrame(key, btn) {
+  const price = Number(_cast?.price || 0.04).toFixed(2);
+  if (!confirm(`Дорисовать кадр «${key}»? Это примерно $${price} и до полутора минут.`)) return;
+  btn.disabled = true;
+  btn.textContent = "Рисую…";
+  try {
+    const d = await api("/api/cast/generate", {
+      method: "POST",
+      body: JSON.stringify({ key }),
+    });
+    toast(`${d.frame}: ${d.status}`);
+    loadCast();
+  } catch (e) {
+    toast(e.message, "bad");
+    btn.disabled = false;
+    btn.textContent = "Дорисовать";
+  }
+}
+
+$("#btn-cast-save")?.addEventListener("click", async () => {
+  const btn = $("#btn-cast-save");
+  btn.disabled = true;
+  btn.textContent = "Сохраняю…";
+  try {
+    renderCast(await api("/api/cast", { method: "PUT", body: JSON.stringify(collectCast()) }));
+    const saved = $("#cast-saved");
+    saved.hidden = false;
+    setTimeout(() => { saved.hidden = true; }, 2500);
+    toast("Сохранено — подхватится ближайшим прогоном");
+  } catch (e) {
+    toast(e.message, "bad");
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Сохранить";
+  }
+});
+
+$("#btn-cast-reload")?.addEventListener("click", () => loadCast());
+
+$("#btn-cast-add")?.addEventListener("click", () => {
+  if (!_cast) return;
+  const card = sceneCard({
+    key: "", who: "woman", shot: "", prompt: "", topics: [],
+    frames: [], next_variant: 1,
+  });
+  $("#cast-scenes").append(card);
+  card.querySelector('[data-f="key"]').focus();
+});
+
 /* ── старт ───────────────────────────────────────────────────────────── */
 
 (async function boot() {
@@ -458,6 +666,7 @@ $("#btn-stats-refresh")?.addEventListener("click", async (ev) => {
     loadKeys();
     loadGenSettings();
     loadStats();
+    loadCast();
   } catch (e) {
     if (e.message !== "auth") {
       $("#app").hidden = false;

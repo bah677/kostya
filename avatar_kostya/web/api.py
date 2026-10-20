@@ -424,6 +424,58 @@ def create_app(bot_app) -> FastAPI:
             "channels": await asyncio.to_thread(all_channel_stats),
         }
 
+    # ── Герои и сцены ─────────────────────────────────────────────────────
+    # ДНК героев и список кадров лежали только в коде. Теперь правятся здесь
+    # и ложатся поверх кода — тем же способом, что настройки генерации.
+
+    @app.get("/api/cast")
+    async def cast_describe(uid: int = Depends(auth)):
+        from web.cast_studio import describe
+
+        return await asyncio.to_thread(describe)
+
+    @app.put("/api/cast")
+    @app.post("/api/cast")
+    async def cast_save(payload: Dict[str, Any] = Body(default={}), uid: int = Depends(auth)):
+        from web.cast_studio import save
+
+        try:
+            return await asyncio.to_thread(save, payload)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
+
+    @app.get("/api/cast/frame/{who}/{name}")
+    async def cast_frame(who: str, name: str, thumb: int = 0, uid: int = Depends(auth)):
+        from fastapi.responses import FileResponse
+
+        from youtube_prayer.cast_bank import frame_file, thumb_file
+
+        path = frame_file(who, name)
+        if path is None:
+            raise HTTPException(status_code=404, detail="кадра нет")
+        if thumb:
+            small = await asyncio.to_thread(thumb_file, path)
+            if small is not None:
+                return FileResponse(small, media_type="image/jpeg")
+        return FileResponse(path, media_type="image/png")
+
+    @app.post("/api/cast/generate")
+    async def cast_generate(payload: Dict[str, Any] = Body(default={}), uid: int = Depends(auth)):
+        """Дорисовать один дубль кадра. Идёт до полутора минут."""
+        from web.cast_studio import generate
+
+        key = str(payload.get("key") or "").strip()
+        if not key:
+            raise HTTPException(status_code=400, detail="не указан кадр")
+        try:
+            return await generate(key)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
+
     @app.get("/api/gen-settings")
     async def gen_settings(uid: int = Depends(auth)):
         from youtube_prayer.gen_settings import describe
