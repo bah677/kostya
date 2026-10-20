@@ -1,0 +1,40 @@
+/* Студия молитв: простая колонка карточек, без трёхпанельной сетки завода. */
+
+.studio {
+  min-height: 100dvh;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.studio .top {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; padding: 12px 20px; border-bottom: 1px solid var(--rule);
+  background: var(--surface);
+}
+
+.studio-body {
+  padding: 20px;
+  display: grid;
+  gap: 16px;
+  align-content: start;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  max-width: 1100px;
+  width: 100%;
+  margin: 0 auto;
+}
+
+.studio .card {
+  padding: 16px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius, 12px);
+  background: var(--surface);
+  align-content: start;
+}
+
+.studio .top-actions { display: flex; align-items: center; gap: 8px; }
+.studio .btn.small { padding: 6px 12px; font-size: .85rem; }
+
+@media (max-width: 700px) {
+  .studio-body { padding: 14px; grid-template-columns: 1fr; }
+  .studio .top { padding: 10px 14px; }
+}

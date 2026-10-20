@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Студия молитв</title>
+<link rel="stylesheet" href="/static/style.css">
+<link rel="stylesheet" href="/static/video.css">
+</head>
+<body>
+
+<section id="login" class="login" hidden>
+  <div class="login-card">
+    <div class="login-head">
+      <span class="logo" aria-hidden="true"></span>
+      <div>
+        <h1>Студия молитв</h1>
+        <p class="muted">Вход для команды</p>
+      </div>
+    </div>
+    <p class="lead">Войдите в Контент завод — студия использует тот же вход.</p>
+    <a class="btn primary wide" href="/">Перейти к входу</a>
+  </div>
+</section>
+
+<div class="studio" id="app" hidden>
+  <header class="top">
+    <div class="brand">
+      <span class="logo" aria-hidden="true"></span>
+      <div class="brand-text">
+        <strong>Студия молитв</strong>
+        <span class="muted small">Генерация роликов для YouTube</span>
+      </div>
+    </div>
+    <div class="top-actions">
+      <a class="btn small" href="/">← Контент завод</a>
+      <button id="btn-theme" class="icon-btn" title="Тема" aria-label="Переключить тему" data-icon="auto"></button>
+    </div>
+  </header>
+
+  <main class="studio-body">
+    <section class="block card">
+      <div class="block-head">
+        <h2>Ключи YouTube</h2>
+        <button type="button" class="link small" id="btn-keys-refresh">Проверить</button>
+      </div>
+      <p class="muted small">
+        Токен живёт около недели и умирает молча. Здесь видно, жив ли он,
+        и можно перевыпустить, не трогая сервер.
+      </p>
+      <div id="yt-keys" class="yt-keys muted">Загрузка…</div>
+    </section>
+
+    <section class="block card">
+      <div class="block-head"><h2>Настройки генерации</h2></div>
+      <p class="muted small">Количества, часы премьер, голос, темп, призывы — скоро здесь.</p>
+    </section>
+
+    <section class="block card">
+      <div class="block-head"><h2>Статистика каналов</h2></div>
+      <p class="muted small">Подписчики, просмотры, свежие ролики — скоро здесь.</p>
+    </section>
+
+    <section class="block card">
+      <div class="block-head"><h2>Герои и сцены</h2></div>
+      <p class="muted small">ДНК героев, список сцен, галерея банка — скоро здесь.</p>
+    </section>
+  </main>
+</div>
+
+<div id="toasts" class="toasts" aria-live="assertive"></div>
+
+<dialog id="ytkey-dialog" class="edit-dialog">
+  <form method="dialog" class="edit-sheet" id="ytkey-form">
+    <header class="source-head">
+      <div>
+        <p class="muted small">Перевыпуск ключа</p>
+        <h2 id="ytkey-title">Канал</h2>
+        <p class="muted small" id="ytkey-hint"></p>
+      </div>
+      <button type="submit" class="icon-btn" value="cancel" aria-label="Закрыть">×</button>
+    </header>
+    <div class="edit-fields">
+      <p class="muted small">1. Откройте ссылку и выберите нужный канал.</p>
+      <a id="ytkey-url" class="btn" target="_blank" rel="noopener noreferrer">Открыть Google</a>
+      <p class="muted small">2. Вставьте адрес из адресной строки браузера.</p>
+      <textarea id="ytkey-code" class="field" rows="3"
+        placeholder="http://localhost/?state=…&amp;code=…"></textarea>
+    </div>
+    <footer class="source-foot">
+      <button type="submit" class="btn" value="cancel">Отмена</button>
+      <button type="button" class="btn primary" id="ytkey-save">Сохранить ключ</button>
+    </footer>
+  </form>
+</dialog>
+
+<script src="/static/video.js"></script>
+</body>
+</html>

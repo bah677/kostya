@@ -268,7 +268,9 @@ textarea.field { resize: vertical; line-height: 1.5; }
 .search::-webkit-search-cancel-button { cursor: pointer; }
 
 /* ── чаты ─────────────────────────────────────────────────────────── */
-.chat-list { display: grid; gap: 2px; max-height: 28vh; overflow: auto; margin: 0 -4px; padding: 0 4px; }
+/* Список чатов делил колонку с материалами пополам, и дерево помещалось
+   на две-три строки. Чатов обычно немного, материалов — сотни. */
+.chat-list { display: grid; gap: 2px; max-height: 16vh; overflow: auto; margin: 0 -4px; padding: 0 4px; }
 .chat-item {
   position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0 6px; align-items: center;
   padding: 8px 10px; border-radius: var(--radius-sm); cursor: pointer; transition: background .12s;
@@ -287,7 +289,12 @@ textarea.field { resize: vertical; line-height: 1.5; }
 .list-empty { font-size: .84rem; color: var(--muted); padding: 6px 10px; }
 
 /* ── дерево объектов ──────────────────────────────────────────────── */
-.tree { overflow: auto; display: grid; gap: 1px; min-height: 0; align-content: start; margin: 0 -4px; padding: 0 4px; }
+.tree {
+  overflow: auto; display: grid; gap: 1px; align-content: start;
+  margin: 0 -4px; padding: 0 4px;
+  /* Чтобы дерево не сжималось в щель на коротком экране. */
+  min-height: 38vh;
+}
 
 .fold {
   display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; gap: 6px; align-items: center;
@@ -311,7 +318,11 @@ textarea.field { resize: vertical; line-height: 1.5; }
   font-size: .68rem; padding: 1px 7px; font-weight: 600; line-height: 1.5;
 }
 .fold-body { display: grid; gap: 1px; margin-left: 13px; padding-left: 8px; border-left: 1px solid var(--rule); }
-.fold-body .hint { padding: 2px 6px 6px; font-size: .76rem; }
+.fold-body .hint {
+  padding: 2px 6px 6px; font-size: .74rem;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden;
+}
 
 .node {
   display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; gap: 8px; align-items: start;
@@ -711,3 +722,7 @@ textarea.field { resize: vertical; line-height: 1.5; }
 .yt-key-stats { font-size: 0.85rem; opacity: 0.8; }
 .yt-key-error { color: #e0574a; }
 .yt-key .btn { margin-top: 6px; justify-self: start; }
+
+/* Ссылка на отдельную студию молитв из шапки завода. */
+.studio-link { padding: 6px 12px; font-size: .85rem; text-decoration: none; }
+@media (max-width: 700px) { .studio-link { display: none; } }
