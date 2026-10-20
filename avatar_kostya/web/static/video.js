@@ -143,6 +143,111 @@ $("#ytkey-save")?.addEventListener("click", async () => {
 
 $("#btn-keys-refresh")?.addEventListener("click", () => loadKeys());
 
+/* ── настройки генерации ─────────────────────────────────────────────── */
+/* Правки живут в файле рядом с данными, langs.setting читает его первым —
+   поэтому сохранение действует на ближайший прогон без перезапуска. */
+
+let _genFields = [];
+
+function genInput(f) {
+  const wrap = el("div", "gen-field");
+  const id = `gen-${f.key}`;
+  const label = el("label", null, f.title);
+  label.htmlFor = id;
+  wrap.append(label);
+
+  let input;
+  if (f.kind === "bool") {
+    input = el("select", "field");
+    [["", "как в .env"], ["1", "включено"], ["0", "выключено"]].forEach(([v, t]) => {
+      const o = el("option", null, t);
+      o.value = v;
+      input.append(o);
+    });
+    input.value = f.value || "";
+  } else {
+    input = el("input", "field");
+    input.type = f.kind === "number" ? "number" : "text";
+    if (f.kind === "number") input.min = "0";
+    input.value = f.value || "";
+    input.placeholder = f.env || f.default || "";
+  }
+  input.id = id;
+  input.dataset.key = f.key;
+  input.addEventListener("input", () => {
+    wrap.classList.toggle("changed", (input.value || "") !== (f.value || ""));
+  });
+  wrap.append(input);
+
+  if (f.hint) wrap.append(el("div", "gen-hint", f.hint));
+  const envText = f.env ? `в .env: ${f.env}` : "в .env не задано";
+  wrap.append(el("div", "gen-env", `${envText} · сейчас действует: ${f.effective || "—"}`));
+  return wrap;
+}
+
+function renderGenSettings(fields) {
+  _genFields = fields;
+  const box = $("#gen-settings");
+  box.textContent = "";
+  const groups = [];
+  fields.forEach((f) => {
+    let g = groups.find((x) => x.name === f.group);
+    if (!g) {
+      g = { name: f.group, items: [] };
+      groups.push(g);
+    }
+    g.items.push(f);
+  });
+  groups.forEach((g) => {
+    const node = el("div", "gen-group");
+    node.append(el("h3", null, g.name));
+    const grid = el("div", "gen-fields");
+    g.items.forEach((f) => grid.append(genInput(f)));
+    node.append(grid);
+    box.append(node);
+  });
+}
+
+async function loadGenSettings() {
+  const box = $("#gen-settings");
+  if (!box) return;
+  box.textContent = "Загружаю…";
+  try {
+    const d = await api("/api/gen-settings");
+    renderGenSettings(d.fields || []);
+  } catch (e) {
+    if (e.message !== "auth") box.textContent = `Не удалось загрузить: ${e.message}`;
+  }
+}
+
+$("#btn-gen-save")?.addEventListener("click", async () => {
+  const values = {};
+  document.querySelectorAll("#gen-settings [data-key]").forEach((node) => {
+    values[node.dataset.key] = node.value || "";
+  });
+  const btn = $("#btn-gen-save");
+  btn.disabled = true;
+  btn.textContent = "Сохраняю…";
+  try {
+    const d = await api("/api/gen-settings", {
+      method: "PUT",
+      body: JSON.stringify({ values }),
+    });
+    renderGenSettings(d.fields || []);
+    const saved = $("#gen-saved");
+    saved.hidden = false;
+    setTimeout(() => { saved.hidden = true; }, 2500);
+    toast("Настройки сохранены — подхватятся ближайшим прогоном");
+  } catch (e) {
+    toast(e.message, "bad");
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Сохранить";
+  }
+});
+
+$("#btn-gen-reload")?.addEventListener("click", () => loadGenSettings());
+
 /* ── старт ───────────────────────────────────────────────────────────── */
 
 (async function boot() {
@@ -152,6 +257,7 @@ $("#btn-keys-refresh")?.addEventListener("click", () => loadKeys());
     $("#app").hidden = false;
     $("#login").hidden = true;
     loadKeys();
+    loadGenSettings();
   } catch (e) {
     if (e.message !== "auth") {
       $("#app").hidden = false;
