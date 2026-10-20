@@ -123,14 +123,23 @@ def model_name(model: str = "") -> str:
     return (model or os.getenv("YT_PRAYER_IMAGE_MODEL") or "gpt-image-1").strip()
 
 
+# Общий прайс в отчёте о расходах считает картинку по $0.04 — это ставка
+# за квадрат 1024 в среднем качестве. Наш кадр вертикальный 1024x1536 и в
+# высоком, он стоит примерно вчетверо больше. В студии показываем честную
+# цену: по ней человек решает, дорисовывать кадр или нет.
+_PRICE_PER_FRAME = 0.17
+
+
 def price_per_frame(model: str = "") -> float:
-    """Оценка из того же прайса, по которому считается отчёт о расходах."""
+    """Сколько примерно стоит один кадр нашего размера."""
+    if model_name(model).startswith("gpt-image"):
+        return _PRICE_PER_FRAME
     try:
         from bot.services.llm_cost_report import _IMAGE_PER_CALL
 
-        return float(_IMAGE_PER_CALL.get(model_name(model), 0.04))
+        return float(_IMAGE_PER_CALL.get(model_name(model), _PRICE_PER_FRAME))
     except Exception:
-        return 0.04
+        return _PRICE_PER_FRAME
 
 
 async def generate_one(
