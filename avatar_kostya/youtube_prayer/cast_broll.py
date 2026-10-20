@@ -43,6 +43,33 @@ def bank_ready(topic: str = "", *, count: int = 8, heroine_key: str = "") -> boo
     return len(pick_frames(topic, count=count, heroine_key=heroine_key)) >= _MIN_FRAMES
 
 
+def _clip_to_scene(
+    src: Path, dest: Path, *, seconds: float, width: int, height: int
+) -> bool:
+    """Готовый клип под размер кадра и длину сцены.
+
+    Наезд поверх не делаем: в клипе уже есть своё движение, и второй слой
+    с ним дерётся — получается шевеление ради шевеления.
+    """
+    import subprocess
+
+    from youtube_prayer.stock_broll import _FPS, _encode_args, _ffmpeg
+
+    vf = (
+        f"scale={width}:{height}:force_original_aspect_ratio=increase,"
+        f"crop={width}:{height},fps={_FPS},setsar=1,format=yuv420p"
+    )
+    cmd = [
+        _ffmpeg(), "-y", "-i", str(src), "-t", f"{max(2.0, float(seconds)):.3f}",
+        "-vf", vf, "-an", *_encode_args(), str(dest),
+    ]
+    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=300, check=False)
+    ok = proc.returncode == 0 and dest.is_file() and dest.stat().st_size > 1000
+    if not ok:
+        logger.warning("cast: клип %s не лёг в сцену: %s", src.name, proc.stderr[-200:])
+    return ok
+
+
 def choose_heroine(topic: str = "", *, index: int = 1) -> str:
     """Какая героиня снимается в этом ролике.
 
@@ -104,13 +131,25 @@ async def build_cast_montage(
         return None
     logger.info("cast: снимает %s, кадров %s", heroine(who).label, len(frames))
 
+    # Оживлённые кадры: рядом с картинкой лежит mp4 на десять секунд.
+    # Там, где клипа нет, остаётся наезд по картинке — банк может быть
+    # оживлён наполовину, и это не повод падать на сток.
+    movies = {f: f.with_suffix(".mp4") for f in frames}
+    movies = {f: m for f, m in movies.items() if m.is_file() and m.stat().st_size > 50_000}
+    if movies:
+        logger.info("cast: оживлённых кадров %s из %s", len(movies), len(frames))
+
     # Длину сцены считаем от озвучки: лучше показать меньше кадров подольше,
     # чем гнать слайд-шоу. Но и держать один кадр дольше 12 секунд не стоит.
     fade = _env_float("YT_PRAYER_XFADE_SEC", 0.8)
-    scene_sec = max(5.0, min(12.0, dur / max(1, len(frames))))
+    # Клип длится десять секунд, растягивать его нечем: петля разворотом
+    # гонит пар обратно в кружку, а наплыв мельтешит. Поэтому когда кадры
+    # оживлены, сцена не длиннее клипа.
+    cap = 10.0 if len(movies) >= len(frames) // 2 else 12.0
+    scene_sec = max(5.0, min(cap, dur / max(1, len(frames))))
     needed = max(_MIN_FRAMES, min(len(frames), int(dur / max(1.0, scene_sec - fade)) + 1))
     frames = frames[:needed]
-    scene_sec = max(5.0, min(12.0, dur / len(frames) + fade))
+    scene_sec = max(5.0, min(cap, dur / len(frames) + fade))
 
     work_dir.mkdir(parents=True, exist_ok=True)
     pool = work_dir / "cast_clips"
@@ -120,6 +159,12 @@ async def build_cast_montage(
         clips: List[Path] = []
         for i, img in enumerate(frames):
             dest = pool / f"{i:02d}.mp4"
+            movie = movies.get(img)
+            if movie is not None and _clip_to_scene(
+                movie, dest, seconds=scene_sec, width=width, height=height
+            ):
+                clips.append(dest)
+                continue
             # Направление наезда чередуем, иначе движение выглядит машинным.
             if _image_ken_burns(
                 img, dest, seconds=scene_sec, width=width, height=height,
@@ -151,7 +196,8 @@ async def build_cast_montage(
         logger.warning("cast: монтаж не собрался — остаёмся на стоке")
         return None
     logger.info(
-        "cast montage ok кадров=%s сцена=%.1f с длительность=%.0f с тема=%r",
-        len(frames), scene_sec, dur, topic,
+        "cast montage ok кадров=%s (оживлённых %s) сцена=%.1f с "
+        "длительность=%.0f с тема=%r",
+        len(frames), sum(1 for f in frames if f in movies), scene_sec, dur, topic,
     )
     return result

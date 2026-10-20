@@ -111,6 +111,9 @@ class Scene:
     prompt: str
     # Темы, к которым кадр подходит. Пусто — подходит к любой.
     topics: Tuple[str, ...] = field(default_factory=tuple)
+    # Что движется, если кадр оживляют. Пусто — модель решит сама, а это
+    # всегда лишнее: она норовит двинуть камеру и повернуть героиню.
+    motion: str = ""
     # Чья это сцена. Пусто — общая: кадры с Иисусом одни на всех.
     #
     # У героинь свои наборы сцен, а не один общий. Смысл слоя и темы
@@ -130,70 +133,136 @@ _REAL_SCENES: Tuple[Scene, ...] = (
           "sitting alone at a small kitchen table late in the evening, "
           "a cooling cup of tea in front of her, looking down at her hands, "
           "warm lamp light from above",
-          ("тревога", "одиночество", "усталость", "долги")),
+          ("тревога", "одиночество", "усталость", "долги"),
+          motion=(
+              "Steam drifts slowly up from the cooling tea. She breathes, blinks "
+              "once, and her fingers shift slightly against each other. The lamp "
+              "light stays steady."
+          ),
+          ),
     Scene("window_rain", "woman",
           "medium shot from the side, she is in profile against the window",
           "standing by a window, forehead almost touching the glass, warm "
           "light behind her, soft rain outside catching the golden light",
-          ("тревога", "страх", "одиночество")),
+          ("тревога", "страх", "одиночество"),
+          motion=(
+              "Rain runs down the glass outside. She breathes slowly and blinks; a "
+              "loose strand of hair settles back against her temple."
+          ),
+          ),
     Scene("bills_table", "woman",
           "medium shot slightly above, the table and papers visible",
           "at a table with papers and bills spread out, one hand on her "
           "forehead, warm desk lamp, quiet evening",
-          ("долги", "деньги", "работа")),
+          ("долги", "деньги", "работа"),
+          motion=(
+              "She breathes out slowly, the hand at her forehead presses a little "
+              "and then eases. The papers lie still, the lamp light stays steady."
+          ),
+          ),
     Scene("bed_sleepless", "woman",
           "wide shot from the side, she is small in the frame",
           "lying awake in bed in the early morning twilight, eyes open, warm "
           "amber light beginning to come through the curtains",
-          ("бессонница", "тревога", "страх")),
+          ("бессонница", "тревога", "страх"),
+          motion=(
+              "She breathes slowly and blinks once. The curtain stirs faintly and "
+              "the dawn light grows a shade warmer."
+          ),
+          ),
     Scene("bus_window", "woman",
           "close shot through the bus window from outside, reflections on glass",
           "sitting by a bus window on the way to work, soft morning light on "
           "her face, city blurred warmly outside",
-          ("усталость", "работа", "дорога")),
+          ("усталость", "работа", "дорога"),
+          motion=(
+              "The blurred warm city slides past outside the window. Her reflection "
+              "shifts gently with the movement of the bus and she blinks."
+          ),
+          ),
     Scene("doorway_quarrel", "woman",
           "wide shot, she is small in a warm home interior, seen from behind",
           "standing in a doorway looking back into another room, quiet after "
           "an argument, soft evening light",
-          ("семья", "ссора", "прощение")),
+          ("семья", "ссора", "прощение"),
+          motion=(
+              "She breathes in and out once and her shoulders lower a little. The "
+              "evening light on the walls stays steady."
+          ),
+          ),
     # — присутствие —
     Scene("jesus_light", "jesus",
           "wide shot from a respectful distance, full figure in the frame",
           "standing in a field at golden hour, light falling around him, "
           "arms open and welcoming",
-          ()),
+          (),
+          motion=(
+              "His robe and hair move gently in a light breeze and the golden grass "
+              "sways around him. He stays exactly where he is."
+          ),
+          ),
     Scene("jesus_hands", "jesus",
           "extreme close-up of hands only, his face is NOT in the frame",
           "open palms held gently forward in warm light, soft golden "
           "background, nothing else in the shot",
-          ()),
+          (),
+          motion=(
+              "The open palms stay still; only the warm light shifts slowly across "
+              "the skin and fine dust drifts through it."
+          ),
+          ),
     Scene("jesus_path", "jesus",
           "wide shot from directly BEHIND him, we see his back and the road "
           "ahead, his face is NOT visible",
           "walking away along a quiet path at sunrise, warm light ahead of him",
-          ()),
+          (),
+          motion=(
+              "He takes a few slow steps away along the path and his robe moves "
+              "with them. The camera stays where it is."
+          ),
+          ),
     # — утешение, главные кадры канала —
     Scene("hand_shoulder", "both",
           "medium shot, she is seated in the foreground, he stands behind her",
           "his hand resting gently on her shoulder, she does not see him, "
           "warm kitchen light, tender",
-          ()),
+          (),
+          motion=(
+              "His hand stays resting on her shoulder. She breathes and lowers her "
+              "eyes. Neither of them turns."
+          ),
+          ),
     Scene("walk_together", "both",
           "wide shot from BEHIND both of them, we see only their backs and "
           "the road ahead, no faces visible at all",
           "walking side by side along a quiet country road at golden hour, "
           "unhurried, warm light ahead of them",
-          ()),
+          (),
+          motion=(
+              "They walk slowly away along the road, seen from behind, their "
+              "clothes moving with their steps."
+          ),
+          ),
     Scene("sitting_beside", "both",
           "wide shot from the side, both seen in profile on the bench",
           "sitting beside each other on a wooden bench in a sunlit park, she "
           "is talking, he is listening, warm afternoon light",
-          ()),
+          (),
+          motion=(
+              "She speaks quietly, her hands moving a little as she talks; he "
+              "listens and nods once. Leaves move behind them."
+          ),
+          ),
     Scene("table_together", "both",
           "medium shot from the side, both at the table in profile",
           "sitting across a small kitchen table from each other, two cups of "
           "tea, warm morning light through the window, peaceful",
-          ()),
+          (),
+          motion=(
+              "Steam rises from both cups. She breathes; he raises his eyes to her "
+              "for a moment."
+          ),
+          ),
 )
 
 # Сцены второй героини. Слои и темы те же — беда, присутствие, утешение,
@@ -207,56 +276,106 @@ _BRIGHT_SCENES: Tuple[Scene, ...] = (
           "standing on a small balcony at dawn wrapped in a knitted blanket, "
           "a mug held in both hands, the sleeping city far below, first warm "
           "light on her face",
-          ("тревога", "бессонница", "одиночество")),
+          ("тревога", "бессонница", "одиночество"),
+          motion=(
+              "Steam drifts up from the mug in her hands. She breathes slowly and "
+              "blinks; the dawn light on her face grows a shade warmer."
+          ),
+          ),
     Scene("church_empty", "woman",
           "wide shot from behind and above, she is small in the empty nave",
           "sitting alone on a wooden pew in an empty church, hands in her "
           "lap, a tall shaft of warm light falling from a high window",
-          ("страх", "вина", "покаяние", "одиночество")),
+          ("страх", "вина", "покаяние", "одиночество"),
+          motion=(
+              "Fine dust drifts through the shaft of light. She breathes and lowers "
+              "her eyes. Nothing else moves."
+          ),
+          ),
     Scene("car_parked", "woman",
           "medium shot through the windscreen from outside, soft reflections",
           "sitting in a parked car with both hands still on the wheel, not "
           "getting out yet, warm evening light across the dashboard",
-          ("работа", "усталость", "решение")),
+          ("работа", "усталость", "решение"),
+          motion=(
+              "Her hands stay on the wheel, the fingers tighten slightly and ease "
+              "again. She breathes and blinks once."
+          ),
+          ),
     Scene("hallway_mirror", "woman",
           "medium shot, her reflection in the hallway mirror, she is seen "
           "from slightly behind",
           "standing in the hallway already dressed to go out, looking at "
           "herself in the mirror and hesitating, warm lamp above the mirror",
-          ("страх", "сомнение", "решение")),
+          ("страх", "сомнение", "решение"),
+          motion=(
+              "She breathes once, looks a moment longer at her reflection and "
+              "lowers her eyes. The lamp light stays steady."
+          ),
+          ),
     Scene("purse_counter", "woman",
           "close shot slightly above, her hands and the counter in frame",
           "counting the last banknotes from an open purse on the kitchen "
           "counter, warm light from the window behind, quiet concentration",
-          ("долги", "деньги")),
+          ("долги", "деньги"),
+          motion=(
+              "Her fingers move over the banknotes, counting slowly, and she "
+              "breathes out."
+          ),
+          ),
     Scene("stairwell_phone", "woman",
           "wide shot, she is small against the stairwell wall",
           "standing on a tiled landing with the phone lowered in her hand, "
           "the call just ended, warm light falling down the stairwell",
-          ("семья", "ссора", "прощение")),
+          ("семья", "ссора", "прощение"),
+          motion=(
+              "She lowers the phone a little further and breathes out slowly; her "
+              "shoulders drop. The light stays steady."
+          ),
+          ),
     # — утешение —
     Scene("porch_evening", "both",
           "wide shot from the side, both seated on the steps in profile",
           "sitting side by side on wooden porch steps in the late evening "
           "light, unhurried, a garden softly out of focus behind them",
-          ()),
+          (),
+          motion=(
+              "They sit still while the leaves behind them move in a light breeze. "
+              "She breathes; he turns his head slightly toward her."
+          ),
+          ),
     Scene("colonnade_walk", "both",
           "wide shot from directly BEHIND both of them, only their backs and "
           "the sunlit arches ahead, no faces visible at all",
           "walking slowly along a sunlit stone colonnade, warm light pouring "
           "between the columns",
-          ()),
+          (),
+          motion=(
+              "They walk slowly away between the columns, seen from behind, and the "
+              "light shifts across them as they pass each arch."
+          ),
+          ),
     Scene("hands_over_hands", "both",
           "extreme close-up of hands only, NO faces in the frame at all",
           "his open palms resting over her folded hands, warm golden light, "
           "soft blurred background, nothing else in the shot",
-          ()),
+          (),
+          motion=(
+              "The hands stay together and only breathing moves them; the warm "
+              "light drifts slowly across the skin."
+          ),
+          ),
     Scene("garden_bed", "both",
           "medium shot from the side, both of them among the green",
           "kneeling together by a small garden bed, she is setting a young "
           "plant into the soil and he is steadying the stem, warm afternoon "
           "sun, green and gold",
-          ()),
+          (),
+          motion=(
+              "She presses the soil gently around the young plant and its leaves "
+              "tremble. He steadies the stem."
+          ),
+          ),
 )
 
 
