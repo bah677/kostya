@@ -32,7 +32,7 @@ def pick_frames(
     """Кадры под тему, по одному варианту на сцену, в сюжетном порядке."""
     rng = random.Random(seed)
     out: List[Path] = []
-    for scene in scenes_for_topic(topic, count=count):
+    for scene in scenes_for_topic(topic, count=count, heroine_key=heroine_key):
         variants = frames_for_scene(scene, heroine_key)
         if variants:
             out.append(rng.choice(variants))

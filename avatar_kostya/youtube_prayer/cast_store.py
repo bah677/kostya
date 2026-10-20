@@ -41,7 +41,7 @@ def text_fields() -> tuple:
 
 
 TEXT_FIELDS = _BASE_TEXT_FIELDS + ("woman",)  # для старого кода
-SCENE_FIELDS = ("key", "who", "shot", "prompt", "topics")
+SCENE_FIELDS = ("key", "who", "shot", "prompt", "topics", "heroine")
 WHO_VALUES = ("woman", "jesus", "both")
 
 
@@ -107,6 +107,7 @@ def scenes_raw() -> Optional[List[Dict[str, Any]]]:
                 "shot": str(row.get("shot") or "").strip(),
                 "prompt": str(row.get("prompt") or "").strip(),
                 "topics": [str(t).strip() for t in (topics or []) if str(t).strip()],
+                "heroine": str(row.get("heroine") or "").strip(),
             }
         )
     return out or None
@@ -153,6 +154,7 @@ def save(data: Dict[str, Any]) -> Dict[str, Any]:
                     "shot": str(row.get("shot") or "").strip(),
                     "prompt": str(row.get("prompt") or "").strip(),
                     "topics": [str(t).strip() for t in (topics or []) if str(t).strip()],
+                    "heroine": str(row.get("heroine") or "").strip(),
                 }
             )
         if kept:

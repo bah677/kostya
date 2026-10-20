@@ -19,7 +19,7 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Dict, List, Sequence, Tuple
 
 logger = logging.getLogger(__name__)
@@ -111,13 +111,19 @@ class Scene:
     prompt: str
     # Темы, к которым кадр подходит. Пусто — подходит к любой.
     topics: Tuple[str, ...] = field(default_factory=tuple)
+    # Чья это сцена. Пусто — общая: кадры с Иисусом одни на всех.
+    #
+    # У героинь свои наборы сцен, а не один общий. Смысл слоя и темы
+    # совпадают — беда, присутствие, утешение, — но интерьеры разные:
+    # две героини у одного и того же окна это не разнообразие, а повтор.
+    heroine: str = ""
 
 
 # ── Кадры ────────────────────────────────────────────────────────────────────
 # Три слоя: беда (героиня одна), присутствие (Иисус), утешение (вдвоём).
 # В ролике они идут именно в этом порядке — так собирается маленькая история.
 
-DEFAULT_SCENES: Tuple[Scene, ...] = (
+_REAL_SCENES: Tuple[Scene, ...] = (
     # — беда —
     Scene("kitchen_night", "woman",
           "medium shot, camera at eye level across the table",
@@ -190,6 +196,82 @@ DEFAULT_SCENES: Tuple[Scene, ...] = (
           ()),
 )
 
+# Сцены второй героини. Слои и темы те же — беда, присутствие, утешение,
+# — а места другие: балкон вместо окна, храм вместо кухни, машина вместо
+# автобуса. Общее должно быть в смысле, а не в мебели.
+
+_BRIGHT_SCENES: Tuple[Scene, ...] = (
+    # — беда —
+    Scene("balcony_dawn", "woman",
+          "medium shot from the side, she is in profile against the open sky",
+          "standing on a small balcony at dawn wrapped in a knitted blanket, "
+          "a mug held in both hands, the sleeping city far below, first warm "
+          "light on her face",
+          ("тревога", "бессонница", "одиночество")),
+    Scene("church_empty", "woman",
+          "wide shot from behind and above, she is small in the empty nave",
+          "sitting alone on a wooden pew in an empty church, hands in her "
+          "lap, a tall shaft of warm light falling from a high window",
+          ("страх", "вина", "покаяние", "одиночество")),
+    Scene("car_parked", "woman",
+          "medium shot through the windscreen from outside, soft reflections",
+          "sitting in a parked car with both hands still on the wheel, not "
+          "getting out yet, warm evening light across the dashboard",
+          ("работа", "усталость", "решение")),
+    Scene("hallway_mirror", "woman",
+          "medium shot, her reflection in the hallway mirror, she is seen "
+          "from slightly behind",
+          "standing in the hallway already dressed to go out, looking at "
+          "herself in the mirror and hesitating, warm lamp above the mirror",
+          ("страх", "сомнение", "решение")),
+    Scene("purse_counter", "woman",
+          "close shot slightly above, her hands and the counter in frame",
+          "counting the last banknotes from an open purse on the kitchen "
+          "counter, warm light from the window behind, quiet concentration",
+          ("долги", "деньги")),
+    Scene("stairwell_phone", "woman",
+          "wide shot, she is small against the stairwell wall",
+          "standing on a tiled landing with the phone lowered in her hand, "
+          "the call just ended, warm light falling down the stairwell",
+          ("семья", "ссора", "прощение")),
+    # — утешение —
+    Scene("porch_evening", "both",
+          "wide shot from the side, both seated on the steps in profile",
+          "sitting side by side on wooden porch steps in the late evening "
+          "light, unhurried, a garden softly out of focus behind them",
+          ()),
+    Scene("colonnade_walk", "both",
+          "wide shot from directly BEHIND both of them, only their backs and "
+          "the sunlit arches ahead, no faces visible at all",
+          "walking slowly along a sunlit stone colonnade, warm light pouring "
+          "between the columns",
+          ()),
+    Scene("hands_over_hands", "both",
+          "extreme close-up of hands only, NO faces in the frame at all",
+          "his open palms resting over her folded hands, warm golden light, "
+          "soft blurred background, nothing else in the shot",
+          ()),
+    Scene("garden_bed", "both",
+          "medium shot from the side, both of them among the green",
+          "kneeling together by a small garden bed, she is setting a young "
+          "plant into the soil and he is steadying the stem, warm afternoon "
+          "sun, green and gold",
+          ()),
+)
+
+
+def _tagged(rows: Tuple[Scene, ...], key: str) -> Tuple[Scene, ...]:
+    """Сцены героини. Кадры с Иисусом общие — их никому не приписываем."""
+    return tuple(
+        replace(s, heroine=("" if s.who == "jesus" else key)) for s in rows
+    )
+
+
+DEFAULT_SCENES: Tuple[Scene, ...] = _tagged(_REAL_SCENES, "real") + _tagged(
+    _BRIGHT_SCENES, "bright"
+)
+
+
 # ── Правки из студии ─────────────────────────────────────────────────────────
 # Константы выше — значения по умолчанию. Поверх них ложится то, что
 # поправили в интерфейсе: ДНК героев и список сцен лежат в файле рядом с
@@ -257,14 +339,21 @@ def scenes() -> Tuple[Scene, ...]:
             shot=r["shot"],
             prompt=r["prompt"],
             topics=tuple(r.get("topics") or ()),
+            heroine=str(r.get("heroine") or ""),
         )
         for r in rows
     )
 
 
-def _by_who() -> Dict[str, List[Scene]]:
+def scenes_for(heroine_key: str = "") -> Tuple[Scene, ...]:
+    """Сцены этой героини плюс общие."""
+    want = heroine(heroine_key).key
+    return tuple(s for s in scenes() if s.heroine in ("", want))
+
+
+def _by_who(heroine_key: str = "") -> Dict[str, List[Scene]]:
     out: Dict[str, List[Scene]] = {}
-    for s in scenes():
+    for s in scenes_for(heroine_key):
         out.setdefault(s.who, []).append(s)
     return out
 
@@ -293,20 +382,25 @@ def full_prompt(scene: Scene, heroine_key: str = "") -> str:
     игнорирует ракурс. На кадре «идут по дороге со спины» так и вышло —
     получился фронтальный двойной портрет.
     """
+    # Героиню берём из самой сцены, если не сказано иное: у сцен есть
+    # хозяйка, и подставить чужое описание — значит нарисовать не ту.
+    who = heroine_key or scene.heroine
     return (
-        f"{scene.shot}. {character_prompt(scene.who, heroine_key)}. "
+        f"{scene.shot}. {character_prompt(scene.who, who)}. "
         f"{scene.prompt}. {style()}"
     )
 
 
-def scenes_for_topic(topic: str, *, count: int = 8) -> List[Scene]:
+def scenes_for_topic(
+    topic: str, *, count: int = 8, heroine_key: str = ""
+) -> List[Scene]:
     """Кадры под тему: сначала беда, потом присутствие, потом утешение.
 
     Порядок не случайный — он и есть маленькая история, ради которой зритель
     досматривает: узнал себя, увидел, что не один, ушёл с теплом.
     """
     t = (topic or "").lower()
-    by_who = _by_who()
+    by_who = _by_who(heroine_key)
 
     def matches(s: Scene) -> bool:
         return not s.topics or any(k in t for k in s.topics)
