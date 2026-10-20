@@ -18,6 +18,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 from zoneinfo import ZoneInfo
 
+from youtube_prayer.langs import DEFAULT_LANG, known_langs, normalize_lang, profile
+
 logger = logging.getLogger(__name__)
 
 _MSK = ZoneInfo("Europe/Moscow")
@@ -36,11 +38,11 @@ def _duration_sec(iso: str) -> int:
     return h * 3600 + mi * 60 + s
 
 
-def collect_snapshot() -> Dict[str, Any]:
+def collect_snapshot(lang: str = "") -> Dict[str, Any]:
     """Итоги канала + статистика по каждому ролику на текущий момент."""
     from youtube_prayer.youtube_uploader import _youtube_service
 
-    yt = _youtube_service()
+    yt = _youtube_service(lang)
     ch = yt.channels().list(part="snippet,statistics,contentDetails", mine=True).execute()
     c = ch["items"][0]
     st = c["statistics"]
@@ -83,6 +85,7 @@ def collect_snapshot() -> Dict[str, Any]:
 
     return {
         "taken_at": datetime.now(_MSK).isoformat(timespec="seconds"),
+        "lang": normalize_lang(lang) if lang else DEFAULT_LANG,
         "channel": {
             "title": c["snippet"].get("title", ""),
             "subscribers": int(st.get("subscriberCount", 0) or 0),
@@ -104,15 +107,21 @@ def snapshots_dir() -> Path:
     return p
 
 
-def save_snapshot(snap_dir: Path, snap: Dict[str, Any], *, day: str) -> Path:
+def snapshot_name(day: str, lang: str = "") -> str:
+    """Имя файла среза. Русский — без суффикса: так уже лежат старые срезы."""
+    code = normalize_lang(lang) if lang else DEFAULT_LANG
+    return f"{day}.json" if code == DEFAULT_LANG else f"{day}_{code}.json"
+
+
+def save_snapshot(snap_dir: Path, snap: Dict[str, Any], *, day: str, lang: str = "") -> Path:
     snap_dir.mkdir(parents=True, exist_ok=True)
-    path = snap_dir / f"{day}.json"
+    path = snap_dir / snapshot_name(day, lang)
     path.write_text(json.dumps(snap, ensure_ascii=False, indent=2), encoding="utf-8")
     return path
 
 
-def load_snapshot(snap_dir: Path, day: str) -> Optional[Dict[str, Any]]:
-    path = snap_dir / f"{day}.json"
+def load_snapshot(snap_dir: Path, day: str, lang: str = "") -> Optional[Dict[str, Any]]:
+    path = snap_dir / snapshot_name(day, lang)
     if not path.is_file():
         return None
     try:
@@ -143,11 +152,12 @@ def build_payload(
     day: str,
     days_back: int = 7,
     arrivals: Optional[Dict[str, Any]] = None,
+    lang: str = "",
 ) -> Dict[str, Any]:
     """Итоги, приросты за сутки и за неделю, ролики последних дней."""
     d = datetime.strptime(day, "%Y-%m-%d").date()
-    prev_day = load_snapshot(snap_dir, (d - timedelta(days=1)).isoformat())
-    week_ago = load_snapshot(snap_dir, (d - timedelta(days=days_back)).isoformat())
+    prev_day = load_snapshot(snap_dir, (d - timedelta(days=1)).isoformat(), lang)
+    week_ago = load_snapshot(snap_dir, (d - timedelta(days=days_back)).isoformat(), lang)
 
     prev_views = {v["id"]: v for v in (prev_day or {}).get("videos", [])}
     since = (d - timedelta(days=days_back)).isoformat()
@@ -320,12 +330,39 @@ async def analyze(payload: Dict[str, Any]) -> Optional[str]:
 # ── оркестратор ─────────────────────────────────────────────────────────────
 
 
+def channel_langs() -> List[str]:
+    """Языки, у которых есть собственный канал."""
+    return [c for c in known_langs() if profile(c).youtube_channel_id]
+
+
+def snapshot_all_channels(day: Optional[str] = None) -> Dict[str, str]:
+    """Срез по каждому каналу. Без LLM и без телеграма — только данные.
+
+    Отчёт в телеграм как был, по русскому каналу: испанский разбирать пока
+    нечего. Но срезы нужны обоим, иначе у второго канала никогда не появится
+    истории — динамику считать не из чего.
+    """
+    day = day or datetime.now(_MSK).strftime("%Y-%m-%d")
+    snap_dir = snapshots_dir()
+    out: Dict[str, str] = {}
+    for code in channel_langs():
+        try:
+            snap = collect_snapshot(code)
+            save_snapshot(snap_dir, snap, day=day, lang=code)
+            out[code] = "ок"
+        except Exception as e:
+            logger.warning("срез %s не снялся: %s", code, e)
+            out[code] = f"{type(e).__name__}: {str(e)[:100]}"
+    return out
+
+
 async def run_daily_channel_report(
     bot: Any,
     *,
     chat_id: int,
     topic_id: int = 0,
     day: Optional[str] = None,
+    lang: str = "",
 ) -> Optional[str]:
     """Снять срез, сравнить с прошлыми, разобрать через DeepSeek и отправить.
 
@@ -337,18 +374,27 @@ async def run_daily_channel_report(
     day = day or datetime.now(_MSK).strftime("%Y-%m-%d")
     snap_dir = snapshots_dir()
     try:
-        snap = await asyncio.to_thread(collect_snapshot)
+        snap = await asyncio.to_thread(collect_snapshot, lang)
     except Exception as e:
         logger.warning("срез статистики не снялся: %s", e)
         return None
 
-    save_snapshot(snap_dir, snap, day=day)
+    save_snapshot(snap_dir, snap, day=day, lang=lang)
+    # Срезы остальных каналов — рядом, одним заходом.
+    others = [c for c in channel_langs() if c != (normalize_lang(lang) if lang else DEFAULT_LANG)]
+    for code in others:
+        try:
+            save_snapshot(
+                snap_dir, await asyncio.to_thread(collect_snapshot, code), day=day, lang=code
+            )
+        except Exception as e:
+            logger.warning("срез %s не снялся: %s", code, e)
     try:
         arrivals = await collect_bot_arrivals(day=day)
     except Exception as e:
         logger.warning("приходы в бота не собрались: %s", e)
         arrivals = {"статус": "ошибка сбора"}
-    payload = build_payload(snap_dir, snap, day=day, arrivals=arrivals)
+    payload = build_payload(snap_dir, snap, day=day, arrivals=arrivals, lang=lang)
 
     try:
         analysis = await analyze(payload)

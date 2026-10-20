@@ -67,9 +67,16 @@
       </div>
     </section>
 
-    <section class="block card">
-      <div class="block-head"><h2>Статистика каналов</h2></div>
-      <p class="muted small">Подписчики, просмотры, свежие ролики — скоро здесь.</p>
+    <section class="block card wide">
+      <div class="block-head">
+        <h2>Статистика каналов</h2>
+        <button type="button" class="link small" id="btn-stats-refresh">Снять срез сейчас</button>
+      </div>
+      <p class="muted small">
+        Данные из ночных срезов: YouTube отдаёт только итоги, динамика
+        считается их разницей. Поэтому цифры — на момент последнего среза.
+      </p>
+      <div id="yt-stats" class="yt-stats muted">Загрузка…</div>
     </section>
 
     <section class="block card">

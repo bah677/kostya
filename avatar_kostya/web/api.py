@@ -401,6 +401,29 @@ def create_app(bot_app) -> FastAPI:
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
 
+    # ── Статистика каналов ────────────────────────────────────────────────
+    # Читаем ночные срезы, в YouTube не ходим: страница открывается сразу и
+    # не тратит квоту. Свежий срез — по кнопке.
+
+    @app.get("/api/youtube/stats")
+    async def youtube_stats(uid: int = Depends(auth)):
+        from web.youtube_stats import all_channel_stats
+
+        return {"channels": await asyncio.to_thread(all_channel_stats)}
+
+    @app.post("/api/youtube/stats/refresh")
+    async def youtube_stats_refresh(uid: int = Depends(auth)):
+        from web.youtube_stats import all_channel_stats, refresh_now
+
+        try:
+            result = await asyncio.to_thread(refresh_now)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
+        return {
+            "result": result,
+            "channels": await asyncio.to_thread(all_channel_stats),
+        }
+
     @app.get("/api/gen-settings")
     async def gen_settings(uid: int = Depends(auth)):
         from youtube_prayer.gen_settings import describe
