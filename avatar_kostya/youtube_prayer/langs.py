@@ -42,6 +42,9 @@ class LangProfile:
     premiere_hours: Tuple[int, ...]
     # Код языка в метаданных ролика (snippet.defaultLanguage).
     youtube_lang: str
+    # Канал языка. Нужен, чтобы при перевыпуске токена поймать промах: в
+    # одном аккаунте несколько каналов, и Google показывает выбор.
+    youtube_channel_id: str
     voice_id: str
     # Запасной вопрос на обложке, если модель не дала свой.
     hook_fallback: str
@@ -82,6 +85,7 @@ _PROFILES: Dict[str, LangProfile] = {
         tz="Europe/Moscow",
         premiere_hours=(7, 12, 16, 19, 22),
         youtube_lang="ru",
+        youtube_channel_id="UC6whUwsx0FVTxsVo8wUsATw",
         voice_id=_SHARED_VOICE,
         hook_fallback="Тебе это знакомо?",
         hook_template="Это про тебя — {}?",
@@ -105,6 +109,7 @@ _PROFILES: Dict[str, LangProfile] = {
         tz="America/New_York",
         premiere_hours=(7, 12, 16, 19, 22),
         youtube_lang="en",
+        youtube_channel_id="",
         voice_id=_SHARED_VOICE,
         hook_fallback="Does this feel familiar?",
         hook_template="Is this your story — {}?",
@@ -138,6 +143,7 @@ _PROFILES: Dict[str, LangProfile] = {
         # из главных тем канала.
         premiere_hours=(6, 12, 18, 21, 23),
         youtube_lang="es",
+        youtube_channel_id="UCZXqk2vLXaVGxI6g-VeCFbg",
         voice_id=_SHARED_VOICE,
         hook_fallback="¿Te suena familiar?",
         hook_template="¿Es tu historia — {}?",

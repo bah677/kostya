@@ -690,3 +690,24 @@ textarea.field { resize: vertical; line-height: 1.5; }
 .format-edit:hover { color: var(--accent-text); background: var(--accent-soft); }
 .source-foot { flex-wrap: wrap; }
 .edit-dialog .source-foot { align-items: center; }
+
+/* ── Ключи YouTube ──────────────────────────────────────────────────── */
+.yt-keys { display: grid; gap: 10px; }
+
+.yt-key {
+  display: grid;
+  gap: 4px;
+  padding: 12px;
+  border: 1px solid var(--line, #2a2a2a);
+  border-left-width: 3px;
+  border-radius: 10px;
+}
+.yt-key.ok { border-left-color: #3fbf6f; }
+.yt-key.bad { border-left-color: #e0574a; }
+
+.yt-key-head { display: flex; align-items: baseline; gap: 8px; }
+.yt-key-state { font-size: 0.8rem; opacity: 0.75; margin-left: auto; }
+.yt-key.bad .yt-key-state { color: #e0574a; opacity: 1; }
+.yt-key-stats { font-size: 0.85rem; opacity: 0.8; }
+.yt-key-error { color: #e0574a; }
+.yt-key .btn { margin-top: 6px; justify-self: start; }
