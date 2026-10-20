@@ -478,16 +478,20 @@ def create_app(bot_app) -> FastAPI:
 
     @app.get("/api/gen-settings")
     async def gen_settings(uid: int = Depends(auth)):
-        from youtube_prayer.gen_settings import describe
+        from youtube_prayer.gen_settings import GROUP_ORDER, describe, plan
 
-        return {"fields": await asyncio.to_thread(describe)}
+        return {
+            "fields": await asyncio.to_thread(describe),
+            "groups": list(GROUP_ORDER),
+            "plan": await asyncio.to_thread(plan),
+        }
 
     @app.put("/api/gen-settings")
     @app.post("/api/gen-settings")
     async def put_gen_settings(
         payload: Dict[str, Any] = Body(default={}), uid: int = Depends(auth)
     ):
-        from youtube_prayer.gen_settings import describe, save_overrides
+        from youtube_prayer.gen_settings import GROUP_ORDER, describe, plan, save_overrides
 
         values = payload.get("values")
         if not isinstance(values, dict):
@@ -499,7 +503,12 @@ def create_app(bot_app) -> FastAPI:
                 status_code=400, detail=f"неизвестные настройки: {', '.join(unknown)}"
             )
         await asyncio.to_thread(save_overrides, values)
-        return {"ok": True, "fields": await asyncio.to_thread(describe)}
+        return {
+            "ok": True,
+            "fields": await asyncio.to_thread(describe),
+            "groups": list(GROUP_ORDER),
+            "plan": await asyncio.to_thread(plan),
+        }
 
     @app.get("/api/llm-settings")
     async def get_llm_settings(request: Request, uid: int = Depends(auth)):
@@ -878,7 +887,7 @@ def create_app(bot_app) -> FastAPI:
 
     @app.get("/video")
     async def video_studio():
-        """Студия молитв — отдельная страница, вход общий с заводом."""
+        """Киностудия — отдельная страница, вход общий с заводом."""
         html = (STATIC_DIR / "video.html").read_text(encoding="utf-8")
         return HTMLResponse(
             html.replace("__V__", _asset_stamp()),

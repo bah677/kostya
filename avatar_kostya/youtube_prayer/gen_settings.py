@@ -1,4 +1,4 @@
-"""Настройки генерации роликов, правимые из студии без перезапуска.
+"""Настройки генерации роликов, правимые из киностудии без перезапуска.
 
 Раньше любая правка — сколько роликов за ночь, во сколько премьеры, с каким
 призывом — требовала разработчика и рестарта процесса. Теперь значения
@@ -110,68 +110,71 @@ class Field:
     default: str = ""
 
 
+# Поля сгруппированы по каналам, а не по именам переменных. Раньше список
+# повторял .env: «Молитв на русском» лежало рядом с «Молитв на испанском»,
+# а часы премьер того же канала — через два экрана. Думают не переменными,
+# а каналом: сколько он выпускает и когда.
+
+GROUP_ORDER = ("Общее", "Русский канал", "Испанский канал", "Длинные ролики")
+
 FIELDS: List[Field] = [
-    # — ночной прогон —
+    # — общее для всех каналов —
     Field("YT_PRAYER_HOUR_MSK", "Час ночного прогона (МСК)",
-          "Когда собирать всю пачку. Премьеры ставятся отдельно.",
-          "number", "Ночной прогон", "3"),
-    Field("YT_SHORTS_COUNT", "Молитв на русском",
-          "Сколько коротких молитв за ночь. Предел 12.",
-          "number", "Ночной прогон", "5"),
-    Field("YT_SHORTS_ES_COUNT", "Молитв на испанском",
-          "0 — испанский канал не трогаем.",
-          "number", "Ночной прогон", "0"),
-    Field("YT_PRAYER_COUNT", "Горизонтальных 16:9",
-          "Длинные молитвы 4–5 минут. 0 — выключены.",
-          "number", "Ночной прогон", "0"),
-
-    # — разговорные —
+          "Когда собирается вся пачка. Премьеры ставятся отдельно.",
+          "number", "Общее", "3"),
     Field("YT_TALKS_ENABLED", "Разговорные ролики",
-          "Разбор житейской беды с ответом из Писания. Идёт после молитв.",
-          "bool", "Разговорные", "0"),
-    Field("YT_TALKS_COUNT", "Разговорных на русском",
-          "", "number", "Разговорные", "1"),
-    Field("YT_TALKS_COUNT_ES", "Разговорных на испанском",
-          "", "number", "Разговорные", "1"),
-    Field("YT_TALKS_PREMIERE_HOURS", "Часы премьер, русский",
-          "По Москве. Один слот в день, в промежутке между молитвенными.",
-          "hours", "Разговорные", "20"),
-    Field("YT_TALKS_PREMIERE_HOURS_ES", "Часы премьер, испанский",
-          "По Мехико.", "hours", "Разговорные", "20"),
-
-    # — премьеры молитв —
-    Field("YT_SHORTS_YOUTUBE_PREMIERE_HOURS_MSK", "Часы премьер, русский",
-          "По Москве, через запятую.",
-          "hours", "Премьеры молитв", "7,12,16,19,22"),
-    Field("YT_SHORTS_YOUTUBE_PREMIERE_HOURS_MSK_ES", "Часы премьер, испанский",
-          "По Мехико. Общая переменная на испанский НЕ распространяется.",
-          "hours", "Премьеры молитв", "6,12,18,21,23"),
-
-    # — герои —
-    Field("YT_PRAYER_CAST_COUNT", "Роликов с героями, русский",
-          "Первые N роликов пачки собираются из банка, остальные стоком.",
-          "number", "Герои", "0"),
-    Field("YT_PRAYER_CAST_COUNT_ES", "Роликов с героями, испанский",
-          "", "number", "Герои", "0"),
-
-    # — голос —
+          "Разбор житейской беды с ответом из Писания. Идут после молитв.",
+          "bool", "Общее", "0"),
     Field("PRAYER_TTS_ATEMPO", "Темп речи молитв",
           "0.85 — спокойнее обычного. Разговорные всегда читаются на 1.0.",
-          "text", "Голос", "0.85"),
+          "text", "Общее", "0.85"),
     Field("YT_PRAYER_OUTRO_SEC", "Концевая карточка, секунд",
-          "0 — выключить. На столько же удлиняется аудио.",
-          "text", "Голос", "2.5"),
+          "Имя бота на экране в конце. 0 — выключить.",
+          "text", "Общее", "2.5"),
 
-    # — тексты —
-    Field("YT_SHORTS_ATTUNE", "Сонастройка, русский",
+    # — русский канал —
+    Field("YT_SHORTS_COUNT", "Молитв за ночь",
+          "Короткие вертикальные молитвы. Предел 12.",
+          "number", "Русский канал", "5"),
+    Field("YT_PRAYER_CAST_COUNT", "Из них с героями",
+          "Первые N роликов пачки собираются из банка кадров, остальные стоком.",
+          "number", "Русский канал", "0"),
+    Field("YT_SHORTS_YOUTUBE_PREMIERE_HOURS_MSK", "Часы премьер молитв",
+          "По Москве, через запятую.",
+          "hours", "Русский канал", "7,12,16,19,22"),
+    Field("YT_TALKS_COUNT", "Разговорных за ночь",
+          "", "number", "Русский канал", "1"),
+    Field("YT_TALKS_PREMIERE_HOURS", "Часы премьер разговорных",
+          "По Москве. Обычно один слот в промежутке между молитвенными.",
+          "hours", "Русский канал", "20"),
+    Field("YT_SHORTS_ATTUNE", "Сонастройка",
           "Звучит перед молитвой. Пусто — как в .env.",
-          "text", "Тексты", ""),
-    Field("YT_SHORTS_CTA", "Призыв в конце, русский",
-          "Звучит после молитвы.", "text", "Тексты", ""),
-    Field("YT_SHORTS_ATTUNE_ES", "Сонастройка, испанский",
-          "", "text", "Тексты", ""),
-    Field("YT_SHORTS_CTA_ES", "Призыв в конце, испанский",
-          "", "text", "Тексты", ""),
+          "text", "Русский канал", ""),
+    Field("YT_SHORTS_CTA", "Призыв в конце",
+          "Звучит после молитвы.", "text", "Русский канал", ""),
+
+    # — испанский канал —
+    Field("YT_SHORTS_ES_COUNT", "Молитв за ночь",
+          "0 — канал ночью не трогаем.",
+          "number", "Испанский канал", "0"),
+    Field("YT_PRAYER_CAST_COUNT_ES", "Из них с героями",
+          "", "number", "Испанский канал", "0"),
+    Field("YT_SHORTS_YOUTUBE_PREMIERE_HOURS_MSK_ES", "Часы премьер молитв",
+          "По Мехико. Общая переменная на испанский НЕ распространяется.",
+          "hours", "Испанский канал", "6,12,18,21,23"),
+    Field("YT_TALKS_COUNT_ES", "Разговорных за ночь",
+          "", "number", "Испанский канал", "1"),
+    Field("YT_TALKS_PREMIERE_HOURS_ES", "Часы премьер разговорных",
+          "По Мехико.", "hours", "Испанский канал", "20"),
+    Field("YT_SHORTS_ATTUNE_ES", "Сонастройка",
+          "", "text", "Испанский канал", ""),
+    Field("YT_SHORTS_CTA_ES", "Призыв в конце",
+          "", "text", "Испанский канал", ""),
+
+    # — горизонталь —
+    Field("YT_PRAYER_COUNT", "Горизонтальных 16:9 за ночь",
+          "Длинные молитвы 4–5 минут на русском. 0 — выключены.",
+          "number", "Длинные ролики", "0"),
 ]
 
 
@@ -208,3 +211,97 @@ def describe() -> List[Dict[str, Any]]:
             }
         )
     return out
+
+
+# ── Что соберётся ближайшей ночью ────────────────────────────────────────
+# Девятнадцать переменных плохо складываются в голове в ответ на единственный
+# вопрос, который задают каждый вечер: «что выйдет завтра?». Собираем ответ
+# из тех же действующих значений, по которым пойдёт прогон.
+
+
+def _plural(n: int, one: str, few: str, many: str) -> str:
+    n = abs(int(n))
+    if n % 10 == 1 and n % 100 != 11:
+        return one
+    if 2 <= n % 10 <= 4 and not 12 <= n % 100 <= 14:
+        return few
+    return many
+
+
+def _as_int(raw: str) -> int:
+    try:
+        return int(float(str(raw).strip()))
+    except Exception:
+        return 0
+
+
+def _as_flag(raw: str) -> bool:
+    return str(raw).strip().lower() in {"1", "true", "yes", "on", "да"}
+
+
+def _hours(raw: str) -> str:
+    parts = [p.strip() for p in str(raw).replace(";", ",").split(",") if p.strip()]
+    return ", ".join(f"{p}:00" for p in parts)
+
+
+def plan() -> Dict[str, Any]:
+    """Короткий человеческий ответ: что и когда выйдет."""
+    vals = {f["key"]: str(f["effective"] or "") for f in describe()}
+    hour = _as_int(vals.get("YT_PRAYER_HOUR_MSK") or 3)
+    talks_on = _as_flag(vals.get("YT_TALKS_ENABLED"))
+
+    channels = []
+    for title, keys, tz in (
+        (
+            "Русский канал",
+            ("YT_SHORTS_COUNT", "YT_PRAYER_CAST_COUNT",
+             "YT_SHORTS_YOUTUBE_PREMIERE_HOURS_MSK", "YT_TALKS_COUNT",
+             "YT_TALKS_PREMIERE_HOURS"),
+            "МСК",
+        ),
+        (
+            "Испанский канал",
+            ("YT_SHORTS_ES_COUNT", "YT_PRAYER_CAST_COUNT_ES",
+             "YT_SHORTS_YOUTUBE_PREMIERE_HOURS_MSK_ES", "YT_TALKS_COUNT_ES",
+             "YT_TALKS_PREMIERE_HOURS_ES"),
+            "по Мехико",
+        ),
+    ):
+        k_count, k_cast, k_hours, k_talks, k_talk_hours = keys
+        count = _as_int(vals.get(k_count))
+        cast = min(_as_int(vals.get(k_cast)), count)
+        talks = _as_int(vals.get(k_talks)) if talks_on else 0
+        bits = []
+        if count:
+            word = _plural(count, "молитва", "молитвы", "молитв")
+            bits.append(f"{count} {word}" + (f", {cast} с героями" if cast else ""))
+        if talks:
+            word = _plural(talks, "разговорный", "разговорных", "разговорных")
+            bits.append(f"{talks} {word}")
+        channels.append(
+            {
+                "title": title,
+                "summary": ", ".join(bits) if bits else "ночью не трогаем",
+                "idle": not bits,
+                "total": count + talks,
+                "premieres": _hours(vals.get(k_hours)) if count else "",
+                "talk_premieres": _hours(vals.get(k_talk_hours)) if talks else "",
+                "tz": tz,
+            }
+        )
+
+    wide = _as_int(vals.get("YT_PRAYER_COUNT"))
+    total = sum(c["total"] for c in channels) + wide
+    return {
+        "hour": hour,
+        "talks_on": talks_on,
+        "channels": channels,
+        "wide": wide,
+        "total": total,
+        "headline": (
+            f"В {hour}:00 соберётся {total} "
+            + _plural(total, "ролик", "ролика", "роликов")
+            if total
+            else "Ночной прогон ничего не соберёт — все счётчики на нуле"
+        ),
+    }

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Студия молитв</title>
+<title>Киностудия</title>
 <link rel="stylesheet" href="/static/style.css?v=__V__">
 <link rel="stylesheet" href="/static/video.css?v=__V__">
 </head>
@@ -14,11 +14,11 @@
     <div class="login-head">
       <span class="logo" aria-hidden="true"></span>
       <div>
-        <h1>Студия молитв</h1>
+        <h1>Киностудия</h1>
         <p class="muted">Вход для команды</p>
       </div>
     </div>
-    <p class="lead">Войдите в Контент завод — студия использует тот же вход.</p>
+    <p class="lead">Войдите в Контент завод — киностудия использует тот же вход.</p>
     <a class="btn primary wide" href="/">Перейти к входу</a>
   </div>
 </section>
@@ -28,8 +28,8 @@
     <div class="brand">
       <span class="logo" aria-hidden="true"></span>
       <div class="brand-text">
-        <strong>Студия молитв</strong>
-        <span class="muted small">Генерация роликов для YouTube</span>
+        <strong>Киностудия</strong>
+        <span class="muted small">Ролики для YouTube</span>
       </div>
     </div>
     <div class="top-actions">
@@ -39,69 +39,122 @@
   </header>
 
   <main class="studio-body">
-    <section class="block card">
-      <div class="block-head">
-        <h2>Ключи YouTube</h2>
-        <button type="button" class="link small" id="btn-keys-refresh">Проверить</button>
+
+    <!-- Главный вопрос каждого вечера: что выйдет завтра. -->
+    <section class="plan card">
+      <div class="plan-head">
+        <h2 id="plan-headline">Загружаю…</h2>
+        <button type="button" class="link small" id="btn-plan-reload">Обновить</button>
       </div>
-      <p class="muted small">
-        Токен живёт около недели и умирает молча. Здесь видно, жив ли он,
-        и можно перевыпустить, не трогая сервер.
-      </p>
-      <div id="yt-keys" class="yt-keys muted">Загрузка…</div>
+      <div id="plan-channels" class="plan-channels"></div>
     </section>
 
-    <section class="block card wide">
-      <div class="block-head">
-        <h2>Настройки генерации</h2>
+    <nav class="studio-nav" id="studio-nav" aria-label="Разделы">
+      <button type="button" data-sec="night" class="active">Ночной прогон</button>
+      <button type="button" data-sec="cast">Герои</button>
+      <button type="button" data-sec="stats">Статистика</button>
+      <button type="button" data-sec="keys">Ключи</button>
+    </nav>
+
+    <!-- ── Ночной прогон ─────────────────────────────────────────────── -->
+    <section class="pane card" data-pane="night">
+      <div class="pane-head">
+        <div>
+          <h2>Ночной прогон</h2>
+          <p class="muted small">
+            Сколько роликов и когда выходит каждый канал. Правки действуют
+            с ближайшей ночи, перезапуск не нужен. Пустое поле — «как в .env».
+          </p>
+        </div>
         <span class="saved small" id="gen-saved" hidden>Сохранено</span>
       </div>
-      <p class="muted small">
-        Правки действуют на ближайший ночной прогон, перезапуск не нужен.
-        Пустое поле — значит «как в .env».
-      </p>
       <div id="gen-settings" class="gen-groups muted">Загрузка…</div>
-      <div class="gen-actions">
-        <button type="button" class="btn primary" id="btn-gen-save">Сохранить</button>
+      <div class="pane-foot">
+        <button type="button" class="btn primary" id="btn-gen-save" disabled>Сохранить</button>
         <button type="button" class="btn" id="btn-gen-reload">Отменить правки</button>
+        <span class="muted small" id="gen-dirty"></span>
       </div>
     </section>
 
-    <section class="block card wide">
-      <div class="block-head">
-        <h2>Статистика каналов</h2>
+    <!-- ── Герои ─────────────────────────────────────────────────────── -->
+    <section class="pane card" data-pane="cast" hidden>
+      <div class="pane-head">
+        <div>
+          <h2>Герои и сцены</h2>
+          <p class="muted small">
+            Этот текст уходит в каждый кадр — пока он неизменен, героиня
+            остаётся собой. Менять его после сборки банка стоит только вместе
+            с перерисовкой кадров.
+          </p>
+        </div>
+        <span class="saved small" id="cast-saved" hidden>Сохранено</span>
+      </div>
+      <div id="cast-dna" class="cast-dna muted">Загрузка…</div>
+      <div class="cast-scenes-head">
+        <h3>Кадры</h3>
+        <span class="muted small" id="cast-bank-note"></span>
+      </div>
+      <div id="cast-scenes" class="cast-scenes"></div>
+      <div class="pane-foot">
+        <button type="button" class="btn primary" id="btn-cast-save" disabled>Сохранить</button>
+        <button type="button" class="btn" id="btn-cast-reload">Отменить правки</button>
+        <button type="button" class="btn" id="btn-cast-add">Добавить кадр</button>
+        <span class="muted small" id="cast-dirty"></span>
+      </div>
+    </section>
+
+    <!-- ── Статистика ────────────────────────────────────────────────── -->
+    <section class="pane card" data-pane="stats" hidden>
+      <div class="pane-head">
+        <div>
+          <h2>Статистика каналов</h2>
+          <p class="muted small">
+            YouTube отдаёт только итоги, прирост виден как разница срезов.
+            Поэтому цифры — на момент последнего ночного среза.
+          </p>
+        </div>
         <button type="button" class="link small" id="btn-stats-refresh">Снять срез сейчас</button>
       </div>
-      <p class="muted small">
-        Данные из ночных срезов: YouTube отдаёт только итоги, динамика
-        считается их разницей. Поэтому цифры — на момент последнего среза.
-      </p>
       <div id="yt-stats" class="yt-stats muted">Загрузка…</div>
     </section>
 
-    <section class="block card wide">
-      <div class="block-head">
-        <h2>Герои и сцены</h2>
-        <span class="saved small" id="cast-saved" hidden>Сохранено</span>
+    <!-- ── Ключи ─────────────────────────────────────────────────────── -->
+    <section class="pane card" data-pane="keys" hidden>
+      <div class="pane-head">
+        <div>
+          <h2>Ключи YouTube</h2>
+          <p class="muted small">
+            Токен живёт около недели и умирает молча. Здесь видно, жив ли он,
+            и можно перевыпустить, не трогая сервер.
+          </p>
+        </div>
+        <button type="button" class="link small" id="btn-keys-refresh">Проверить</button>
       </div>
-      <p class="muted small">
-        Этот текст уходит в каждый кадр — пока он неизменен, героиня остаётся
-        собой. Менять его после сборки банка стоит только вместе с
-        перерисовкой кадров.
-      </p>
-      <div id="cast-dna" class="cast-dna muted">Загрузка…</div>
-      <div id="cast-scenes" class="cast-scenes"></div>
-      <div class="gen-actions">
-        <button type="button" class="btn primary" id="btn-cast-save">Сохранить</button>
-        <button type="button" class="btn" id="btn-cast-reload">Отменить правки</button>
-        <button type="button" class="btn" id="btn-cast-add">Добавить кадр</button>
-        <span class="muted small" id="cast-bank-note"></span>
-      </div>
+      <div id="yt-keys" class="yt-keys muted">Загрузка…</div>
     </section>
+
   </main>
 </div>
 
 <div id="toasts" class="toasts" aria-live="assertive"></div>
+
+<!-- Ничего не сохраняется молча: сначала показываем, что именно меняется. -->
+<dialog id="confirm-dialog" class="edit-dialog">
+  <div class="edit-sheet">
+    <header class="source-head">
+      <div>
+        <p class="muted small" id="confirm-kicker">Подтверждение</p>
+        <h2 id="confirm-title">Применить?</h2>
+        <p class="muted small" id="confirm-lead"></p>
+      </div>
+    </header>
+    <div class="confirm-body" id="confirm-body"></div>
+    <footer class="source-foot">
+      <button type="button" class="btn" id="confirm-no">Отмена</button>
+      <button type="button" class="btn primary" id="confirm-yes">Применить</button>
+    </footer>
+  </div>
+</dialog>
 
 <dialog id="ytkey-dialog" class="edit-dialog">
   <form method="dialog" class="edit-sheet" id="ytkey-form">
