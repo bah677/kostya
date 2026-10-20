@@ -19,7 +19,14 @@ import re
 from pathlib import Path
 from typing import List, Optional, Tuple
 
-from youtube_prayer.cast import Scene, full_prompt, scene_by_key, scenes
+from youtube_prayer.cast import (
+    HEROINES,
+    Scene,
+    bank_folder,
+    full_prompt,
+    scene_by_key,
+    scenes,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -40,22 +47,22 @@ def bank_dir() -> Path:
     return p
 
 
-def image_path(scene: Scene, variant: int) -> Path:
-    return bank_dir() / scene.who / f"{scene.key}_{variant:02d}.png"
+def image_path(scene: Scene, variant: int, heroine: str = "") -> Path:
+    return bank_dir() / bank_folder(scene.who, heroine) / f"{scene.key}_{variant:02d}.png"
 
 
-def frames_for_scene(scene: Scene) -> List[Path]:
+def frames_for_scene(scene: Scene, heroine: str = "") -> List[Path]:
     """Все варианты кадра: в банке их может быть по нескольку на сцену."""
-    d = bank_dir() / scene.who
+    d = bank_dir() / bank_folder(scene.who, heroine)
     if not d.is_dir():
         return []
     return sorted(p for p in d.glob(f"{scene.key}_*.png") if p.stat().st_size > _MIN_BYTES)
 
 
-def next_variant(scene: Scene) -> int:
+def next_variant(scene: Scene, heroine: str = "") -> int:
     """Номер следующего дубля: первый свободный, а не следующий за последним."""
     taken = set()
-    for p in frames_for_scene(scene):
+    for p in frames_for_scene(scene, heroine):
         m = _NAME_RE.match(p.name)
         if m:
             taken.add(int(m.group(1)))
@@ -65,13 +72,24 @@ def next_variant(scene: Scene) -> int:
     return n
 
 
-def frame_file(who: str, name: str) -> Optional[Path]:
-    """Путь к кадру по имени из запроса. Чужие пути не отдаём."""
+def bank_folders() -> List[str]:
+    """Все папки банка: роль × героиня. Иисус один на обеих."""
     from youtube_prayer.cast_store import WHO_VALUES
 
-    if who not in WHO_VALUES or not _NAME_RE.match(name or ""):
+    out: List[str] = []
+    for h in HEROINES:
+        for who in WHO_VALUES:
+            name = bank_folder(who, h.key)
+            if name not in out:
+                out.append(name)
+    return out
+
+
+def frame_file(folder: str, name: str) -> Optional[Path]:
+    """Путь к кадру по имени из запроса. Чужие пути не отдаём."""
+    if folder not in bank_folders() or not _NAME_RE.match(name or ""):
         return None
-    p = bank_dir() / who / name
+    p = bank_dir() / folder / name
     if not p.is_file() or p.stat().st_size <= _MIN_BYTES:
         return None
     return p
@@ -115,14 +133,16 @@ def price_per_frame(model: str = "") -> float:
         return 0.04
 
 
-async def generate_one(client, scene: Scene, variant: int, model: str) -> bool:
+async def generate_one(
+    client, scene: Scene, variant: int, model: str, heroine: str = ""
+) -> bool:
     """Рисует один кадр. False — если он уже есть и перерисовывать нечего."""
-    dest = image_path(scene, variant)
+    dest = image_path(scene, variant, heroine)
     if dest.is_file() and dest.stat().st_size > _MIN_BYTES:
         return False
     dest.parent.mkdir(parents=True, exist_ok=True)
     resp = await client.images.generate(
-        model=model, prompt=full_prompt(scene), n=1, size=SIZE
+        model=model, prompt=full_prompt(scene, heroine), n=1, size=SIZE
     )
     item = resp.data[0]
     raw = getattr(item, "b64_json", None)
@@ -165,21 +185,27 @@ def make_client(model: str = ""):
     return AsyncOpenAI(api_key=key, timeout=180.0)
 
 
-async def generate_scene(key: str, *, model: str = "") -> Tuple[str, str]:
+async def generate_scene(
+    key: str, *, model: str = "", heroine: str = ""
+) -> Tuple[str, str]:
     """Дорисовать один дубль указанного кадра. (имя файла, что сделали)."""
     scene = scene_by_key(key)
     if scene is None:
         raise ValueError(f"нет кадра с ключом «{key}»")
     mdl = model_name(model)
-    variant = next_variant(scene)
+    variant = next_variant(scene, heroine)
     client = make_client(mdl)
-    made = await generate_one(client, scene, variant, mdl)
-    name = image_path(scene, variant).name
+    made = await generate_one(client, scene, variant, mdl, heroine)
+    name = image_path(scene, variant, heroine).name
     return name, ("нарисован" if made else "уже был")
 
 
 async def generate_missing(
-    keys: Optional[List[str]] = None, *, variants: int = 1, model: str = ""
+    keys: Optional[List[str]] = None,
+    *,
+    variants: int = 1,
+    model: str = "",
+    heroine: str = "",
 ) -> dict:
     """Добить банк до нужного числа дублей. Готовое не трогает."""
     wanted = {k.strip() for k in (keys or []) if k.strip()}
@@ -190,13 +216,13 @@ async def generate_missing(
     client = None
     for s in chosen:
         for v in range(1, max(1, variants) + 1):
-            if image_path(s, v).is_file():
+            if image_path(s, v, heroine).is_file():
                 skipped += 1
                 continue
             if client is None:
                 client = make_client(mdl)
             try:
-                if await generate_one(client, s, v, mdl):
+                if await generate_one(client, s, v, mdl, heroine):
                     made += 1
                 else:
                     skipped += 1

@@ -21,9 +21,9 @@ import json
 import logging
 import os
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -105,9 +105,11 @@ class Field:
     key: str
     title: str
     hint: str = ""
-    kind: str = "text"          # text | number | hours | bool
+    kind: str = "text"          # text | number | hours | bool | choice
     group: str = "Общее"
     default: str = ""
+    # Для kind="choice": (значение, подпись). Пустое значение — «как в .env».
+    options: Tuple[Tuple[str, str], ...] = field(default_factory=tuple)
 
 
 # Поля сгруппированы по каналам, а не по именам переменных. Раньше список
@@ -131,6 +133,12 @@ FIELDS: List[Field] = [
     Field("YT_PRAYER_OUTRO_SEC", "Концевая карточка, секунд",
           "Имя бота на экране в конце. 0 — выключить.",
           "text", "Общее", "2.5"),
+    Field("YT_PRAYER_HEROINE", "Кто снимается",
+          "Героиня выбирается на ролик целиком — внутри одного сюжета лицо "
+          "меняться не должно. «По очереди» чередует их в пачке.",
+          "choice", "Общее", "mix",
+          (("mix", "по очереди"), ("real", "как есть"),
+           ("bright", "какой хочется быть"))),
 
     # — русский канал —
     Field("YT_SHORTS_COUNT", "Молитв за ночь",
@@ -202,6 +210,7 @@ def describe() -> List[Dict[str, Any]]:
                 "title": f.title,
                 "hint": f.hint,
                 "kind": f.kind,
+                "options": [{"value": v, "label": t} for v, t in (f.options or ())],
                 "group": f.group,
                 "env": env_val,
                 "default": f.default,

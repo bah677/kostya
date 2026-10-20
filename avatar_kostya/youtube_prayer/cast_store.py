@@ -26,7 +26,21 @@ _CACHE: Dict[str, Any] = {}
 _CACHE_MTIME: float = -1.0
 
 # Что разрешено править. Ключи совпадают с именами в cast.py.
-TEXT_FIELDS = ("style", "woman", "jesus")
+# Героинь может быть несколько, и их ключи живут там же — спрашиваем,
+# а не дублируем список, иначе третья героиня молча не сохранится.
+_BASE_TEXT_FIELDS = ("style", "jesus")
+
+
+def text_fields() -> tuple:
+    try:
+        from youtube_prayer.cast import HEROINES
+
+        return _BASE_TEXT_FIELDS + tuple(h.store_key for h in HEROINES)
+    except Exception:
+        return _BASE_TEXT_FIELDS + ("woman",)
+
+
+TEXT_FIELDS = _BASE_TEXT_FIELDS + ("woman",)  # для старого кода
 SCENE_FIELDS = ("key", "who", "shot", "prompt", "topics")
 WHO_VALUES = ("woman", "jesus", "both")
 
@@ -101,7 +115,7 @@ def scenes_raw() -> Optional[List[Dict[str, Any]]]:
 def save(data: Dict[str, Any]) -> Dict[str, Any]:
     """Пишет файл целиком. Пустые значения выбрасываются."""
     clean: Dict[str, Any] = {}
-    for name in TEXT_FIELDS:
+    for name in text_fields():
         v = str((data or {}).get(name) or "").strip()
         if v:
             clean[name] = v
@@ -158,7 +172,7 @@ def save(data: Dict[str, Any]) -> Dict[str, Any]:
             _CACHE_MTIME = -1.0
     logger.info(
         "cast_store: сохранено (%s текстов, %s сцен)",
-        sum(1 for f in TEXT_FIELDS if f in clean),
+        sum(1 for f in text_fields() if f in clean),
         len(clean.get("scenes") or []),
     )
     return clean

@@ -47,11 +47,57 @@ WOMAN = (
     "soft blouse, a thin gold wedding band, ordinary and real, not a model"
 )
 
+# Вторая героиня. Первая — про узнавание: такой зрительница видит себя в
+# зеркале вечером. Эта — про то, какой она себя хочет: тот же возраст и тот
+# же круг, но выспавшаяся и в порядке. Не моложе лет на двадцать и не
+# модель — иначе узнавание ломается и остаётся чужая реклама.
+WOMAN_BRIGHT = (
+    "a Slavic woman in her mid-forties, calm well-rested face with smooth "
+    "skin and only faint soft lines, warm grey-green eyes, thick chestnut "
+    "hair neatly cut to the shoulders with a few lighter strands, barely "
+    "visible natural makeup, wearing a soft ivory turtleneck under a light "
+    "grey cardigan, small pearl earrings, a thin gold wedding band, "
+    "unhurried and well kept, the way an ordinary woman looks on a good day, "
+    "never glamorous, not a model"
+)
+
 JESUS = (
     "Jesus Christ depicted in the traditional reverent iconographic manner, "
     "a gentle man with long dark hair and a short beard, calm compassionate "
     "eyes, wearing a simple earth-toned linen robe with a deep red mantle, "
     "surrounded by soft warm light, dignified and serene, never theatrical"
+)
+
+
+@dataclass(frozen=True)
+class Heroine:
+    """Одна и та же роль, разные актрисы.
+
+    Внутри одного ролика героиня обязана быть одна: кадры идут подряд в
+    одном сюжете, и смена лица на третьей секунде читается как другой
+    человек. Поэтому выбор делается на ролик целиком, а не на кадр.
+    """
+
+    key: str
+    label: str
+    note: str
+    # Ключ в файле правок и имя папки в банке. У первой героини — «woman»
+    # и папки без суффикса: её кадры уже нарисованы, переименовывать нельзя.
+    store_key: str
+    default_prompt: str
+
+
+DEFAULT_HEROINE = "real"
+
+HEROINES: Tuple[Heroine, ...] = (
+    Heroine(
+        "real", "Как есть", "Та, в ком зрительница узнаёт себя.",
+        "woman", WOMAN,
+    ),
+    Heroine(
+        "bright", "Какой хочется быть", "Тот же возраст и круг, но в порядке.",
+        "woman_bright", WOMAN_BRIGHT,
+    ),
 )
 
 
@@ -163,12 +209,35 @@ def style() -> str:
     return _text("style", STYLE)
 
 
-def woman() -> str:
-    return _text("woman", WOMAN)
+def heroine(key: str = "") -> Heroine:
+    """Героиня по ключу. Неизвестный ключ — первая: лучше знакомое лицо."""
+    want = (key or DEFAULT_HEROINE).strip().lower()
+    for h in HEROINES:
+        if h.key == want:
+            return h
+    return HEROINES[0]
+
+
+def woman(key: str = "") -> str:
+    h = heroine(key)
+    return _text(h.store_key, h.default_prompt)
 
 
 def jesus() -> str:
     return _text("jesus", JESUS)
+
+
+def bank_folder(who: str, heroine_key: str = "") -> str:
+    """Папка банка под эту роль и эту героиню.
+
+    У первой героини суффикса нет: её кадры лежат в woman/ и both/ с лета,
+    и переименование оторвало бы их от сцен. Кадры с Иисусом общие — он
+    один на обеих.
+    """
+    h = heroine(heroine_key)
+    if who == "jesus" or h.key == DEFAULT_HEROINE:
+        return who
+    return f"{who}_{h.key}"
 
 
 def scenes() -> Tuple[Scene, ...]:
@@ -200,16 +269,16 @@ def _by_who() -> Dict[str, List[Scene]]:
     return out
 
 
-def character_prompt(who: str) -> str:
+def character_prompt(who: str, heroine_key: str = "") -> str:
     if who == "woman":
-        return woman()
+        return woman(heroine_key)
     if who == "jesus":
         return jesus()
     # Два персонажа описываем раздельно и проговариваем, чьи признаки чьи.
     # Иначе они перетекают: на первом же парном кадре обручальное кольцо
     # героини оказалось на руке Иисуса.
     return (
-        f"TWO PEOPLE. First person: {woman()}. "
+        f"TWO PEOPLE. First person: {woman(heroine_key)}. "
         f"Second person: {jesus()}. "
         "Only the woman wears a ring; his hands are bare. "
         "Their clothing never mixes: her knitted cardigan is hers alone, "
@@ -217,14 +286,17 @@ def character_prompt(who: str) -> str:
     )
 
 
-def full_prompt(scene: Scene) -> str:
+def full_prompt(scene: Scene, heroine_key: str = "") -> str:
     """Сначала кадр, потом герои, потом действие.
 
     Порядок важен: если начинать с описания лиц, модель уходит в портрет и
     игнорирует ракурс. На кадре «идут по дороге со спины» так и вышло —
     получился фронтальный двойной портрет.
     """
-    return f"{scene.shot}. {character_prompt(scene.who)}. {scene.prompt}. {style()}"
+    return (
+        f"{scene.shot}. {character_prompt(scene.who, heroine_key)}. "
+        f"{scene.prompt}. {style()}"
+    )
 
 
 def scenes_for_topic(topic: str, *, count: int = 8) -> List[Scene]:

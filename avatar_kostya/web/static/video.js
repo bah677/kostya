@@ -365,7 +365,10 @@ $("#btn-keys-refresh")?.addEventListener("click", () => loadKeys());
 let _genFields = [];
 
 function effectiveOf(f, value) {
-  return (value || "").trim() || f.env || f.default || "—";
+  const raw = (value || "").trim() || f.env || f.default || "";
+  if (!raw) return "—";
+  const opt = (f.options || []).find((o) => o.value === raw);
+  return opt ? opt.label : raw;
 }
 
 function genInput(f) {
@@ -376,9 +379,12 @@ function genInput(f) {
   wrap.append(label);
 
   let input;
-  if (f.kind === "bool") {
+  if (f.kind === "bool" || f.kind === "choice") {
+    const opts = f.kind === "bool"
+      ? [["", "как в .env"], ["1", "включено"], ["0", "выключено"]]
+      : [["", "как в .env"]].concat((f.options || []).map((o) => [o.value, o.label]));
     input = el("select", "field");
-    [["", "как в .env"], ["1", "включено"], ["0", "выключено"]].forEach(([v, t]) => {
+    opts.forEach(([v, t]) => {
       const o = el("option", null, t);
       o.value = v;
       input.append(o);
@@ -673,6 +679,7 @@ $("#btn-stats-refresh")?.addEventListener("click", async (ev) => {
    текстом из кода и её можно откатить одним нажатием. */
 
 let _cast = null;
+let _heroine = "";
 
 function dnaField(title, hint, f) {
   const wrap = el("div", "dna-field");
@@ -703,13 +710,15 @@ function dnaField(title, hint, f) {
   return wrap;
 }
 
-function sceneCard(sc) {
-  const card = el("div", "scene");
-  card.dataset.key = sc.key;
-
-  const shelf = el("div", "scene-frames");
-  if (sc.frames.length) {
-    sc.frames.forEach((fr) => {
+/* Полка кадров зависит от выбранной героини, а поля — нет. Поэтому при
+   переключении героини перерисовываем только полку: иначе несохранённая
+   правка в соседнем поле пропала бы. */
+function fillShelf(shelf, sc, who) {
+  shelf.textContent = "";
+  const frames = (sc.frames || {})[who] || [];
+  const variant = (sc.next_variant || {})[who] || 1;
+  if (frames.length) {
+    frames.forEach((fr) => {
       const a = el("a", "frame");
       a.href = fr.url;
       a.target = "_blank";
@@ -725,11 +734,22 @@ function sceneCard(sc) {
   } else {
     shelf.append(el("div", "frame empty", "нет кадра"));
   }
+  if (sc.shared) shelf.append(el("div", "frame-note", "общий кадр"));
   const draw = el("button", "btn small", "Дорисовать");
   draw.type = "button";
-  draw.title = `дубль №${sc.next_variant}`;
-  draw.addEventListener("click", () => drawFrame(sc.key, draw, sc.next_variant));
+  draw.title = `дубль №${variant}`;
+  draw.addEventListener("click", () => drawFrame(sc.key, draw, variant, who));
   shelf.append(draw);
+}
+
+function sceneCard(sc) {
+  const card = el("div", "scene");
+  card.dataset.key = sc.key;
+
+  const shelf = el("div", "scene-frames");
+  fillShelf(shelf, sc, _heroine);
+  card._sc = sc;
+  card._shelf = shelf;
   card.append(shelf);
 
   const fields = el("div", "scene-fields");
@@ -793,8 +813,25 @@ function renderCast(d) {
   dna.classList.remove("muted");
   dna.textContent = "";
   dna.append(dnaField("Общая гамма", "Свет, цвет и настроение — общие для всех кадров.", d.style));
-  dna.append(dnaField("Героиня", "Та самая зрительница: обычное лицо, обычная одежда.", d.woman));
+  (d.heroines || []).forEach((h) => dna.append(dnaField(h.label, h.note, h.field)));
   dna.append(dnaField("Иисус", "Иконографическая традиция, без портретов в упор.", d.jesus));
+
+  const pick = $("#cast-heroine");
+  pick.textContent = "";
+  const known = (d.heroines || []).map((h) => h.key);
+  if (!known.includes(_heroine)) _heroine = d.default_heroine || known[0] || "";
+  (d.heroines || []).forEach((h) => {
+    const b = el("button", "seg-btn" + (h.key === _heroine ? " active" : ""));
+    b.type = "button";
+    b.append(el("span", "seg-title", h.label));
+    b.append(el("span", "seg-note", `${h.frames} ${plural(h.frames, "кадр", "кадра", "кадров")}`));
+    b.addEventListener("click", () => {
+      _heroine = h.key;
+      $$("#cast-heroine .seg-btn").forEach((x, i) => x.classList.toggle("active", known[i] === _heroine));
+      $$("#cast-scenes .scene").forEach((c) => fillShelf(c._shelf, c._sc, _heroine));
+    });
+    pick.append(b);
+  });
 
   const box = $("#cast-scenes");
   box.textContent = "";
@@ -827,9 +864,11 @@ function castDiff() {
   if (!_cast) return [];
   const now = collectCast();
   const rows = [];
-  [["style", "Общая гамма"], ["woman", "Героиня"], ["jesus", "Иисус"]].forEach(([k, label]) => {
-    if ((now[k] || "") !== (_cast[k].value || "")) {
-      rows.push({ label, before: _cast[k].value, after: now[k] });
+  const texts = [["style", "Общая гамма", _cast.style], ["jesus", "Иисус", _cast.jesus]];
+  (_cast.heroines || []).forEach((h) => texts.push([h.store_key, h.label, h.field]));
+  texts.forEach(([k, label, f]) => {
+    if ((now[k] || "") !== (f.value || "")) {
+      rows.push({ label, before: f.value, after: now[k] });
     }
   });
   const was = new Map(_cast.scenes.map((s) => [s.key, s]));
@@ -880,14 +919,16 @@ async function loadCast() {
   }
 }
 
-async function drawFrame(key, btn, variant) {
+async function drawFrame(key, btn, variant, who) {
   const price = Number(_cast?.price || 0.04).toFixed(2);
+  const h = (_cast?.heroines || []).find((x) => x.key === who);
   const go = await askConfirm({
     kicker: "Банк кадров",
     title: "Дорисовать кадр?",
     lead: "Уже нарисованное не трогаем — добавится новый дубль.",
     rows: [
       { label: "Кадр", note: `${key}, дубль №${variant}` },
+      { label: "Кто в кадре", note: h ? h.label : "—" },
       { label: "Стоимость", note: `примерно $${price}, до полутора минут` },
     ],
     okText: "Дорисовать",
@@ -898,7 +939,7 @@ async function drawFrame(key, btn, variant) {
   try {
     const d = await api("/api/cast/generate", {
       method: "POST",
-      body: JSON.stringify({ key }),
+      body: JSON.stringify({ key, heroine: who }),
     });
     toast(`${d.frame}: ${d.status}`);
     loadCast();
@@ -915,7 +956,8 @@ $("#btn-cast-save")?.addEventListener("click", async () => {
     toast("Нечего сохранять");
     return;
   }
-  const touchesDna = rows.some((r) => ["Общая гамма", "Героиня", "Иисус"].includes(r.label));
+  const dnaLabels = ["Общая гамма", "Иисус"].concat((_cast?.heroines || []).map((h) => h.label));
+  const touchesDna = rows.some((r) => dnaLabels.includes(r.label));
   const go = await askConfirm({
     kicker: "Герои и сцены",
     title: `Применить ${rows.length} ${plural(rows.length, "изменение", "изменения", "изменений")}?`,
