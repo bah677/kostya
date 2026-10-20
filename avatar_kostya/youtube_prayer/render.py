@@ -56,8 +56,14 @@ _COL_CAPTION_TEXT = "&H00FFFFFF"  # чистый белый — максимал
 # Сверху ряд «назад / поиск / ⋮», снизу канал, описание, счётчик и кнопка,
 # справа в полосе y≈1000–1600 — колонка действий. Чистой остаётся середина.
 _V_MARGIN_LR = 150
-_V_TITLE_SIZE = 124
-_V_TITLE_MARGIN_V = 280
+# Плашка темы стоит у самого верха и мельче подписи-крючка. Раньше она
+# была крупной и на 280 пикселях от верха — это полоса 15–40% высоты, ровно
+# там, где в вертикальном портрете лицо. Тема садилась героине на глаза в
+# каждом втором кадре. Ниже увести нельзя: 870–1100 занимают субтитры.
+_V_TITLE_SIZE = 92
+_V_TITLE_MARGIN_V = 80
+# Не больше двух строк: третья уезжает на лицо даже от верхнего края.
+_V_TITLE_MAX_LINES = 2
 _V_CAPTION_SIZE = 88
 _V_CAPTION_MARGIN_V = 820
 _V_CAPTION_WRAP = 18
@@ -486,7 +492,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             play_w=play_w,
             fontsize=theme_size,
             margin_lr=margin_lr,
-            max_lines=3,
+            max_lines=_V_TITLE_MAX_LINES,
         )
         wrapped_theme = _ass_line_break(theme_lines)
         if wrapped_theme:
