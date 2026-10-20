@@ -38,3 +38,23 @@
   .studio-body { padding: 14px; grid-template-columns: 1fr; }
   .studio .top { padding: 10px 14px; }
 }
+
+/* Настройки генерации: группы полей в две колонки на широком экране. */
+.studio .card.wide { grid-column: 1 / -1; }
+
+.gen-groups { display: grid; gap: 18px; }
+.gen-group h3 {
+  font-size: .72rem; letter-spacing: .08em; text-transform: uppercase;
+  color: var(--muted); font-weight: 600; margin: 0 0 8px;
+}
+.gen-fields { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+
+.gen-field { display: grid; gap: 4px; }
+.gen-field label { font-size: .88rem; }
+.gen-field .gen-hint { font-size: .74rem; color: var(--muted); line-height: 1.35; }
+.gen-field .field { width: 100%; }
+.gen-field.changed label::after { content: " • изменено"; color: var(--accent, #7c6cf0); font-size: .74rem; }
+.gen-env { font-size: .72rem; color: var(--muted); }
+
+.gen-actions { display: flex; gap: 8px; margin-top: 14px; }
+.saved { color: #3fbf6f; }

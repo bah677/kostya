@@ -191,13 +191,24 @@ def voice_id_for(lang: Optional[str]) -> str:
 
 
 def setting(name: str, default: Any = None) -> Any:
-    """Настройка из config, а если такого поля нет — прямо из окружения.
+    """Настройка: сначала правка из студии, потом config, потом окружение.
 
     Объект config содержит только объявленные поля. Переменные с суффиксом
     языка (YT_SHORTS_ES_COUNT, YT_SHORTS_TG_CHANNEL_ID_ES) там не объявлены,
     и getattr молча возвращал бы значение по умолчанию: настройка прописана
     в .env, а код её не видит и ведёт себя так, будто её нет.
+
+    Правки из студии лежат в файле и читаются первыми — поэтому они
+    действуют на ближайший прогон, без перезапуска процесса.
     """
+    try:
+        from youtube_prayer.gen_settings import override
+
+        ov = override(name)
+        if ov is not None:
+            return ov
+    except Exception:
+        pass
     try:
         from config import config as cfg
 

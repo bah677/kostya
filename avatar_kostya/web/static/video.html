@@ -51,9 +51,20 @@
       <div id="yt-keys" class="yt-keys muted">Загрузка…</div>
     </section>
 
-    <section class="block card">
-      <div class="block-head"><h2>Настройки генерации</h2></div>
-      <p class="muted small">Количества, часы премьер, голос, темп, призывы — скоро здесь.</p>
+    <section class="block card wide">
+      <div class="block-head">
+        <h2>Настройки генерации</h2>
+        <span class="saved small" id="gen-saved" hidden>Сохранено</span>
+      </div>
+      <p class="muted small">
+        Правки действуют на ближайший ночной прогон, перезапуск не нужен.
+        Пустое поле — значит «как в .env».
+      </p>
+      <div id="gen-settings" class="gen-groups muted">Загрузка…</div>
+      <div class="gen-actions">
+        <button type="button" class="btn primary" id="btn-gen-save">Сохранить</button>
+        <button type="button" class="btn" id="btn-gen-reload">Отменить правки</button>
+      </div>
     </section>
 
     <section class="block card">

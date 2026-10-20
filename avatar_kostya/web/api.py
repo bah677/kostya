@@ -399,6 +399,31 @@ def create_app(bot_app) -> FastAPI:
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
 
+    @app.get("/api/gen-settings")
+    async def gen_settings(uid: int = Depends(auth)):
+        from youtube_prayer.gen_settings import describe
+
+        return {"fields": await asyncio.to_thread(describe)}
+
+    @app.put("/api/gen-settings")
+    @app.post("/api/gen-settings")
+    async def put_gen_settings(
+        payload: Dict[str, Any] = Body(default={}), uid: int = Depends(auth)
+    ):
+        from youtube_prayer.gen_settings import describe, save_overrides
+
+        values = payload.get("values")
+        if not isinstance(values, dict):
+            raise HTTPException(status_code=400, detail="ожидаю объект values")
+        known = {f["key"] for f in describe()}
+        unknown = sorted(set(values) - known)
+        if unknown:
+            raise HTTPException(
+                status_code=400, detail=f"неизвестные настройки: {', '.join(unknown)}"
+            )
+        await asyncio.to_thread(save_overrides, values)
+        return {"ok": True, "fields": await asyncio.to_thread(describe)}
+
     @app.get("/api/llm-settings")
     async def get_llm_settings(request: Request, uid: int = Depends(auth)):
         refresh = str(request.query_params.get("refresh") or "").strip().lower() in {
