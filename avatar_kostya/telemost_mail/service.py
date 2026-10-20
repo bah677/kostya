@@ -425,7 +425,20 @@ class TelemostMailService:
             )
             return 0, "В расшифровке не найдены реплики эксперта"
 
-        source_label = classification.title or (row.get("subject") or "Телемост")[:80]
+        # Единое имя: ТИП · ДАТА · ЗАГОЛОВОК. Заголовка классификатора мало —
+        # он на 71 разной встрече выдал одно и то же «Встреча клуба
+        # „Разговоры с Богом"», и в дереве они сливались в одну карточку.
+        from telemost_mail.source_label import label_from_classification
+
+        source_label = (
+            label_from_classification(
+                classification,
+                subject=str(row.get("subject") or ""),
+                extra=(row.get("extra_metadata") or {}) if isinstance(row.get("extra_metadata"), dict) else {},
+            )
+            or classification.title
+            or (row.get("subject") or "Телемост")[:80]
+        )
         meta = classification.as_chroma_metadata(source_label=source_label)
         meta["telemost_imap_uid"] = str(row.get("imap_uid") or "")
         extra = row.get("extra_metadata") or {}
