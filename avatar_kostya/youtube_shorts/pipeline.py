@@ -283,15 +283,25 @@ async def run_daily_youtube_shorts_pipeline(
             # сравнить, не рискуя всей пачкой.
             broll = None
             if i <= cast_count:
+                # Героиня выбирается на ролик целиком: внутри одного сюжета
+                # лицо меняться не должно.
+                from youtube_prayer.cast import heroine as _heroine
+                from youtube_prayer.cast_broll import choose_heroine
+
+                who = choose_heroine(topic.trend, index=i)
                 broll = await build_cast_montage(
                     item_dir,
                     topic=topic.trend,
                     duration_sec=dur,
                     width=SHORT_W,
                     height=SHORT_H,
+                    heroine_key=who,
                 )
                 if broll is not None:
-                    await _notify(f"🎭 [Short {i}/{len(topics)}] видеоряд с героями")
+                    await _notify(
+                        f"🎭 [Short {i}/{len(topics)}] видеоряд с героями · "
+                        f"{_heroine(who).label}"
+                    )
             if broll is None:
                 broll = await build_broll_montage(
                     item_dir,

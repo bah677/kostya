@@ -17,7 +17,7 @@ import random
 from pathlib import Path
 from typing import List, Optional, Sequence
 
-from youtube_prayer.cast import Scene, scenes_for_topic
+from youtube_prayer.cast import DEFAULT_HEROINE, HEROINES, Scene, heroine, scenes_for_topic
 from youtube_prayer.cast_bank import bank_dir, frames_for_scene
 
 logger = logging.getLogger(__name__)
@@ -26,19 +26,47 @@ logger = logging.getLogger(__name__)
 _MIN_FRAMES = 4
 
 
-def pick_frames(topic: str, *, count: int = 8, seed: Optional[int] = None) -> List[Path]:
+def pick_frames(
+    topic: str, *, count: int = 8, seed: Optional[int] = None, heroine_key: str = ""
+) -> List[Path]:
     """Кадры под тему, по одному варианту на сцену, в сюжетном порядке."""
     rng = random.Random(seed)
     out: List[Path] = []
     for scene in scenes_for_topic(topic, count=count):
-        variants = frames_for_scene(scene)
+        variants = frames_for_scene(scene, heroine_key)
         if variants:
             out.append(rng.choice(variants))
     return out
 
 
-def bank_ready(topic: str = "", *, count: int = 8) -> bool:
-    return len(pick_frames(topic, count=count)) >= _MIN_FRAMES
+def bank_ready(topic: str = "", *, count: int = 8, heroine_key: str = "") -> bool:
+    return len(pick_frames(topic, count=count, heroine_key=heroine_key)) >= _MIN_FRAMES
+
+
+def choose_heroine(topic: str = "", *, index: int = 1) -> str:
+    """Какая героиня снимается в этом ролике.
+
+    Выбор делается один раз на ролик: кадры идут подряд в одном сюжете, и
+    смена лица посреди него читается как другой человек.
+
+    Настройка «Героиня» задаёт, кто снимается: одна из двух или обе
+    по очереди. Если у выбранной банк не набран, берём ту, у которой он
+    есть — лучше знакомое лицо, чем сток.
+    """
+    from youtube_prayer.langs import setting
+
+    want = (setting("YT_PRAYER_HEROINE", "") or "mix").strip().lower()
+    keys = [h.key for h in HEROINES]
+    if want in keys:
+        order = [want] + [k for k in keys if k != want]
+    else:
+        # По очереди: нечётные ролики пачки одной, чётные другой.
+        start = (max(1, int(index)) - 1) % len(keys)
+        order = keys[start:] + keys[:start]
+    for key in order:
+        if bank_ready(topic, heroine_key=key):
+            return key
+    return order[0] if order else DEFAULT_HEROINE
 
 
 async def build_cast_montage(
@@ -49,6 +77,7 @@ async def build_cast_montage(
     width: int,
     height: int,
     seed: Optional[int] = None,
+    heroine_key: str = "",
 ) -> Optional[Path]:
     """Видеоряд из банка под длину озвучки. None — если банк не потянул."""
     import asyncio
@@ -63,14 +92,17 @@ async def build_cast_montage(
     )
 
     dur = max(10.0, float(duration_sec))
-    frames = pick_frames(topic, count=16, seed=seed)
+    who = (heroine_key or "").strip() or DEFAULT_HEROINE
+    frames = pick_frames(topic, count=16, seed=seed, heroine_key=who)
     if len(frames) < _MIN_FRAMES:
         logger.warning(
-            "cast: в банке %s кадров под тему %r — мало, остаёмся на стоке",
+            "cast: у героини %s в банке %s кадров под тему %r — мало, остаёмся на стоке",
+            who,
             len(frames),
             topic,
         )
         return None
+    logger.info("cast: снимает %s, кадров %s", heroine(who).label, len(frames))
 
     # Длину сцены считаем от озвучки: лучше показать меньше кадров подольше,
     # чем гнать слайд-шоу. Но и держать один кадр дольше 12 секунд не стоит.

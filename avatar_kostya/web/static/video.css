@@ -226,3 +226,17 @@
   margin-left: 6px; border-radius: 50%; background: var(--accent);
   vertical-align: middle;
 }
+
+/* Переключатель героинь над списком кадров: поля сцен общие, меняются
+   только превью и кнопка дорисовки. */
+.seg-pick { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+.seg-btn {
+  display: grid; gap: 1px; text-align: left; cursor: pointer;
+  padding: 8px 14px; border: 1px solid var(--rule); border-radius: var(--radius-sm, 10px);
+  background: var(--surface-2); color: var(--muted); font: inherit;
+}
+.seg-btn:hover { border-color: var(--rule-strong); color: var(--ink); }
+.seg-btn.active { background: var(--surface); border-color: var(--accent); color: var(--ink); }
+.seg-title { font-size: .88rem; font-weight: 600; }
+.seg-note { font-size: .72rem; color: var(--muted); }
+.frame-note { font-size: .66rem; color: var(--muted); text-align: center; line-height: 1.2; }

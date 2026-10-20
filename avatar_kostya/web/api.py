@@ -446,13 +446,13 @@ def create_app(bot_app) -> FastAPI:
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
 
-    @app.get("/api/cast/frame/{who}/{name}")
-    async def cast_frame(who: str, name: str, thumb: int = 0, uid: int = Depends(auth)):
+    @app.get("/api/cast/frame/{folder}/{name}")
+    async def cast_frame(folder: str, name: str, thumb: int = 0, uid: int = Depends(auth)):
         from fastapi.responses import FileResponse
 
         from youtube_prayer.cast_bank import frame_file, thumb_file
 
-        path = frame_file(who, name)
+        path = frame_file(folder, name)
         if path is None:
             raise HTTPException(status_code=404, detail="кадра нет")
         if thumb:
@@ -469,8 +469,9 @@ def create_app(bot_app) -> FastAPI:
         key = str(payload.get("key") or "").strip()
         if not key:
             raise HTTPException(status_code=400, detail="не указан кадр")
+        heroine = str(payload.get("heroine") or "").strip()
         try:
-            return await generate(key)
+            return await generate(key, heroine)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         except Exception as e:
