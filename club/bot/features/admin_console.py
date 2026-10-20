@@ -203,6 +203,12 @@ class AdminConsoleFeature(BaseFeature):
         dp.message.register(self._cmd_td_conversion, admin_private, Command("td"))
         dp.message.register(self._cmd_excluded_payment, admin_chat, Command("excluded"))
         dp.message.register(self._cmd_excluded_payment, admin_private, Command("excluded"))
+        dp.message.register(
+            self._cmd_gift_retention, admin_chat, Command("gift_retention")
+        )
+        dp.message.register(
+            self._cmd_gift_retention, admin_private, Command("gift_retention")
+        )
         dp.message.register(self._cmd_gift, admin_chat, Command("gift"))
         dp.message.register(self._cmd_gift, admin_private, Command("gift"))
         dp.message.register(self._cmd_giftlink, admin_chat, Command("giftlink"))
@@ -1636,6 +1642,21 @@ class AdminConsoleFeature(BaseFeature):
             await callback.message.reply("✅ Отчёт по ТД отправлен вам в личку.")
         except Exception:
             pass
+
+    async def _cmd_gift_retention(self, message: Message) -> None:
+        """Результат тестовых когорт удержания подарочной волны."""
+        if not await self._ensure_console_admin(message, allow_private=True):
+            return
+        from bot.services.gift_retention_report import (
+            collect_gift_retention_report,
+            format_gift_retention_report_html,
+        )
+
+        data = await collect_gift_retention_report(self.user_storage)
+        await message.reply(
+            format_gift_retention_report_html(data),
+            parse_mode=ParseMode.HTML,
+        )
 
     async def _cmd_excluded_payment(self, message: Message) -> None:
         if not await self._ensure_console_admin(message, allow_private=True):

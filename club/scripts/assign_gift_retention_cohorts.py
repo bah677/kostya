@@ -35,7 +35,7 @@ import logging
 import os
 import sys
 from collections import Counter, defaultdict
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Any, Dict, List
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -226,6 +226,32 @@ def _print_plan(
         ds = sorted(p["expires_on"] for p in plan.values() if p["variant"] == v)
         if ds:
             print(f"  {v:<16} {ds[0]} … {ds[-1]}")
+
+    # Когда письма с новыми текстами реально дойдут. Слоты цепочки —
+    # за 10 / 5 / 1 день до окончания; те, что пришлись на прошлое,
+    # человеку уже не достанутся.
+    print("\nРасписание писем (слоты впереди):")
+    for v in VARIANT_ORDER:
+        exps = [p["expires_on"] for p in plan.values() if p["variant"] == v]
+        sched: Dict[date, List[int]] = defaultdict(list)
+        for e in exps:
+            for d in (10, 5, 1):
+                sched[e - timedelta(days=d)].append(d)
+        ahead = sum(len(x) for day, x in sched.items() if day >= today)
+        behind = sum(len(x) for day, x in sched.items() if day < today)
+        days = sorted(d for d in sched if d >= today)
+        window = f"{days[0]} … {days[-1]}" if days else "писем впереди нет"
+        print(f"  {v:<16} впереди {ahead:>2}, прошло {behind:>2}   {window}")
+
+    # p2 меняет только слот «за 5 дней»: если он уже прошёл, человек
+    # варианта не увидит вовсе. Остальные варианты меняют все слоты.
+    p2 = [p["expires_on"] for p in plan.values() if p["variant"] == VARIANT_P2_SELL_5D]
+    if p2:
+        will_get = sum(1 for e in p2 if e - timedelta(days=5) >= today)
+        print(
+            f"\n  ВНИМАНИЕ: {VARIANT_P2_SELL_5D} меняет только слот −5д — "
+            f"застанут его {will_get} из {len(p2)}."
+        )
 
 
 async def main() -> int:

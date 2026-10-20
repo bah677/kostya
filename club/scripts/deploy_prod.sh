@@ -14,6 +14,7 @@
 # Настройки:
 #   DEPLOY_TARGETS=club,nastya   # comma-separated: club,nastya
 #   RUN_MIGRATIONS=1             # по умолчанию 1
+#   RUN_GIFT_COHORTS=1           # по умолчанию 1 — когорты удержания (только target=club)
 #   RUN_ATTRIBUTION_BACKFILL=0   # по умолчанию 0
 #   SKIP_SUDO_REEXEC=1           # не перезапускать через sudo
 #   DEPLOY_RUN_USER=appuser
@@ -48,6 +49,9 @@ SKIP_SUPERVISOR="${SKIP_SUPERVISOR:-0}"
 SKIP_RSYNC="${SKIP_RSYNC:-0}"
 SKIP_PGDUMP="${SKIP_PGDUMP:-0}"
 RUN_MIGRATIONS="${RUN_MIGRATIONS:-1}"
+# Раскладка подарочной волны по тестовым когортам удержания (идемпотентна:
+# уже размеченных не переназначает). См. docs/gift_retention_experiment.md
+RUN_GIFT_COHORTS="${RUN_GIFT_COHORTS:-1}"
 RUN_ATTRIBUTION_BACKFILL="${RUN_ATTRIBUTION_BACKFILL:-0}"
 SKIP_PIP="${SKIP_PIP:-0}"
 SKIP_CLEAN_PYCACHE="${SKIP_CLEAN_PYCACHE:-0}"
@@ -230,12 +234,13 @@ deploy_target() {
   echo "    prod_root: ${CURRENT_PROD_ROOT}"
   echo "    supervisor: ${SC_PROG}"
   echo "    migrations: RUN_MIGRATIONS=${RUN_MIGRATIONS}"
+  echo "    cohorts: RUN_GIFT_COHORTS=${RUN_GIFT_COHORTS}"
   echo "============================================================"
 
   if [[ "${SKIP_TAR_BACKUP}" != "1" ]]; then
     mkdir -p "${CLUB_CODE_SNAPSHOTS_DIR}" || die "нет доступа на запись в ${CLUB_CODE_SNAPSHOTS_DIR}"
     archive="${CLUB_CODE_SNAPSHOTS_DIR}/club_code_${CURRENT_TARGET_NAME}_${ts}.tgz"
-    echo "==> [1/7] Архив кода прода: ${archive}"
+    echo "==> [1/8] Архив кода прода: ${archive}"
     (
       cd "${prod_parent}"
       tar -czf "${archive}" \
@@ -253,14 +258,14 @@ deploy_target() {
     chown_to_run_user_if_root "${archive}"
     echo "    $(du -h "${archive}" | cut -f1)"
   else
-    echo "==> [1/7] SKIP_TAR_BACKUP=1"
+    echo "==> [1/8] SKIP_TAR_BACKUP=1"
   fi
 
-  echo "==> [2/7] Остановка Supervisor (${SC_PROG})"
+  echo "==> [2/8] Остановка Supervisor (${SC_PROG})"
   supervisor_stop
 
   if [[ "${SKIP_RSYNC}" != "1" ]]; then
-    echo "==> [3/7] rsync ${CLUB_DEV_ROOT}/ -> ${CURRENT_PROD_ROOT}/"
+    echo "==> [3/8] rsync ${CLUB_DEV_ROOT}/ -> ${CURRENT_PROD_ROOT}/"
     rsync -a --delete \
       --filter='protect venv/' \
       --filter='protect .venv/' \
@@ -301,14 +306,14 @@ deploy_target() {
       )
     fi
   else
-    echo "==> [3/7] SKIP_RSYNC=1"
+    echo "==> [3/8] SKIP_RSYNC=1"
   fi
 
   if [[ "${SKIP_PGDUMP}" != "1" ]]; then
     local dump_dir
     dump_dir="$(pick_writable_dump_dir)"
     dump_file="${dump_dir}/club_db_${CURRENT_TARGET_NAME}_${ts}.dump"
-    echo "==> [4/7] pg_dump -Fc -> ${dump_file}"
+    echo "==> [4/8] pg_dump -Fc -> ${dump_file}"
     command -v pg_dump >/dev/null || die "нужен pg_dump"
     set -a
     # shellcheck disable=SC1090
@@ -332,11 +337,11 @@ deploy_target() {
         "$RETENTION_SH" deploy --apply || true
     fi
   else
-    echo "==> [4/7] SKIP_PGDUMP=1"
+    echo "==> [4/8] SKIP_PGDUMP=1"
   fi
 
   if [[ "${SKIP_PIP}" != "1" && -f "${CURRENT_PROD_ROOT}/requirements.txt" ]]; then
-    echo "==> [5/7] pip install (venv прода, пользователь ${RUN_USER})"
+    echo "==> [5/8] pip install (venv прода, пользователь ${RUN_USER})"
     if [[ -x "${CURRENT_PROD_ROOT}/venv/bin/pip" ]]; then
       if [[ "$(id -u)" -eq 0 ]]; then
         sudo -u "${RUN_USER}" -- "${CURRENT_PROD_ROOT}/venv/bin/pip" install -q -r "${CURRENT_PROD_ROOT}/requirements.txt"
@@ -353,12 +358,12 @@ deploy_target() {
       die "Нет ${CURRENT_PROD_ROOT}/venv/bin/pip — создайте venv на проде или SKIP_PIP=1"
     fi
   else
-    echo "==> [5/7] SKIP_PIP=1 или нет requirements.txt"
+    echo "==> [5/8] SKIP_PIP=1 или нет requirements.txt"
   fi
 
   if [[ "${RUN_MIGRATIONS}" == "1" ]]; then
     command -v psql >/dev/null || die "для apply_all_db_migrations.sh нужен psql"
-    echo "==> [6/7] apply_all_db_migrations.sh (пользователь ${RUN_USER})"
+    echo "==> [6/8] apply_all_db_migrations.sh (пользователь ${RUN_USER})"
     local -a mig_env=()
     if [[ "${RUN_ATTRIBUTION_BACKFILL}" != "1" ]]; then
       mig_env+=(RUN_ATTRIBUTION_BACKFILL=0)
@@ -370,10 +375,31 @@ deploy_target() {
       env "${mig_env[@]}" bash "${CURRENT_PROD_ROOT}/scripts/apply_all_db_migrations.sh"
     fi
   else
-    echo "==> [6/7] миграции пропущены (RUN_MIGRATIONS=0)"
+    echo "==> [6/8] миграции пропущены (RUN_MIGRATIONS=0)"
   fi
 
-  echo "==> [7/7] Запуск Supervisor (${SC_PROG})"
+  # Когорты удержания подарочной волны. Только основной клуб: у двойника
+  # Насти своя база и своей подарочной волны нет.
+  if [[ "${RUN_GIFT_COHORTS}" == "1" && "${CURRENT_TARGET_NAME}" == "club" ]]; then
+    echo "==> [7/8] Когорты удержания подарочной волны"
+    local cohort_py="${CURRENT_PROD_ROOT}/venv/bin/python3"
+    [[ -x "${cohort_py}" ]] || cohort_py="python3"
+    local -a cohort_cmd=(
+      "${cohort_py}" "${CURRENT_PROD_ROOT}/scripts/assign_gift_retention_cohorts.py"
+      --env-file "${CURRENT_PROD_ROOT}/.env" --apply
+    )
+    # Накат не валим: раскладка — не условие работоспособности бота.
+    if [[ "$(id -u)" -eq 0 ]]; then
+      sudo -u "${RUN_USER}" -- env HOME="$(getent passwd "${RUN_USER}" | cut -d: -f6)" \
+        "${cohort_cmd[@]}" || echo "WARNING: раскладка когорт не выполнена"
+    else
+      "${cohort_cmd[@]}" || echo "WARNING: раскладка когорт не выполнена"
+    fi
+  else
+    echo "==> [7/8] когорты удержания пропущены (RUN_GIFT_COHORTS=${RUN_GIFT_COHORTS}, target=${CURRENT_TARGET_NAME})"
+  fi
+
+  echo "==> [8/8] Запуск Supervisor (${SC_PROG})"
   supervisor_start
 
   TARGET_SUMMARY+=("target=${CURRENT_TARGET_NAME} archive=${archive:-n/a} dump=${dump_file:-n/a}")
