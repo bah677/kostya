@@ -24,7 +24,12 @@ _ROOT = Path(__file__).resolve().parents[1]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from youtube_prayer.cast import bank_folder, full_prompt, heroine, scenes  # noqa: E402
+from youtube_prayer.cast import (  # noqa: E402
+    bank_folder,
+    full_prompt,
+    heroine,
+    scenes_for,
+)
 from youtube_prayer.cast_bank import (  # noqa: E402
     bank_dir,
     generate_one,
@@ -47,10 +52,14 @@ async def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     who = (args.heroine or "").strip()
     wanted = {k.strip() for k in args.only.split(",") if k.strip()}
-    chosen = [s for s in scenes() if not wanted or s.key in wanted]
+    # Только сцены этой героини плюс общие. Брать весь список нельзя:
+    # у героинь разные наборы, и чужие сцены лягут в её папку и спишут
+    # деньги за кадры, которые никогда не покажут.
+    available = scenes_for(who)
+    chosen = [s for s in available if not wanted or s.key in wanted]
     if not chosen:
         print("Ничего не выбрано. Доступные ключи:", file=sys.stderr)
-        print(", ".join(s.key for s in scenes()), file=sys.stderr)
+        print(", ".join(s.key for s in available), file=sys.stderr)
         return 1
 
     if args.dry_run:
