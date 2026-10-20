@@ -140,6 +140,9 @@ class Material:
     group_link: str = ""
     product: str = ""
     meeting_id: str = ""
+    # О чём была встреча. Заголовок классификатора на семидесяти встречах
+    # один и тот же, а тема описывает суть: 139 разных на 150 записей.
+    meeting_topic: str = ""
 
     @property
     def display_name(self) -> str:
@@ -154,7 +157,10 @@ class Material:
         ctype = self.content_types[0] if self.content_types else ""
         if ctype or self.date:
             name = canonical_source_label(
-                content_type=ctype, meeting_date=self.date, title=self.source
+                content_type=ctype,
+                meeting_date=self.date,
+                title=self.source,
+                topic=self.meeting_topic,
             )
             if name and name != "Запись":
                 return name
@@ -381,6 +387,7 @@ def _scan_rag_materials(app) -> Dict[str, Material]:
                     "chars": 0,
                     "date": str(m.get("date") or ""),
                     "topic": str(m.get("topic_title") or ""),
+                    "meeting_topic": str(m.get("meeting_topic") or ""),
                     "private_link": link,
                     "group_link": str(m.get("group_message_link") or ""),
                     "product": prod,
@@ -395,6 +402,8 @@ def _scan_rag_materials(app) -> Dict[str, Material]:
                 row["cats"].add(cat)
             row["chunks"] += 1
             row["chars"] += len(doc or "")
+            if not row["meeting_topic"] and m.get("meeting_topic"):
+                row["meeting_topic"] = str(m.get("meeting_topic"))
             if not row["date"] and m.get("date"):
                 row["date"] = str(m.get("date"))
             if not row["private_link"] and m.get("private_source_link"):
@@ -416,6 +425,7 @@ def _scan_rag_materials(app) -> Dict[str, Material]:
             chars=int(row["chars"]),
             date=row["date"],
             topic_title=row["topic"],
+            meeting_topic=row["meeting_topic"],
             private_link=row["private_link"],
             group_link=row["group_link"],
             product=row["product"],

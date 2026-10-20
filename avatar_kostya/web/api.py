@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional
 from uuid import UUID
 
 from fastapi import Body, Cookie, Depends, FastAPI, HTTPException, Request, Response
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from course.formats import FORMATS
@@ -781,10 +781,29 @@ def create_app(bot_app) -> FastAPI:
     async def index():
         return FileResponse(STATIC_DIR / "index.html")
 
+    def _asset_stamp() -> str:
+        """Метка версии статики по времени правки файлов.
+
+        Без неё браузер берёт из кэша старый скрипт к уже обновлённой
+        странице: разметка новая, логика старая, и карточка навсегда
+        застревает на «Загрузка…».
+        """
+        latest = 0.0
+        for name in ("video.js", "video.css", "style.css"):
+            try:
+                latest = max(latest, (STATIC_DIR / name).stat().st_mtime)
+            except OSError:
+                continue
+        return str(int(latest))
+
     @app.get("/video")
     async def video_studio():
         """Студия молитв — отдельная страница, вход общий с заводом."""
-        return FileResponse(STATIC_DIR / "video.html")
+        html = (STATIC_DIR / "video.html").read_text(encoding="utf-8")
+        return HTMLResponse(
+            html.replace("__V__", _asset_stamp()),
+            headers={"Cache-Control": "no-store"},
+        )
 
     @app.get("/healthz")
     async def healthz():
