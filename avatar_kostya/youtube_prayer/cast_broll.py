@@ -18,27 +18,12 @@ from pathlib import Path
 from typing import List, Optional, Sequence
 
 from youtube_prayer.cast import Scene, scenes_for_topic
+from youtube_prayer.cast_bank import bank_dir, frames_for_scene
 
 logger = logging.getLogger(__name__)
 
 # Меньше четырёх кадров — это уже не видеоряд, а слайд-шоу.
 _MIN_FRAMES = 4
-
-
-def bank_dir() -> Path:
-    raw = (os.getenv("YT_PRAYER_CAST_BANK_DIR") or "").strip()
-    p = Path(raw) if raw else Path("data/cast_bank")
-    if not p.is_absolute():
-        p = Path(__file__).resolve().parents[1] / p
-    return p
-
-
-def frames_for_scene(scene: Scene) -> List[Path]:
-    """Все варианты кадра: позже в банке их станет по нескольку на сцену."""
-    d = bank_dir() / scene.who
-    if not d.is_dir():
-        return []
-    return sorted(p for p in d.glob(f"{scene.key}_*.png") if p.stat().st_size > 1000)
 
 
 def pick_frames(topic: str, *, count: int = 8, seed: Optional[int] = None) -> List[Path]:

@@ -58,3 +58,79 @@
 
 .gen-actions { display: flex; gap: 8px; margin-top: 14px; }
 .saved { color: #3fbf6f; }
+
+/* Статистика каналов: крупные цифры, линия подписчиков, список роликов. */
+.yt-stats { display: grid; gap: 20px; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+.yt-stats.muted { display: block; }
+
+.yt-chan {
+  display: grid; gap: 10px; align-content: start;
+  padding: 14px; border: 1px solid var(--rule);
+  border-radius: var(--radius-sm, 10px); background: var(--surface-2);
+}
+.yt-chan-head { display: flex; align-items: baseline; gap: 8px; }
+.yt-chan-head span { margin-left: auto; }
+
+.stats { display: grid; gap: 10px; grid-template-columns: repeat(3, 1fr); }
+.stat-title { font-size: .72rem; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+.stat-value { font-size: 1.5rem; font-weight: 600; line-height: 1.2; }
+.stat-delta { font-size: .78rem; color: var(--muted); }
+.stat-delta.up { color: var(--ok); }
+.stat-delta.down { color: var(--bad); }
+
+.spark svg { width: 100%; height: 64px; display: block; }
+.spark-line { fill: none; stroke: var(--accent); stroke-width: 2; vector-effect: non-scaling-stroke; }
+.spark-area { fill: var(--accent); opacity: .12; stroke: none; }
+.spark-dot { fill: var(--accent); }
+.spark-ends { display: flex; justify-content: space-between; font-size: .72rem; color: var(--muted); }
+
+.vids { display: grid; gap: 8px; margin-top: 4px; }
+.vids-title { font-size: .72rem; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+.vid { display: grid; gap: 2px; }
+.vid-title { font-size: .88rem; color: var(--ink); text-decoration: none; }
+.vid-title:hover { color: var(--accent-text); text-decoration: underline; }
+.vid-meta { font-size: .74rem; color: var(--muted); }
+
+@media (max-width: 560px) {
+  .stats { grid-template-columns: 1fr 1fr; }
+}
+
+/* Герои и сцены: ДНК сверху, ниже карточки кадров с превью из банка. */
+.cast-dna { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); margin-bottom: 18px; }
+.cast-dna.muted { display: block; }
+.dna-field { display: grid; gap: 4px; align-content: start; }
+.dna-head { display: flex; align-items: baseline; gap: 8px; }
+.dna-head label { font-size: .88rem; }
+.dna-head .link { margin-left: auto; }
+.dna-field textarea.field { width: 100%; resize: vertical; font-size: .82rem; line-height: 1.4; }
+.dna-field.changed .dna-head label::after { content: " • изменено"; color: var(--accent); font-size: .74rem; }
+
+.cast-scenes { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); }
+.scene {
+  display: grid; gap: 10px; grid-template-columns: 96px minmax(0, 1fr);
+  padding: 10px; border: 1px solid var(--rule);
+  border-radius: var(--radius-sm, 10px); background: var(--surface-2);
+}
+.scene-frames { display: grid; gap: 6px; align-content: start; }
+.scene-frames .frame {
+  display: block; border-radius: 8px; overflow: hidden;
+  border: 1px solid var(--rule); background: var(--surface-3); line-height: 0;
+}
+.scene-frames .frame img { width: 100%; height: auto; display: block; }
+.scene-frames .frame.empty {
+  display: grid; place-items: center; aspect-ratio: 2 / 3;
+  font-size: .72rem; color: var(--muted); line-height: 1.2; text-align: center;
+}
+.scene-frames .btn.small { width: 100%; justify-content: center; }
+
+.scene-fields { display: grid; gap: 6px; align-content: start; min-width: 0; }
+.scene-top { display: flex; gap: 6px; align-items: center; }
+.scene-top .field.key { font-family: var(--mono); font-size: .78rem; flex: 1 1 auto; min-width: 0; }
+.scene-top select.field { flex: 0 0 auto; }
+.scene-fields .field { width: 100%; font-size: .82rem; }
+.scene-fields textarea.field { resize: vertical; line-height: 1.4; }
+
+@media (max-width: 560px) {
+  .cast-scenes { grid-template-columns: 1fr; }
+  .scene { grid-template-columns: 76px minmax(0, 1fr); }
+}

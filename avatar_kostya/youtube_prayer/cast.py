@@ -71,7 +71,7 @@ class Scene:
 # Три слоя: беда (героиня одна), присутствие (Иисус), утешение (вдвоём).
 # В ролике они идут именно в этом порядке — так собирается маленькая история.
 
-SCENES: Tuple[Scene, ...] = (
+DEFAULT_SCENES: Tuple[Scene, ...] = (
     # — беда —
     Scene("kitchen_night", "woman",
           "medium shot, camera at eye level across the table",
@@ -144,22 +144,73 @@ SCENES: Tuple[Scene, ...] = (
           ()),
 )
 
-_BY_WHO: Dict[str, List[Scene]] = {}
-for _s in SCENES:
-    _BY_WHO.setdefault(_s.who, []).append(_s)
+# ── Правки из студии ─────────────────────────────────────────────────────────
+# Константы выше — значения по умолчанию. Поверх них ложится то, что
+# поправили в интерфейсе: ДНК героев и список сцен лежат в файле рядом с
+# данными, и ближайший прогон читает уже их. Перезапуск не нужен.
+
+
+def _text(name: str, default: str) -> str:
+    try:
+        from youtube_prayer.cast_store import text
+
+        return text(name) or default
+    except Exception:
+        return default
+
+
+def style() -> str:
+    return _text("style", STYLE)
+
+
+def woman() -> str:
+    return _text("woman", WOMAN)
+
+
+def jesus() -> str:
+    return _text("jesus", JESUS)
+
+
+def scenes() -> Tuple[Scene, ...]:
+    """Набор кадров: из файла, если его правили, иначе из кода."""
+    try:
+        from youtube_prayer.cast_store import scenes_raw
+
+        rows = scenes_raw()
+    except Exception:
+        rows = None
+    if not rows:
+        return DEFAULT_SCENES
+    return tuple(
+        Scene(
+            key=r["key"],
+            who=r["who"],
+            shot=r["shot"],
+            prompt=r["prompt"],
+            topics=tuple(r.get("topics") or ()),
+        )
+        for r in rows
+    )
+
+
+def _by_who() -> Dict[str, List[Scene]]:
+    out: Dict[str, List[Scene]] = {}
+    for s in scenes():
+        out.setdefault(s.who, []).append(s)
+    return out
 
 
 def character_prompt(who: str) -> str:
     if who == "woman":
-        return WOMAN
+        return woman()
     if who == "jesus":
-        return JESUS
+        return jesus()
     # Два персонажа описываем раздельно и проговариваем, чьи признаки чьи.
     # Иначе они перетекают: на первом же парном кадре обручальное кольцо
     # героини оказалось на руке Иисуса.
     return (
-        f"TWO PEOPLE. First person: {WOMAN}. "
-        f"Second person: {JESUS}. "
+        f"TWO PEOPLE. First person: {woman()}. "
+        f"Second person: {jesus()}. "
         "Only the woman wears a ring; his hands are bare. "
         "Their clothing never mixes: her knitted cardigan is hers alone, "
         "his linen robe and red mantle are his alone"
@@ -173,7 +224,7 @@ def full_prompt(scene: Scene) -> str:
     игнорирует ракурс. На кадре «идут по дороге со спины» так и вышло —
     получился фронтальный двойной портрет.
     """
-    return f"{scene.shot}. {character_prompt(scene.who)}. {scene.prompt}. {STYLE}"
+    return f"{scene.shot}. {character_prompt(scene.who)}. {scene.prompt}. {style()}"
 
 
 def scenes_for_topic(topic: str, *, count: int = 8) -> List[Scene]:
@@ -183,15 +234,16 @@ def scenes_for_topic(topic: str, *, count: int = 8) -> List[Scene]:
     досматривает: узнал себя, увидел, что не один, ушёл с теплом.
     """
     t = (topic or "").lower()
+    by_who = _by_who()
 
     def matches(s: Scene) -> bool:
         return not s.topics or any(k in t for k in s.topics)
 
-    trouble = [s for s in _BY_WHO.get("woman", []) if matches(s)]
+    trouble = [s for s in by_who.get("woman", []) if matches(s)]
     if not trouble:
-        trouble = list(_BY_WHO.get("woman", []))
-    presence = list(_BY_WHO.get("jesus", []))
-    comfort = list(_BY_WHO.get("both", []))
+        trouble = list(by_who.get("woman", []))
+    presence = list(by_who.get("jesus", []))
+    comfort = list(by_who.get("both", []))
 
     out: List[Scene] = []
     # Примерно треть беды, треть присутствия, остальное — утешение.
@@ -204,11 +256,11 @@ def scenes_for_topic(topic: str, *, count: int = 8) -> List[Scene]:
 
 
 def all_scene_keys() -> List[str]:
-    return [s.key for s in SCENES]
+    return [s.key for s in scenes()]
 
 
 def scene_by_key(key: str) -> Scene | None:
-    for s in SCENES:
+    for s in scenes():
         if s.key == key:
             return s
     return None
