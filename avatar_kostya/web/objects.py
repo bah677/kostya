@@ -143,6 +143,21 @@ class Material:
 
     @property
     def display_name(self) -> str:
+        """Единое имя: ТИП · ДАТА · ЗАГОЛОВОК.
+
+        Раньше имя шло из поля source как есть — из темы письма или имени
+        файла, как получилось. Отсюда зоопарк: «Конспект встречи от …»,
+        «Встреча клуба „Разговоры с Богом"», «molitva_123.mp3».
+        """
+        from telemost_mail.source_label import canonical_source_label
+
+        ctype = self.content_types[0] if self.content_types else ""
+        if ctype or self.date:
+            name = canonical_source_label(
+                content_type=ctype, meeting_date=self.date, title=self.source
+            )
+            if name and name != "Запись":
+                return name
         return _pretty_source_name(self.source, self.date)
 
     @property
@@ -345,8 +360,15 @@ def _scan_rag_materials(app) -> Dict[str, Material]:
         source = str(m.get("source") or "").strip()
         if not source:
             continue
+        # Ключ группировки. У записей Телемоста это номер письма: он есть у
+        # всех их чанков и уникален для каждой записи. Группировать по имени
+        # нельзя — классификатор на 71 разной встрече выдал одно и то же
+        # «Встреча клуба „Разговоры с Богом"», и все они схлопывались в одну
+        # карточку: из 150 записей в дереве было видно 59.
+        uid = str(m.get("telemost_imap_uid") or "").strip()
+        group_key = f"uid:{uid}" if uid else source
         for facet in _ctype_to_facets(ctype, cat):
-            key = (facet, source)
+            key = (facet, group_key)
             row = bucket.get(key)
             if row is None:
                 link = str(m.get("private_source_link") or "")
@@ -362,7 +384,9 @@ def _scan_rag_materials(app) -> Dict[str, Material]:
                     "private_link": link,
                     "group_link": str(m.get("group_message_link") or ""),
                     "product": prod,
-                    "meeting_id": _meeting_id_from_link(link),
+                    "meeting_id": _meeting_id_from_link(link)
+                    or str(m.get("meeting_id") or ""),
+                    "imap_uid": uid,
                 }
                 bucket[key] = row
             if ctype:
@@ -378,8 +402,10 @@ def _scan_rag_materials(app) -> Dict[str, Material]:
                 row["meeting_id"] = _meeting_id_from_link(row["private_link"])
 
     out: Dict[str, Material] = {}
-    for (_facet, _source), row in bucket.items():
-        mid = material_id(row["facet"], row["source"])
+    for (_facet, _key), row in bucket.items():
+        # id материала — по ключу группировки, иначе одноимённые записи
+        # снова сольются, уже на уровне идентификатора.
+        mid = material_id(row["facet"], _key)
         out[mid] = Material(
             id=mid,
             facet=row["facet"],
@@ -551,11 +577,20 @@ async def build_tree(app) -> Dict[str, Any]:
         if not kids:
             continue
         total_chunks = sum(m.chunks for m in kids)
+        # Две встречи в один день дают одинаковое имя. Карточки это разные
+        # (группируются по письму), но в списке их не отличить — нумеруем.
+        seen: Dict[str, int] = {}
+        titles: Dict[str, str] = {}
+        for m in kids:
+            base = m.display_name
+            seen[base] = seen.get(base, 0) + 1
+            titles[m.id] = base if seen[base] == 1 else f"{base} ({seen[base]})"
+
         children = [
             {
                 "id": m.id,
                 "kind": "mat",
-                "name": m.display_name,
+                "name": titles.get(m.id, m.display_name),
                 "meta": _child_meta(m),
                 "status": "ready",
                 "selectable": True,
