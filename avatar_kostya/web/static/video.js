@@ -710,13 +710,23 @@ function dnaField(title, hint, f) {
   return wrap;
 }
 
-/* Полка кадров зависит от выбранной героини, а поля — нет. Поэтому при
-   переключении героини перерисовываем только полку: иначе несохранённая
-   правка в соседнем поле пропала бы. */
+/* У каждой героини свои сцены, общие — только кадры с Иисусом. При
+   переключении карточки чужих сцен прячем, а не выбрасываем: иначе
+   несохранённая правка в скрытой сцене пропала бы, а уходит на сервер
+   весь список целиком. */
+function sceneOwner(sc, who) {
+  return sc.shared ? who : (sc.heroine || who);
+}
+
+function sceneVisible(sc, who) {
+  return !!sc.shared || (sc.heroine || "") === who;
+}
+
 function fillShelf(shelf, sc, who) {
+  const key = sceneOwner(sc, who);
   shelf.textContent = "";
-  const frames = (sc.frames || {})[who] || [];
-  const variant = (sc.next_variant || {})[who] || 1;
+  const frames = (sc.frames || {})[key] || [];
+  const variant = (sc.next_variant || {})[key] || 1;
   if (frames.length) {
     frames.forEach((fr) => {
       const a = el("a", "frame");
@@ -738,7 +748,7 @@ function fillShelf(shelf, sc, who) {
   const draw = el("button", "btn small", "Дорисовать");
   draw.type = "button";
   draw.title = `дубль №${variant}`;
-  draw.addEventListener("click", () => drawFrame(sc.key, draw, variant, who));
+  draw.addEventListener("click", () => drawFrame(sc.key, draw, variant, key));
   shelf.append(draw);
 }
 
@@ -750,6 +760,7 @@ function sceneCard(sc) {
   fillShelf(shelf, sc, _heroine);
   card._sc = sc;
   card._shelf = shelf;
+  card.hidden = !sceneVisible(sc, _heroine);
   card.append(shelf);
 
   const fields = el("div", "scene-fields");
@@ -824,11 +835,16 @@ function renderCast(d) {
     const b = el("button", "seg-btn" + (h.key === _heroine ? " active" : ""));
     b.type = "button";
     b.append(el("span", "seg-title", h.label));
-    b.append(el("span", "seg-note", `${h.frames} ${plural(h.frames, "кадр", "кадра", "кадров")}`));
+    const mine = (d.scenes || []).filter((sc) => sceneVisible(sc, h.key)).length;
+    b.append(el("span", "seg-note",
+      `${mine} ${plural(mine, "сцена", "сцены", "сцен")} · ${h.frames} ${plural(h.frames, "кадр", "кадра", "кадров")}`));
     b.addEventListener("click", () => {
       _heroine = h.key;
       $$("#cast-heroine .seg-btn").forEach((x, i) => x.classList.toggle("active", known[i] === _heroine));
-      $$("#cast-scenes .scene").forEach((c) => fillShelf(c._shelf, c._sc, _heroine));
+      $$("#cast-scenes .scene").forEach((c) => {
+        c.hidden = !sceneVisible(c._sc, _heroine);
+        fillShelf(c._shelf, c._sc, _heroine);
+      });
     });
     pick.append(b);
   });
@@ -855,6 +871,7 @@ function collectCast() {
       shot: get("shot"),
       prompt: get("prompt"),
       topics: get("topics").split(",").map((t) => t.trim()).filter(Boolean),
+      heroine: card._sc ? (card._sc.heroine || "") : "",
     });
   });
   return out;
@@ -877,7 +894,11 @@ function castDiff() {
     seen.add(s.key);
     const old = was.get(s.key);
     if (!old) {
-      rows.push({ label: `Кадр ${s.key || "без ключа"}`, note: "новый кадр" });
+      const h = (_cast.heroines || []).find((x) => x.key === s.heroine);
+      rows.push({
+        label: `Кадр ${s.key || "без ключа"}`,
+        note: h ? `новый кадр · ${h.label}` : "новый кадр · общий",
+      });
       return;
     }
     [["who", "кто в кадре"], ["shot", "ракурс"], ["prompt", "что происходит"]].forEach(([f, name]) => {
@@ -992,7 +1013,7 @@ $("#btn-cast-add")?.addEventListener("click", () => {
   if (!_cast) return;
   const card = sceneCard({
     key: "", who: "woman", shot: "", prompt: "", topics: [],
-    frames: [], next_variant: 1,
+    frames: {}, next_variant: {}, shared: false, heroine: _heroine,
   });
   $("#cast-scenes").append(card);
   $('[data-f="key"]', card).focus();

@@ -33,7 +33,7 @@ def _field(name: str, default: str, current: str) -> Dict[str, Any]:
 
 def _frames(scene: cast.Scene, heroine: str) -> List[Dict[str, Any]]:
     out = []
-    folder = cast.bank_folder(scene.who, heroine)
+    folder = cast.bank_folder(scene.who, heroine or scene.heroine)
     for path in cast_bank.frames_for_scene(scene, heroine):
         thumb = cast_bank.thumb_file(path)
         out.append(
@@ -49,18 +49,19 @@ def _frames(scene: cast.Scene, heroine: str) -> List[Dict[str, Any]]:
 
 def _scene_row(scene: cast.Scene) -> Dict[str, Any]:
     # Кадры с Иисусом общие: он один на обеих героинь, и рисовать их
-    # дважды значило бы платить за одно и то же.
-    shared = scene.who == "jesus"
-    frames: Dict[str, Any] = {}
-    nexts: Dict[str, int] = {}
-    for h in cast.HEROINES:
-        frames[h.key] = _frames(scene, h.key)
-        nexts[h.key] = cast_bank.next_variant(scene, h.key)
+    # дважды значило бы платить за одно и то же. Остальные сцены свои
+    # у каждой — интерьеры не повторяются.
+    shared = not scene.heroine
+    owner = scene.heroine or cast.DEFAULT_HEROINE
+    keys = [h.key for h in cast.HEROINES] if shared else [owner]
+    frames = {k: _frames(scene, k) for k in keys}
+    nexts = {k: cast_bank.next_variant(scene, k) for k in keys}
     return {
         "key": scene.key,
         "who": scene.who,
         "who_label": _WHO_LABEL.get(scene.who, scene.who),
         "shared": shared,
+        "heroine": scene.heroine,
         "shot": scene.shot,
         "prompt": scene.prompt,
         "topics": list(scene.topics),
@@ -80,7 +81,7 @@ def describe() -> Dict[str, Any]:
                 "note": h.note,
                 "store_key": h.store_key,
                 "field": _field(h.store_key, h.default_prompt, cast.woman(h.key)),
-                "frames": sum(len(r["frames"][h.key]) for r in rows),
+                "frames": sum(len(r["frames"].get(h.key) or []) for r in rows),
             }
         )
     return {
@@ -92,10 +93,13 @@ def describe() -> Dict[str, Any]:
         "scenes_overridden": cast_store.scenes_raw() is not None,
         "who_values": [{"key": k, "label": v} for k, v in _WHO_LABEL.items()],
         "bank_dir": str(cast_bank.bank_dir()),
+        # Общие кадры считаем один раз: платили за них тоже один раз.
         "frames_total": sum(
-            len(r["frames"][h["key"]]) for r in rows for h in heroines if not r["shared"]
-        )
-        + sum(len(r["frames"][cast.DEFAULT_HEROINE]) for r in rows if r["shared"]),
+            len(next(iter(r["frames"].values()), []))
+            if r["shared"]
+            else sum(len(v) for v in r["frames"].values())
+            for r in rows
+        ),
         "model": cast_bank.model_name(),
         "price": cast_bank.price_per_frame(),
     }
@@ -110,6 +114,7 @@ def _same_scenes(rows: List[Dict[str, Any]]) -> bool:
         if (
             str(got.get("key") or "").strip() != want.key
             or str(got.get("who") or "").strip() != want.who
+            or str(got.get("heroine") or "").strip() != want.heroine
             or str(got.get("shot") or "").strip() != want.shot
             or str(got.get("prompt") or "").strip() != want.prompt
             or [str(t).strip() for t in (got.get("topics") or [])] != list(want.topics)

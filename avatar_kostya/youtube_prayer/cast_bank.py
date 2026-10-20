@@ -47,13 +47,19 @@ def bank_dir() -> Path:
     return p
 
 
+def _owner(scene: Scene, heroine: str = "") -> str:
+    """Чья это сцена. У сцены есть хозяйка — её и берём, если не сказано иное."""
+    return heroine or scene.heroine
+
+
 def image_path(scene: Scene, variant: int, heroine: str = "") -> Path:
-    return bank_dir() / bank_folder(scene.who, heroine) / f"{scene.key}_{variant:02d}.png"
+    folder = bank_folder(scene.who, _owner(scene, heroine))
+    return bank_dir() / folder / f"{scene.key}_{variant:02d}.png"
 
 
 def frames_for_scene(scene: Scene, heroine: str = "") -> List[Path]:
     """Все варианты кадра: в банке их может быть по нескольку на сцену."""
-    d = bank_dir() / bank_folder(scene.who, heroine)
+    d = bank_dir() / bank_folder(scene.who, _owner(scene, heroine))
     if not d.is_dir():
         return []
     return sorted(p for p in d.glob(f"{scene.key}_*.png") if p.stat().st_size > _MIN_BYTES)
@@ -218,7 +224,9 @@ async def generate_missing(
 ) -> dict:
     """Добить банк до нужного числа дублей. Готовое не трогает."""
     wanted = {k.strip() for k in (keys or []) if k.strip()}
-    chosen = [s for s in scenes() if not wanted or s.key in wanted]
+    from youtube_prayer.cast import scenes_for
+
+    chosen = [s for s in scenes_for(heroine) if not wanted or s.key in wanted]
     mdl = model_name(model)
     made = skipped = failed = 0
     errors: List[str] = []
