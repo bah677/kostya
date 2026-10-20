@@ -64,21 +64,41 @@ def _clean_title(title: str, *, type_name: str) -> str:
     return t[:70].strip(" .,·—-")
 
 
+def _clean_topic(topic: str) -> str:
+    """О чём была встреча.
+
+    Слово «Обсуждение» в начале не срезаем, хотя оно и повторяется часто:
+    дальше идёт родительный падеж, и без него фраза ломается —
+    «Молитвы, благодарности и заботы Бога» вместо «Обсуждение молитвы…».
+    """
+    t = re.sub(r"\s+", " ", (topic or "").strip())
+    if not t:
+        return ""
+    t = (t[:1].upper() + t[1:])[:80]
+    return t.strip(" .,:;·—-")
+
+
 def canonical_source_label(
     *,
     content_type: str = "",
     meeting_date: str = "",
     title: str = "",
     subject: str = "",
+    topic: str = "",
     fallback: str = "Запись",
 ) -> str:
-    """ТИП · ДАТА · ЗАГОЛОВОК. Части без смысла опускаются."""
+    """ТИП · ДАТА · О ЧЁМ. Части без смысла опускаются.
+
+    Тема встречи (meeting_topic) берётся первой: заголовок классификатора на
+    семидесяти встречах один и тот же, а тема описывает суть и почти всегда
+    уникальна — 139 разных на 150 записей.
+    """
     type_name = canon_type(content_type)
     date = (meeting_date or "").strip()
     if not date:
         m = _DATE_RE.search(subject or "")
         date = m.group(0) if m else ""
-    clean = _clean_title(title or subject, type_name=type_name)
+    clean = _clean_topic(topic) or _clean_title(title or subject, type_name=type_name)
 
     parts = [p for p in (type_name, date, clean) if p]
     if not parts:
@@ -101,6 +121,7 @@ def label_from_pending(row: Dict[str, Any]) -> str:
         content_type=str(cls.get("content_type") or ""),
         meeting_date=str(extra.get("meeting_date") or ""),
         title=str(cls.get("title") or ""),
+        topic=str(cls.get("meeting_topic") or ""),
         subject=str(row.get("subject") or ""),
     )
 
@@ -116,5 +137,6 @@ def label_from_classification(
         content_type=str(ct),
         meeting_date=str(ex.get("meeting_date") or ""),
         title=str(title),
+        topic=str(getattr(classification, "meeting_topic", "") or ""),
         subject=subject,
     )

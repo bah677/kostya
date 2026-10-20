@@ -33,17 +33,54 @@ async function api(path, options = {}) {
 }
 
 /* ── тема ────────────────────────────────────────────────────────────── */
+/* Ключ и цикл те же, что на заводе: выбор переносится между страницами. */
 
-function applyTheme() {
-  const saved = localStorage.getItem("studio-theme") || "auto";
-  document.documentElement.dataset.theme = saved === "auto" ? "" : saved;
+const ICONS = {
+  sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
+  moon: '<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>',
+  auto: '<circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 0 18z" fill="currentColor"/>',
+};
+
+const THEME_KEY = "studio.theme";
+const THEME_NEXT = { auto: "light", light: "dark", dark: "auto" };
+const THEME_LABEL = { auto: "Тема: как в системе", light: "Тема: светлая", dark: "Тема: тёмная" };
+const THEME_ICON = { auto: "auto", light: "sun", dark: "moon" };
+
+function currentTheme() {
+  const t = document.documentElement.dataset.theme;
+  return t === "light" || t === "dark" ? t : "auto";
+}
+
+function applyTheme(theme) {
+  if (theme === "auto") delete document.documentElement.dataset.theme;
+  else document.documentElement.dataset.theme = theme;
+  const btn = $("#btn-theme");
+  if (!btn) return;
+  btn.dataset.icon = THEME_ICON[theme];
+  btn.innerHTML = `<svg class="i" viewBox="0 0 24 24" aria-hidden="true">${ICONS[THEME_ICON[theme]] || ""}</svg>`;
+  btn.title = THEME_LABEL[theme];
+}
+
+function restoreTheme() {
+  let saved = "auto";
+  try {
+    saved = localStorage.getItem(THEME_KEY) || "auto";
+  } catch (err) {
+    /* приватный режим — тема живёт до перезагрузки */
+  }
+  applyTheme(saved === "light" || saved === "dark" ? saved : "auto");
 }
 
 $("#btn-theme")?.addEventListener("click", () => {
-  const now = localStorage.getItem("studio-theme") || "auto";
-  const next = now === "auto" ? "dark" : now === "dark" ? "light" : "auto";
-  localStorage.setItem("studio-theme", next);
-  applyTheme();
+  const next = THEME_NEXT[currentTheme()];
+  applyTheme(next);
+  try {
+    if (next === "auto") localStorage.removeItem(THEME_KEY);
+    else localStorage.setItem(THEME_KEY, next);
+  } catch (err) {
+    /* приватный режим */
+  }
+  toast(THEME_LABEL[next]);
 });
 
 /* ── ключи YouTube ───────────────────────────────────────────────────── */
@@ -251,7 +288,7 @@ $("#btn-gen-reload")?.addEventListener("click", () => loadGenSettings());
 /* ── старт ───────────────────────────────────────────────────────────── */
 
 (async function boot() {
-  applyTheme();
+  restoreTheme();
   try {
     await api("/api/me");
     $("#app").hidden = false;
