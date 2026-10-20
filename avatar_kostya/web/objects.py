@@ -29,9 +29,13 @@ _MEETING_ID_RE = re.compile(r"telemost\.yandex\.ru/j/(\d+)", re.I)
 # Тип → человекочитаемое имя + какие content_type из индекса сюда входят.
 FACET_SPECS: Dict[str, Dict[str, Any]] = {
     "efir": {
-        "name": "Эфиры",
-        "hint": "Эфиры и выступления Константина",
-        "content_types": ("Эфир", "Эфиры"),
+        # Эфир и встреча клуба — одно и то же: живая запись из телемоста.
+        # Классификатор называл их по-разному, и в дереве они лежали двумя
+        # отдельными типами. Тип один, а чем была конкретная запись, видно
+        # в её имени: «Эфир · …» или «Встреча клуба · …».
+        "name": "Эфиры и встречи",
+        "hint": "Живые записи: эфиры, выступления, встречи клуба",
+        "content_types": ("Эфир", "Эфиры", "встреча клуба", "встреча"),
         "group": "materials",
     },
     "molitva": {
@@ -58,12 +62,6 @@ FACET_SPECS: Dict[str, Dict[str, Any]] = {
         "content_types": ("Подкасты",),
         "group": "materials",
     },
-    "meeting": {
-        "name": "Встречи клуба",
-        "hint": "Встречи «Любящие Бога» (телемост)",
-        "content_types": ("встреча клуба", "встреча"),
-        "group": "materials",
-    },
     "product": {
         "name": "О клубе",
         "hint": "Описание продукта, PDF, пояснения",
@@ -86,6 +84,12 @@ FACET_SPECS: Dict[str, Dict[str, Any]] = {
 }
 
 FACET_KEYS = tuple(FACET_SPECS.keys())
+
+# Старый ключ → во что он теперь входит. «Встречи клуба» были отдельным
+# типом, пока не выяснилось, что это те же живые записи, что и эфиры.
+# В сохранённых чатах остались id вида facet:meeting и mat:meeting:…, и без
+# этой таблицы такой чат молча терял бы выбранные записи.
+FACET_ALIASES: Dict[str, str] = {"meeting": "efir"}
 FACET_NAMES = {k: str(v["name"]) for k, v in FACET_SPECS.items()}
 FACET_FILTERS: Dict[str, Dict[str, Any]] = {
     k: {
@@ -107,11 +111,11 @@ _GROUP_TITLES = {
 
 # Совместимость со старыми live:* id в сохранённых чатах.
 LIVE_TO_FACET = {
-    "chat": "meeting",
-    "client": "meeting",
-    "expert": "meeting",
-    "dialog": "meeting",
-    "expert_reply": "meeting",
+    "chat": "efir",
+    "client": "efir",
+    "expert": "efir",
+    "dialog": "efir",
+    "expert_reply": "efir",
     "testimonial": "testimonial",
 }
 LIVE_KEYS = tuple(LIVE_TO_FACET.keys())
@@ -181,8 +185,10 @@ class ObjectRef:
         return f"{self.kind}:{self.value}"
 
     def as_facet_key(self) -> Optional[str]:
-        if self.kind == "facet" and self.value in FACET_SPECS:
-            return self.value
+        if self.kind == "facet":
+            key = FACET_ALIASES.get(self.value, self.value)
+            if key in FACET_SPECS:
+                return key
         if self.kind == "live":
             mapped = LIVE_TO_FACET.get(self.value)
             if mapped in FACET_SPECS:
@@ -221,12 +227,18 @@ def parse_object_id(raw: str) -> Optional[ObjectRef]:
     value = value.strip()
     if not value:
         return None
-    if kind == "facet" and value in FACET_SPECS:
-        return ObjectRef("facet", value)
+    if kind == "facet":
+        key = FACET_ALIASES.get(value, value)
+        if key in FACET_SPECS:
+            return ObjectRef("facet", key)
+        return None
     if kind == "mat":
         # value = "<facet>:<hash>"
+        # Ключ устаревшего типа не переписываем: хэш считался вместе с ним,
+        # и подменить ключ значит получить id, которого нет. Такие записи
+        # лежат в кэше под обоими именами — см. _scan_rag_materials.
         facet = value.split(":", 1)[0]
-        if facet in FACET_SPECS and ":" in value:
+        if ":" in value and (facet in FACET_SPECS or facet in FACET_ALIASES):
             return ObjectRef("mat", value)
         return None
     if kind == "live":
@@ -431,6 +443,15 @@ def _scan_rag_materials(app) -> Dict[str, Material]:
             product=row["product"],
             meeting_id=row["meeting_id"],
         )
+    # Те же записи под старыми id: чат, где выбрана встреча клуба, должен
+    # открываться и после слияния типов.
+    for old_key, new_key in FACET_ALIASES.items():
+        for (_facet, _key), row in bucket.items():
+            if row["facet"] != new_key:
+                continue
+            legacy = material_id(old_key, _key)
+            if legacy not in out:
+                out[legacy] = out[material_id(new_key, _key)]
     return out
 
 
@@ -566,8 +587,11 @@ async def build_tree(app) -> Dict[str, Any]:
     _MATERIALS = materials
 
     by_facet: Dict[str, List[Material]] = {k: [] for k in FACET_KEYS}
-    for mat in materials.values():
-        by_facet.setdefault(mat.facet, []).append(mat)
+    for mid, mat in materials.items():
+        # Часть ключей — псевдонимы устаревших типов на ту же запись.
+        # В дерево идут только канонические, иначе запись задвоится.
+        if mid == mat.id:
+            by_facet.setdefault(mat.facet, []).append(mat)
 
     for _facet, items in by_facet.items():
         dated = [m for m in items if _short_date(m.date)]

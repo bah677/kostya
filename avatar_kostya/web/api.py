@@ -43,6 +43,8 @@ from web.auth import (
     verify_code,
 )
 from web.objects import (
+    FACET_ALIASES,
+    FACET_KEYS,
     build_tree,
     load_material_raw,
     object_names,
@@ -495,9 +497,12 @@ def create_app(bot_app) -> FastAPI:
     @app.get("/api/sources/{source_id}")
     async def source_details(source_id: str, uid: int = Depends(auth)):
         # Совместимость: если пришёл mat:… — отдаём исходник Кости.
-        if source_id.startswith("mat:") or source_id.count(":") >= 1 and source_id.split(":", 1)[0] in {
-            "efir", "molitva", "pokayanie", "qa", "podcast", "meeting", "product", "stories", "testimonial",
-        }:
+        # Список типов не дублируем: он менялся (эфиры и встречи клуба
+        # слились в один), и копия здесь успевала устареть.
+        known_facets = set(FACET_KEYS) | set(FACET_ALIASES)
+        if source_id.startswith("mat:") or (
+            source_id.count(":") >= 1 and source_id.split(":", 1)[0] in known_facets
+        ):
             mid = source_id if source_id.startswith("mat:") else f"mat:{source_id}"
             data = await load_material_raw(bot_app, mid)
             if not data.get("found"):
