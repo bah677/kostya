@@ -16,6 +16,7 @@ from storage.db.admin_gift_codes import AdminGiftCodesMixin
 from storage.db.gifts import GiftsMixin
 from storage.db.gift_wave import GiftWaveMixin
 from storage.db.gift_application import GiftApplicationMixin
+from storage.db.gift_retention_experiment import GiftRetentionExperimentMixin
 from storage.db.greeter_meeting import GreeterMeetingMixin
 from storage.db.club_first_week import ClubFirstWeekMixin
 from storage.db.legacy_reactivation import LegacyReactivationMixin
@@ -61,6 +62,7 @@ class Database(
     GiftWaveMixin,
     GreeterMeetingMixin,
     GiftApplicationMixin,
+    GiftRetentionExperimentMixin,
     ClubFirstWeekMixin,
     PromoCampaignsMixin,
     LegacyReactivationMixin,
@@ -99,6 +101,7 @@ class Database(
       - FollowupMixin         — поля followup_step* в users
       - AdminResponsesMixin   — admin_responses (ответы админа клиенту)
       - GiftsMixin            — gifts (подарочные подписки)
+      - GiftRetentionExperimentMixin — gift_retention_experiment (тестовые когорты удержания)
       - MediaArchiveMixin     — локальный архив входящих медиа (диск + media_inbound_files)
       - DialogTopicsMixin    — dialog_topics (маппинг user_id → forum topic_id)
       - DatabaseBase          — пул подключений и get_connection()

@@ -69,8 +69,14 @@ async def generate_renewal_outreach_html(
     license_expires_at: Optional[datetime],
     profile: Optional[Dict[str, Any]] = None,
     branch: Optional[str] = None,
+    variant: Optional[str] = None,
 ) -> str:
-    """AI-сообщение о продлении; при ошибке — шаблон REMINDER_CONFIG."""
+    """AI-сообщение о продлении; при ошибке — шаблон REMINDER_CONFIG.
+
+    variant — вариант тестовой когорты удержания (gift_retention_experiment).
+    Он не меняет расписание, только содержание письма: см.
+    sub_txt.GIFT_EXP_PROMPT_ADDON и docs/gift_retention_experiment.md.
+    """
     fallback = sub_txt.personalize_html(reminder["text"], first_name)
     if branch == "silent":
         fallback = sub_txt.personalize_html(
@@ -85,11 +91,24 @@ async def generate_renewal_outreach_html(
     if not config.MEMBER_RENEWAL_AI_ENABLED:
         return fallback
 
+    variant_addon = sub_txt.gift_experiment_prompt_addon(variant)
+
     days_before = int(reminder.get("days_before") or 0)
     if profile is None:
         profile = await user_storage.get_member_profile(user_id)
     profile_addon = build_member_profile_prompt_addon(profile)
     schedule_addon = await fetch_schedule_for_prompt(user_storage)
+
+    # Персональная скидка. Без этого блока агент не знает ни о скидке, ни о
+    # ценах с ней — до появления тестовых когорт письмо о продлении про промо
+    # не упоминало вообще, даже когда оно у человека было.
+    promo_addon = ""
+    try:
+        from bot.services.promo_campaign_service import build_promo_agent_addon
+
+        promo_addon = await build_promo_agent_addon(user_storage, user_id)
+    except Exception as e:
+        logger.warning("renewal promo addon uid=%s: %s", user_id, e)
 
     anchors_block = ""
     if branch in ("silent", "peeking", None):
@@ -147,6 +166,10 @@ async def generate_renewal_outreach_html(
     )
     if anchors_block:
         user_block += f"{anchors_block}\n\n"
+    if promo_addon:
+        user_block += f"{promo_addon}\n\n"
+    if variant_addon:
+        user_block += f"{variant_addon}\n\n"
     user_block += (
         f"ЭТАЛОН (тон и структура, не копировать дословно):\n"
         f"{fallback}\n\n"
@@ -156,7 +179,14 @@ async def generate_renewal_outreach_html(
 
     verification_context = "\n\n".join(
         p
-        for p in (profile_addon, schedule_addon, retrieved, fallback, anchors_block)
+        for p in (
+            profile_addon,
+            schedule_addon,
+            retrieved,
+            fallback,
+            anchors_block,
+            promo_addon,
+        )
         if p
     )
     allowed_links = list(

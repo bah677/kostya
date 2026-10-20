@@ -159,6 +159,19 @@ class SubscriptionReminderFeature(BaseFeature):
                 ],
                 [payment_cta_button(sub_txt.BTN_PAYMENT_EXTEND)],
             ]
+        elif kind == "step299_and_extend":
+            # Тестовая когорта п4: короткий шаг вместо полного месяца.
+            # Колбэк — существующий обработчик промо-тарифов в payment.py,
+            # он резолвит хвост в тип тарифа promo_test2weeks.
+            rows = [
+                [
+                    InlineKeyboardButton(
+                        text=sub_txt.BTN_GIFT_EXP_STEP_299,
+                        callback_data="payment_start_promo_test2weeks_benefit1",
+                    )
+                ],
+                [payment_cta_button(sub_txt.BTN_PAYMENT_EXTEND)],
+            ]
         elif kind == "return_club":
             rows = [[payment_cta_button(sub_txt.BTN_RETURN_CLUB)]]
         elif kind == "churn_reply":
@@ -187,6 +200,7 @@ class SubscriptionReminderFeature(BaseFeature):
         if config.wish_board_active and kind in (
             "payment_extend",
             "affiliate_and_extend",
+            "step299_and_extend",
             "return_club",
         ):
             from bot.texts import ru_user_menu as menu_txt
@@ -237,6 +251,7 @@ class SubscriptionReminderFeature(BaseFeature):
         license_expires_at: Any,
         profile: Optional[Dict[str, Any]] = None,
         branch: Optional[str] = None,
+        variant: Optional[str] = None,
     ) -> str:
         days_before = int(reminder["days_before"])
         if config.MEMBER_RENEWAL_AI_ENABLED and self._llm_client:
@@ -255,6 +270,7 @@ class SubscriptionReminderFeature(BaseFeature):
                     license_expires_at=license_expires_at,
                     profile=profile,
                     branch=branch,
+                    variant=variant,
                 )
                 await self.user_storage.set_member_renewal_state(
                     uid, f"reminder_{days_before}d"
@@ -393,6 +409,20 @@ class SubscriptionReminderFeature(BaseFeature):
                         profile, origin=lic_origin, msgs_30d=msgs
                     )
 
+                    # Тестовые когорты удержания подарочной волны.
+                    # Расписание и slug не трогаем — только содержание письма,
+                    # иначе сломается идемпотентность рассылки.
+                    variant = await self.user_storage.get_gift_retention_variant(uid)
+                    reminder_for_user = reminder
+                    if (
+                        variant == "p2_sell5d"
+                        and days_before == 5
+                        and lic_origin == "gift"
+                    ):
+                        reminder_for_user = dict(reminder)
+                        reminder_for_user["text"] = sub_txt.GIFT_EXP_TEXT_5D_SELL
+                        reminder_for_user["keyboard"] = "payment_extend"
+
                     try:
                         await self.user_storage.log_interaction(
                             user_id=uid,
@@ -404,6 +434,7 @@ class SubscriptionReminderFeature(BaseFeature):
                                 "group_msgs_30d": msgs,
                                 "days_before": days_before,
                                 "slug": slug,
+                                "gift_retention_variant": variant or "none",
                             },
                             source="subscription_reminder",
                             outcome="success",
@@ -414,15 +445,21 @@ class SubscriptionReminderFeature(BaseFeature):
                     body = await self._reminder_body(
                         uid=uid,
                         first_name=first_name,
-                        reminder=reminder,
+                        reminder=reminder_for_user,
                         license_expires_at=lic.get("expires_at"),
                         profile=profile_enriched,
                         branch=branch,
+                        variant=variant,
                     )
 
                     kb_kind = reminder_keyboard_for_branch(branch)
-                    if branch != "silent" and reminder.get("keyboard") == "affiliate_and_extend":
+                    if (
+                        branch != "silent"
+                        and reminder_for_user.get("keyboard") == "affiliate_and_extend"
+                    ):
                         kb_kind = "affiliate_and_extend"
+                    if variant == "p4_step299" and lic_origin == "gift":
+                        kb_kind = "step299_and_extend"
                     kb = self._keyboard_reminder(kb_kind)
                     ok = await self._send_html(uid, body, kb)
                     if ok:
