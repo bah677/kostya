@@ -1,7 +1,13 @@
-/* Студия молитв — отдельная страница. Вход общий с контент-заводом:
-   кука ставится там, здесь только проверяется. */
+/* Киностудия — ролики для YouTube. Вход общий с контент-заводом: кука
+   ставится там, здесь только проверяется.
+
+   Правило страницы: ничего не сохраняется молча. Любое действие, которое
+   меняет то, что выйдет на канал, сначала показывает «было → стало» и
+   ждёт подтверждения. Ошибка здесь видна только завтра утром, когда ролик
+   уже опубликован, поэтому лишний вопрос дешевле неверной правки. */
 
 const $ = (sel, root = document) => root.querySelector(sel);
+const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 
 function el(tag, cls, text) {
   const node = document.createElement(tag);
@@ -31,6 +37,103 @@ async function api(path, options = {}) {
   if (!res.ok) throw new Error(data.detail || data.error || `Ошибка ${res.status}`);
   return data;
 }
+
+const nf = (v) => Number(v || 0).toLocaleString("ru-RU");
+
+function plural(n, one, few, many) {
+  const a = Math.abs(Number(n) || 0);
+  if (a % 10 === 1 && a % 100 !== 11) return one;
+  if (a % 10 >= 2 && a % 10 <= 4 && !(a % 100 >= 12 && a % 100 <= 14)) return few;
+  return many;
+}
+
+function signed(v) {
+  const n = Number(v || 0);
+  return (n > 0 ? "+" : n < 0 ? "−" : "") + nf(Math.abs(n));
+}
+
+function short(text, max = 90) {
+  const t = String(text ?? "").trim();
+  if (!t) return "пусто";
+  return t.length > max ? t.slice(0, max - 1) + "…" : t;
+}
+
+/* Описание героини — абзац на четыреста знаков, и правка в нём обычно
+   в одном месте. Обрезка по первым девяноста знакам показывала бы два
+   одинаковых огрызка: «было» и «стало» неотличимы. Поэтому для длинных
+   текстов показываем окно вокруг того, что действительно поменялось. */
+function diffPair(before, after, max = 90, ctx = 28) {
+  const a = String(before ?? "").trim(), b = String(after ?? "").trim();
+  if (a.length <= max && b.length <= max) return [short(a, max), short(b, max)];
+  let p = 0;
+  const n = Math.min(a.length, b.length);
+  while (p < n && a[p] === b[p]) p += 1;
+  let s = 0;
+  while (s < a.length - p && s < b.length - p && a[a.length - 1 - s] === b[b.length - 1 - s]) s += 1;
+  const start = Math.max(0, p - ctx);
+  const cut = (t, end) => {
+    const head = start > 0 ? "…" : "";
+    const stop = Math.min(t.length, end + ctx);
+    return head + t.slice(start, stop) + (stop < t.length ? "…" : "");
+  };
+  return [
+    short(cut(a, a.length - s), max + 60) || "пусто",
+    short(cut(b, b.length - s), max + 60) || "пусто",
+  ];
+}
+
+/* ── подтверждение ───────────────────────────────────────────────────── */
+
+let _confirmResolve = null;
+
+function closeConfirm(answer) {
+  const dlg = $("#confirm-dialog");
+  if (dlg.open) dlg.close();
+  const fn = _confirmResolve;
+  _confirmResolve = null;
+  if (fn) fn(answer);
+}
+
+/* rows: [{label, before, after}] либо [{label, note}] для простых действий. */
+function askConfirm({ kicker = "Подтверждение", title, lead = "", rows = [], okText = "Применить", danger = false }) {
+  const body = $("#confirm-body");
+  body.textContent = "";
+  rows.forEach((r) => {
+    const row = el("div", "cdiff");
+    row.append(el("div", "cdiff-label", r.label));
+    if (r.note !== undefined) {
+      row.append(el("div", "cdiff-note", r.note));
+    } else {
+      const [was, now] = diffPair(r.before, r.after);
+      const pair = el("div", "cdiff-pair");
+      pair.append(el("span", "cdiff-was", was));
+      pair.append(el("span", "cdiff-arrow", "→"));
+      pair.append(el("span", "cdiff-now", now));
+      row.append(pair);
+    }
+    body.append(row);
+  });
+  $("#confirm-kicker").textContent = kicker;
+  $("#confirm-title").textContent = title;
+  $("#confirm-lead").textContent = lead;
+  $("#confirm-lead").hidden = !lead;
+  const ok = $("#confirm-yes");
+  ok.textContent = okText;
+  ok.classList.toggle("danger", !!danger);
+  const dlg = $("#confirm-dialog");
+  dlg.showModal();
+  ok.focus();
+  return new Promise((resolve) => {
+    _confirmResolve = resolve;
+  });
+}
+
+$("#confirm-yes")?.addEventListener("click", () => closeConfirm(true));
+$("#confirm-no")?.addEventListener("click", () => closeConfirm(false));
+$("#confirm-dialog")?.addEventListener("cancel", (e) => {
+  e.preventDefault();
+  closeConfirm(false);
+});
 
 /* ── тема ────────────────────────────────────────────────────────────── */
 /* Ключ и цикл те же, что на заводе: выбор переносится между страницами. */
@@ -83,9 +186,73 @@ $("#btn-theme")?.addEventListener("click", () => {
   toast(THEME_LABEL[next]);
 });
 
+/* ── разделы ─────────────────────────────────────────────────────────── */
+/* Четыре раздела на одной странице тонули друг в друге: настройки,
+   которые трогают каждый день, лежали вровень с ключами, которые трогают
+   раз в неделю. Теперь видно по одному. */
+
+const SECTION_KEY = "studio.section";
+
+function showSection(name) {
+  $$("#studio-nav button").forEach((b) => b.classList.toggle("active", b.dataset.sec === name));
+  $$(".pane").forEach((p) => { p.hidden = p.dataset.pane !== name; });
+  try {
+    localStorage.setItem(SECTION_KEY, name);
+  } catch (err) {
+    /* приватный режим */
+  }
+}
+
+$("#studio-nav")?.addEventListener("click", (e) => {
+  const btn = e.target.closest("button[data-sec]");
+  if (btn) showSection(btn.dataset.sec);
+});
+
+function markSectionDirty(name, dirty) {
+  const btn = $(`#studio-nav button[data-sec="${name}"]`);
+  if (btn) btn.classList.toggle("dirty", !!dirty);
+}
+
+function restoreSection() {
+  let saved = "night";
+  try {
+    saved = localStorage.getItem(SECTION_KEY) || "night";
+  } catch (err) {
+    /* приватный режим */
+  }
+  showSection($(`#studio-nav button[data-sec="${saved}"]`) ? saved : "night");
+}
+
+/* ── что выйдет ночью ────────────────────────────────────────────────── */
+
+function renderPlan(plan) {
+  if (!plan) return;
+  $("#plan-headline").textContent = plan.headline;
+  const box = $("#plan-channels");
+  box.textContent = "";
+  (plan.channels || []).forEach((c) => {
+    const card = el("div", "plan-chan" + (c.idle ? " idle" : ""));
+    card.append(el("div", "plan-chan-title", c.title));
+    card.append(el("div", "plan-chan-sum", c.summary));
+    const when = [];
+    if (c.premieres) when.push(`молитвы ${c.premieres}`);
+    if (c.talk_premieres) when.push(`разговорные ${c.talk_premieres}`);
+    if (when.length) card.append(el("div", "plan-chan-when", `${when.join(" · ")} ${c.tz}`));
+    box.append(card);
+  });
+  if (plan.wide) {
+    const card = el("div", "plan-chan");
+    card.append(el("div", "plan-chan-title", "Горизонтальные 16:9"));
+    card.append(el("div", "plan-chan-sum", `${plan.wide} за ночь`));
+    box.append(card);
+  }
+}
+
+$("#btn-plan-reload")?.addEventListener("click", () => loadGenSettings());
+
 /* ── ключи YouTube ───────────────────────────────────────────────────── */
 
-let _loading = false;
+let _keysLoading = false;
 
 function keyCard(k) {
   const ok = k.alive && !k.error;
@@ -98,9 +265,8 @@ function keyCard(k) {
 
   if (k.channel_title) card.append(el("div", "muted small", k.channel_title));
   if (ok && k.subscribers !== null && k.subscribers !== undefined) {
-    const n = (v) => Number(v || 0).toLocaleString("ru-RU");
     card.append(el("div", "yt-key-stats",
-      `${n(k.subscribers)} подписчиков · ${n(k.videos)} роликов · ${n(k.views)} просмотров`));
+      `${nf(k.subscribers)} подписчиков · ${nf(k.videos)} роликов · ${nf(k.views)} просмотров`));
   }
   if (k.refreshed_human) card.append(el("div", "muted small", `ключ обновлён ${k.refreshed_human}`));
   if (k.error) card.append(el("div", "yt-key-error small", k.error));
@@ -114,12 +280,13 @@ function keyCard(k) {
 
 async function loadKeys() {
   const box = $("#yt-keys");
-  if (!box || _loading) return;
-  _loading = true;
+  if (!box || _keysLoading) return;
+  _keysLoading = true;
   box.textContent = "Проверяю ключи…";
   try {
     const data = await api("/api/youtube/keys");
     box.textContent = "";
+    box.classList.remove("muted");
     const keys = data.keys || [];
     if (!keys.length) {
       box.textContent = "Каналы не настроены.";
@@ -129,16 +296,18 @@ async function loadKeys() {
   } catch (e) {
     if (e.message !== "auth") box.textContent = `Не удалось проверить: ${e.message}`;
   } finally {
-    _loading = false;
+    _keysLoading = false;
   }
 }
 
-let _lang = "";
+let _keyLang = "";
+let _keyLabel = "";
 
 async function openKeyDialog(k) {
-  _lang = k.lang;
+  _keyLang = k.lang;
+  _keyLabel = `${k.label}${k.channel_title ? ` · ${k.channel_title}` : ""}`;
   const dlg = $("#ytkey-dialog");
-  $("#ytkey-title").textContent = k.label + (k.channel_title ? ` · ${k.channel_title}` : "");
+  $("#ytkey-title").textContent = _keyLabel;
   $("#ytkey-hint").textContent = "Готовлю ссылку…";
   $("#ytkey-code").value = "";
   const link = $("#ytkey-url");
@@ -159,11 +328,20 @@ $("#ytkey-save")?.addEventListener("click", async () => {
     toast("Вставьте адрес из браузера", "bad");
     return;
   }
+  const go = await askConfirm({
+    kicker: "Перевыпуск ключа",
+    title: "Заменить ключ канала?",
+    lead: "Старый токен перестанет работать сразу после замены.",
+    rows: [{ label: _keyLabel, note: "выдаём новый доступ по присланному коду" }],
+    okText: "Заменить ключ",
+    danger: true,
+  });
+  if (!go) return;
   const btn = $("#ytkey-save");
   btn.disabled = true;
   btn.textContent = "Сохраняю…";
   try {
-    const d = await api(`/api/youtube/keys/${_lang}/exchange`, {
+    const d = await api(`/api/youtube/keys/${_keyLang}/exchange`, {
       method: "POST",
       body: JSON.stringify({ code: raw }),
     });
@@ -180,11 +358,15 @@ $("#ytkey-save")?.addEventListener("click", async () => {
 
 $("#btn-keys-refresh")?.addEventListener("click", () => loadKeys());
 
-/* ── настройки генерации ─────────────────────────────────────────────── */
+/* ── ночной прогон ───────────────────────────────────────────────────── */
 /* Правки живут в файле рядом с данными, langs.setting читает его первым —
    поэтому сохранение действует на ближайший прогон без перезапуска. */
 
 let _genFields = [];
+
+function effectiveOf(f, value) {
+  return (value || "").trim() || f.env || f.default || "—";
+}
 
 function genInput(f) {
   const wrap = el("div", "gen-field");
@@ -213,36 +395,68 @@ function genInput(f) {
   input.dataset.key = f.key;
   input.addEventListener("input", () => {
     wrap.classList.toggle("changed", (input.value || "") !== (f.value || ""));
+    markGenDirty();
   });
+  input.addEventListener("change", markGenDirty);
   wrap.append(input);
 
   if (f.hint) wrap.append(el("div", "gen-hint", f.hint));
-  const envText = f.env ? `в .env: ${f.env}` : "в .env не задано";
-  wrap.append(el("div", "gen-env", `${envText} · сейчас действует: ${f.effective || "—"}`));
+  wrap.append(el("div", "gen-env", `сейчас действует: ${effectiveOf(f, f.value)}`));
   return wrap;
 }
 
-function renderGenSettings(fields) {
-  _genFields = fields;
+function renderGenSettings(data) {
+  _genFields = data.fields || [];
+  renderPlan(data.plan);
+  const order = data.groups || [];
   const box = $("#gen-settings");
   box.textContent = "";
-  const groups = [];
-  fields.forEach((f) => {
-    let g = groups.find((x) => x.name === f.group);
-    if (!g) {
-      g = { name: f.group, items: [] };
-      groups.push(g);
-    }
-    g.items.push(f);
+  box.classList.remove("muted");
+  const names = [];
+  _genFields.forEach((f) => { if (!names.includes(f.group)) names.push(f.group); });
+  names.sort((a, b) => {
+    const ia = order.indexOf(a), ib = order.indexOf(b);
+    return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
   });
-  groups.forEach((g) => {
+  names.forEach((name) => {
     const node = el("div", "gen-group");
-    node.append(el("h3", null, g.name));
+    node.append(el("h3", null, name));
     const grid = el("div", "gen-fields");
-    g.items.forEach((f) => grid.append(genInput(f)));
+    _genFields.filter((f) => f.group === name).forEach((f) => grid.append(genInput(f)));
     node.append(grid);
     box.append(node);
   });
+  markGenDirty();
+}
+
+function genValues() {
+  const out = {};
+  $$("#gen-settings [data-key]").forEach((n) => { out[n.dataset.key] = n.value || ""; });
+  return out;
+}
+
+function genDiff() {
+  const values = genValues();
+  const rows = [];
+  _genFields.forEach((f) => {
+    const now = values[f.key] ?? "";
+    if ((now || "") === (f.value || "")) return;
+    rows.push({
+      label: `${f.group} · ${f.title}`,
+      before: effectiveOf(f, f.value),
+      after: effectiveOf(f, now),
+    });
+  });
+  return rows;
+}
+
+function markGenDirty() {
+  const n = genDiff().length;
+  const btn = $("#btn-gen-save");
+  if (btn) btn.disabled = n === 0;
+  const note = $("#gen-dirty");
+  if (note) note.textContent = n ? `${n} ${plural(n, "правка", "правки", "правок")}` : "";
+  markSectionDirty("night", n);
 }
 
 async function loadGenSettings() {
@@ -250,36 +464,43 @@ async function loadGenSettings() {
   if (!box) return;
   box.textContent = "Загружаю…";
   try {
-    const d = await api("/api/gen-settings");
-    renderGenSettings(d.fields || []);
+    renderGenSettings(await api("/api/gen-settings"));
   } catch (e) {
     if (e.message !== "auth") box.textContent = `Не удалось загрузить: ${e.message}`;
   }
 }
 
 $("#btn-gen-save")?.addEventListener("click", async () => {
-  const values = {};
-  document.querySelectorAll("#gen-settings [data-key]").forEach((node) => {
-    values[node.dataset.key] = node.value || "";
+  const rows = genDiff();
+  if (!rows.length) {
+    toast("Нечего сохранять");
+    return;
+  }
+  const go = await askConfirm({
+    kicker: "Ночной прогон",
+    title: `Применить ${rows.length} ${plural(rows.length, "правку", "правки", "правок")}?`,
+    lead: "Подействует на ближайший ночной прогон.",
+    rows,
+    okText: "Сохранить",
   });
+  if (!go) return;
   const btn = $("#btn-gen-save");
   btn.disabled = true;
   btn.textContent = "Сохраняю…";
   try {
-    const d = await api("/api/gen-settings", {
+    renderGenSettings(await api("/api/gen-settings", {
       method: "PUT",
-      body: JSON.stringify({ values }),
-    });
-    renderGenSettings(d.fields || []);
+      body: JSON.stringify({ values: genValues() }),
+    }));
     const saved = $("#gen-saved");
     saved.hidden = false;
     setTimeout(() => { saved.hidden = true; }, 2500);
-    toast("Настройки сохранены — подхватятся ближайшим прогоном");
+    toast("Сохранено — подхватится ближайшим прогоном");
   } catch (e) {
     toast(e.message, "bad");
   } finally {
-    btn.disabled = false;
     btn.textContent = "Сохранить";
+    markGenDirty();
   }
 });
 
@@ -289,13 +510,6 @@ $("#btn-gen-reload")?.addEventListener("click", () => loadGenSettings());
 /* Цифры из ночных срезов: YouTube отдаёт только накопительные итоги, и
    прирост виден лишь как разница двух срезов. В API отсюда не ходим —
    страница открывается сразу и не тратит квоту. */
-
-const nf = (v) => Number(v || 0).toLocaleString("ru-RU");
-
-function signed(v) {
-  const n = Number(v || 0);
-  return (n > 0 ? "+" : n < 0 ? "−" : "") + nf(Math.abs(n));
-}
 
 function deltaNote(d, key) {
   if (!d) return "";
@@ -347,13 +561,11 @@ function sparkline(series) {
 
 function videoRow(v) {
   const row = el("div", "vid");
-  const head = el("div", "vid-head");
   const link = el("a", "vid-title", v.title || "без названия");
   link.href = `https://www.youtube.com/watch?v=${v.id}`;
   link.target = "_blank";
   link.rel = "noopener noreferrer";
-  head.append(link);
-  row.append(head);
+  row.append(link);
   const bits = [`${nf(v.views)} просмотров`];
   if (v.views_day !== null && v.views_day !== undefined) bits.push(`${signed(v.views_day)} с прошлого среза`);
   if (v.likes) bits.push(`${nf(v.likes)} лайков`);
@@ -410,6 +622,7 @@ function channelBlock(c) {
 function renderStats(channels) {
   const box = $("#yt-stats");
   box.textContent = "";
+  box.classList.remove("muted");
   if (!channels.length) {
     box.textContent = "Каналы не настроены.";
     return;
@@ -422,14 +635,21 @@ async function loadStats() {
   if (!box) return;
   box.textContent = "Загружаю…";
   try {
-    const d = await api("/api/youtube/stats");
-    renderStats(d.channels || []);
+    renderStats((await api("/api/youtube/stats")).channels || []);
   } catch (e) {
     if (e.message !== "auth") box.textContent = `Не удалось загрузить: ${e.message}`;
   }
 }
 
 $("#btn-stats-refresh")?.addEventListener("click", async (ev) => {
+  const go = await askConfirm({
+    kicker: "Статистика",
+    title: "Снять свежий срез?",
+    lead: "Сходим в YouTube по каждому каналу и перепишем сегодняшний срез.",
+    rows: [{ label: "Сегодняшний срез", note: "заменится свежими цифрами" }],
+    okText: "Снять срез",
+  });
+  if (!go) return;
   const btn = ev.currentTarget;
   btn.disabled = true;
   btn.textContent = "Снимаю…";
@@ -458,22 +678,24 @@ function dnaField(title, hint, f) {
   const wrap = el("div", "dna-field");
   const head = el("div", "dna-head");
   head.append(el("label", null, title));
+  const area = el("textarea", "field");
   if (f.overridden) {
     const back = el("button", "link small", "вернуть как в коде");
     back.type = "button";
     back.addEventListener("click", () => {
       area.value = f.default;
       wrap.classList.add("changed");
+      markCastDirty();
     });
     head.append(back);
   }
   wrap.append(head);
-  const area = el("textarea", "field");
   area.rows = 4;
   area.value = f.value || "";
   area.dataset.dna = f.key;
   area.addEventListener("input", () => {
     wrap.classList.toggle("changed", area.value !== (f.value || ""));
+    markCastDirty();
   });
   wrap.append(area);
   if (hint) wrap.append(el("div", "gen-hint", hint));
@@ -505,8 +727,8 @@ function sceneCard(sc) {
   }
   const draw = el("button", "btn small", "Дорисовать");
   draw.type = "button";
-  draw.title = `дубль №${sc.next_variant}, примерно $${(_cast?.price ?? 0.04).toFixed(2)}`;
-  draw.addEventListener("click", () => drawFrame(sc.key, draw));
+  draw.title = `дубль №${sc.next_variant}`;
+  draw.addEventListener("click", () => drawFrame(sc.key, draw, sc.next_variant));
   shelf.append(draw);
   card.append(shelf);
 
@@ -529,7 +751,7 @@ function sceneCard(sc) {
   const kill = el("button", "icon-btn", "×");
   kill.type = "button";
   kill.title = "убрать кадр из списка";
-  kill.addEventListener("click", () => card.remove());
+  kill.addEventListener("click", () => { card.remove(); markCastDirty(); });
   top.append(kill);
   fields.append(top);
 
@@ -553,6 +775,10 @@ function sceneCard(sc) {
   fields.append(topics);
 
   card.append(fields);
+  $$("[data-f]", card).forEach((n) => {
+    n.addEventListener("input", markCastDirty);
+    n.addEventListener("change", markCastDirty);
+  });
   return card;
 }
 
@@ -569,30 +795,73 @@ function renderCast(d) {
   box.textContent = "";
   d.scenes.forEach((sc) => box.append(sceneCard(sc)));
 
-  const note = $("#cast-bank-note");
   const price = Number(d.price || 0).toFixed(2);
-  note.textContent =
-    `${d.frames_total} кадров в банке · ${d.model}, примерно $${price} за кадр` +
-    (d.scenes_overridden ? " · список кадров правлен из студии" : "");
+  $("#cast-bank-note").textContent =
+    `${d.frames_total} в банке · ${d.model}, примерно $${price} за кадр` +
+    (d.scenes_overridden ? " · список правлен из студии" : "");
+  markCastDirty();
 }
 
 function collectCast() {
   const out = { scenes: [] };
-  document.querySelectorAll("#cast-dna [data-dna]").forEach((n) => {
-    out[n.dataset.dna] = n.value || "";
-  });
-  document.querySelectorAll("#cast-scenes .scene").forEach((card) => {
-    const get = (f) => (card.querySelector(`[data-f="${f}"]`)?.value || "").trim();
-    const topics = get("topics").split(",").map((t) => t.trim()).filter(Boolean);
+  $$("#cast-dna [data-dna]").forEach((n) => { out[n.dataset.dna] = n.value || ""; });
+  $$("#cast-scenes .scene").forEach((card) => {
+    const get = (f) => ($("[data-f=\"" + f + "\"]", card)?.value || "").trim();
     out.scenes.push({
       key: get("key"),
       who: get("who"),
       shot: get("shot"),
       prompt: get("prompt"),
-      topics,
+      topics: get("topics").split(",").map((t) => t.trim()).filter(Boolean),
     });
   });
   return out;
+}
+
+function castDiff() {
+  if (!_cast) return [];
+  const now = collectCast();
+  const rows = [];
+  [["style", "Общая гамма"], ["woman", "Героиня"], ["jesus", "Иисус"]].forEach(([k, label]) => {
+    if ((now[k] || "") !== (_cast[k].value || "")) {
+      rows.push({ label, before: _cast[k].value, after: now[k] });
+    }
+  });
+  const was = new Map(_cast.scenes.map((s) => [s.key, s]));
+  const seen = new Set();
+  now.scenes.forEach((s) => {
+    seen.add(s.key);
+    const old = was.get(s.key);
+    if (!old) {
+      rows.push({ label: `Кадр ${s.key || "без ключа"}`, note: "новый кадр" });
+      return;
+    }
+    [["who", "кто в кадре"], ["shot", "ракурс"], ["prompt", "что происходит"]].forEach(([f, name]) => {
+      if ((s[f] || "") !== (old[f] || "")) {
+        rows.push({ label: `${s.key} · ${name}`, before: old[f], after: s[f] });
+      }
+    });
+    const a = (old.topics || []).join(", "), b = (s.topics || []).join(", ");
+    if (a !== b) rows.push({ label: `${s.key} · темы`, before: a, after: b });
+  });
+  _cast.scenes.forEach((s) => {
+    if (!seen.has(s.key)) {
+      rows.push({
+        label: `Кадр ${s.key}`,
+        note: `убран из списка; ${s.frames.length ? "нарисованные кадры останутся в банке" : "кадров в банке не было"}`,
+      });
+    }
+  });
+  return rows;
+}
+
+function markCastDirty() {
+  const n = castDiff().length;
+  const btn = $("#btn-cast-save");
+  if (btn) btn.disabled = n === 0;
+  const note = $("#cast-dirty");
+  if (note) note.textContent = n ? `${n} ${plural(n, "изменение", "изменения", "изменений")}` : "";
+  markSectionDirty("cast", n);
 }
 
 async function loadCast() {
@@ -606,9 +875,19 @@ async function loadCast() {
   }
 }
 
-async function drawFrame(key, btn) {
+async function drawFrame(key, btn, variant) {
   const price = Number(_cast?.price || 0.04).toFixed(2);
-  if (!confirm(`Дорисовать кадр «${key}»? Это примерно $${price} и до полутора минут.`)) return;
+  const go = await askConfirm({
+    kicker: "Банк кадров",
+    title: "Дорисовать кадр?",
+    lead: "Уже нарисованное не трогаем — добавится новый дубль.",
+    rows: [
+      { label: "Кадр", note: `${key}, дубль №${variant}` },
+      { label: "Стоимость", note: `примерно $${price}, до полутора минут` },
+    ],
+    okText: "Дорисовать",
+  });
+  if (!go) return;
   btn.disabled = true;
   btn.textContent = "Рисую…";
   try {
@@ -626,6 +905,23 @@ async function drawFrame(key, btn) {
 }
 
 $("#btn-cast-save")?.addEventListener("click", async () => {
+  const rows = castDiff();
+  if (!rows.length) {
+    toast("Нечего сохранять");
+    return;
+  }
+  const touchesDna = rows.some((r) => ["Общая гамма", "Героиня", "Иисус"].includes(r.label));
+  const go = await askConfirm({
+    kicker: "Герои и сцены",
+    title: `Применить ${rows.length} ${plural(rows.length, "изменение", "изменения", "изменений")}?`,
+    lead: touchesDna
+      ? "Описание героя уходит в каждый новый кадр: нарисованные раньше останутся прежними, и банк станет разнородным."
+      : "Подействует на ближайший ночной прогон.",
+    rows,
+    okText: "Сохранить",
+    danger: touchesDna,
+  });
+  if (!go) return;
   const btn = $("#btn-cast-save");
   btn.disabled = true;
   btn.textContent = "Сохраняю…";
@@ -638,8 +934,8 @@ $("#btn-cast-save")?.addEventListener("click", async () => {
   } catch (e) {
     toast(e.message, "bad");
   } finally {
-    btn.disabled = false;
     btn.textContent = "Сохранить";
+    markCastDirty();
   }
 });
 
@@ -652,21 +948,34 @@ $("#btn-cast-add")?.addEventListener("click", () => {
     frames: [], next_variant: 1,
   });
   $("#cast-scenes").append(card);
-  card.querySelector('[data-f="key"]').focus();
+  $('[data-f="key"]', card).focus();
+  markCastDirty();
 });
+
+/* Несохранённое не должно теряться молча: закрыть вкладку с правкой,
+   которую не применили, — та же потеря, что сохранить лишнее. */
+if (typeof window !== "undefined") {
+  window.addEventListener("beforeunload", (e) => {
+    if (genDiff().length || castDiff().length) {
+      e.preventDefault();
+      e.returnValue = "";
+    }
+  });
+}
 
 /* ── старт ───────────────────────────────────────────────────────────── */
 
 (async function boot() {
   restoreTheme();
+  restoreSection();
   try {
     await api("/api/me");
     $("#app").hidden = false;
     $("#login").hidden = true;
-    loadKeys();
     loadGenSettings();
-    loadStats();
     loadCast();
+    loadStats();
+    loadKeys();
   } catch (e) {
     if (e.message !== "auth") {
       $("#app").hidden = false;
