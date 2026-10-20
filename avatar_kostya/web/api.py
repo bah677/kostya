@@ -756,6 +756,11 @@ def create_app(bot_app) -> FastAPI:
     async def index():
         return FileResponse(STATIC_DIR / "index.html")
 
+    @app.get("/video")
+    async def video_studio():
+        """Студия молитв — отдельная страница, вход общий с заводом."""
+        return FileResponse(STATIC_DIR / "video.html")
+
     @app.get("/healthz")
     async def healthz():
         return {"ok": True}
