@@ -141,6 +141,38 @@ def _parse(raw: str) -> List[Dict[str, str]]:
     return out
 
 
+_SYSTEM_CLEAN = """
+Тебе дают нумерованный список тем для коротких молитв. Часть из них — одно
+и то же разными словами: «не замечаю хорошего», «не умею благодарить» и
+«не хватает благодарности» это одна тема.
+
+Найди такие группы и в каждой оставь ОДНУ — ту, что звучит живее и ближе к
+тому, как человек сказал бы о себе. Остальные номера из группы — в отброс.
+
+Темы, которые просто близки по области, но описывают разные положения
+(«долги и кредиты» и «потеря работы»), не трогай: это разные молитвы.
+
+Верни строго JSON без пояснений: {"drop": [номера, которые убрать]}
+""".strip()
+
+
+async def _clean_duplicates(rows: List[Dict[str, str]], complete_fn) -> List[Dict[str, str]]:
+    """Убирает смысловые повторы: похожесть по словам их не ловит."""
+    if len(rows) < 12:
+        return rows
+    listed = "\n".join(f"{i}. {r['trend']}" for i, r in enumerate(rows, 1))
+    raw, _ = await complete_fn(_SYSTEM_CLEAN, listed, temperature=0.2, max_tokens=2000)
+    text = re.sub(r"^```(?:json)?\s*|\s*```$", "", (raw or "").strip())
+    try:
+        drop = set(int(x) for x in (json.loads(text) or {}).get("drop", []))
+    except Exception as e:
+        logger.warning("вычистка повторов не удалась: %s", e)
+        return rows
+    kept = [r for i, r in enumerate(rows, 1) if i not in drop]
+    print(f"смысловых повторов убрано: {len(rows) - len(kept)}")
+    return kept
+
+
 async def main() -> int:
     ap = argparse.ArgumentParser(description="Пул тем из записей клуба")
     ap.add_argument("--lang", default="ru")
@@ -150,6 +182,8 @@ async def main() -> int:
     ap.add_argument("--batch", type=int, default=4, help="кусков в одном запросе")
     ap.add_argument("--seed", type=int, default=7)
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--clean-only", action="store_true",
+                    help="только вычистить повторы в готовом файле")
     args = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(message)s")
 
@@ -181,6 +215,13 @@ async def main() -> int:
                   "el duelo y la pérdida", "la fe y la duda"]
         users = [f"Tanda sobre: {r}. Evita repetir temas de otras tandas." for r in rounds]
 
+    if args.clean_only:
+        kept = await _clean_duplicates(kept, deepseek_complete)
+        dest = theme_pool_path(lang)
+        dest.write_text(json.dumps(kept, ensure_ascii=False, indent=2), encoding="utf-8")
+        print(f"сохранено: {len(kept)} тем → {dest}")
+        return 0
+
     if args.dry_run:
         print(f"запросов будет: {len(users)}")
         print("\n--- первый запрос ---\n")
@@ -204,6 +245,7 @@ async def main() -> int:
             added += 1
         print(f"  [{i}/{len(users)}] +{added} (всего {len(kept)})")
 
+    kept = await _clean_duplicates(kept, deepseek_complete)
     dest = theme_pool_path(lang)
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text(json.dumps(kept, ensure_ascii=False, indent=2), encoding="utf-8")
