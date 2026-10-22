@@ -145,7 +145,9 @@ async def main() -> int:
     ap = argparse.ArgumentParser(description="Пул тем из записей клуба")
     ap.add_argument("--lang", default="ru")
     ap.add_argument("--target", type=int, default=120, help="сколько тем нужно")
-    ap.add_argument("--batch", type=int, default=10, help="кусков в одном запросе")
+    # По десять кусков модель упиралась в лимит ответа и возвращала пустую
+    # строку с finish=length. По четыре куска по 1200 знаков отдаёт восемь тем.
+    ap.add_argument("--batch", type=int, default=4, help="кусков в одном запросе")
     ap.add_argument("--seed", type=int, default=7)
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
@@ -166,10 +168,10 @@ async def main() -> int:
     print(f"было в файле: {len(kept)}")
 
     if lang == "ru":
-        texts = _chunks_from_index(limit=args.batch * 24, seed=args.seed)
+        texts = _chunks_from_index(limit=args.batch * 60, seed=args.seed)
         print(f"кусков расшифровок: {len(texts)}")
         batches = [texts[i:i + args.batch] for i in range(0, len(texts), args.batch)]
-        users = ["\n\n---\n\n".join(t[:1800] for t in b) for b in batches]
+        users = ["\n\n---\n\n".join(t[:1200] for t in b) for b in batches]
     else:
         # Для испанского своих записей нет — просим модель держаться тем же
         # регистром житейских бед, по кругам: быт, семья, деньги, здоровье.
@@ -189,7 +191,7 @@ async def main() -> int:
         if len(kept) >= args.target:
             break
         try:
-            raw, _ = await deepseek_complete(system, user, temperature=0.7, max_tokens=1600)
+            raw, _ = await deepseek_complete(system, user, temperature=0.7, max_tokens=3000)
         except Exception as e:
             print(f"  [{i}/{len(users)}] ошибка: {e}", file=sys.stderr)
             continue
