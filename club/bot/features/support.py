@@ -477,7 +477,13 @@ class SupportFeature(BaseFeature):
                         text="🔄 Заново",
                         callback_data=f"{_CB_DRAFT_PREFIX}rg:{tn}",
                     ),
-                ]
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="🔒 Закрыть без ответа",
+                        callback_data=f"{_CB_DRAFT_PREFIX}cl:{tn}",
+                    ),
+                ],
             ]
         )
 
@@ -488,8 +494,95 @@ class SupportFeature(BaseFeature):
             f"{esc_draft}\n\n"
             f"━━━━━━━━━━━━━━━━━━━━━\n"
             f"· <b>✅ Отправить</b> — как есть\n"
-            f"· <b>Reply на тикет выше</b> — полностью свой текст"
+            f"· <b>Reply сюда: /fix что поправить</b> — переписать черновик\n"
+            f"· <b>Reply сюда своим текстом</b> — отправить его вместо черновика\n"
+            f"· <b>🔒 Закрыть без ответа</b> — если уже разобрались в личке"
         )
+
+    async def _revise_draft(
+        self,
+        *,
+        ticket_number: str,
+        instruction: str,
+        admin: User,
+    ) -> bool:
+        """Переписывает черновик по замечанию админа и обновляет сообщение."""
+        row = await self.user_storage.get_ticket_by_number(ticket_number)
+        if not row:
+            return False
+        before = (row.get("ai_draft_response") or "").strip()
+        if not before:
+            return False
+
+        from bot.services.support_ai_draft import revise_support_ticket_draft
+
+        revised = await revise_support_ticket_draft(
+            self.user_storage,
+            user_id=int(row["user_id"]),
+            ticket_number=ticket_number,
+            user_message=str(row.get("user_message") or ""),
+            current_draft=before,
+            instruction=instruction,
+        )
+        if not revised:
+            return False
+
+        # Замечание пишем в любом случае: оно ценно и само по себе —
+        # повторяющиеся правки уходят в промпт будущих черновиков.
+        rnd = await self.user_storage.add_support_draft_revision(
+            ticket_number=ticket_number,
+            instruction=instruction,
+            draft_before=before,
+            draft_after=revised,
+            admin_id=admin.id,
+        )
+
+        mid = row.get("ai_draft_message_id")
+        text = self._format_draft_admin_message(ticket_number, revised)
+        if rnd:
+            text += f"\n· правка №{rnd}: {html.escape(instruction[:200])}"
+        edited = False
+        if mid:
+            edited = await edit_admin_channel_message(
+                self._bot,
+                message_id=int(mid),
+                text=text,
+                reply_markup=self._draft_keyboard(ticket_number),
+            )
+        await self.user_storage.save_support_ai_draft(
+            ticket_number,
+            draft_text=revised,
+            draft_message_id=int(mid) if mid else None,
+        )
+        logger.info(
+            "support draft revised ticket=%s round=%s edited=%s",
+            ticket_number,
+            rnd,
+            edited,
+        )
+        return True
+
+    async def _close_ticket_silently(
+        self, *, ticket_number: str, admin: User, note: str = ""
+    ) -> bool:
+        """Закрыть тикет, ничего не отправляя пользователю.
+
+        Нужно, когда админ уже разобрался с человеком в личке: штатный путь
+        закрытия идёт только через отправку ответа, и без этого тикеты
+        оставались висеть открытыми.
+        """
+        row = await self.user_storage.update_ticket_status_only(
+            ticket_number, "closed", admin_id=admin.id
+        )
+        if not row:
+            return False
+        logger.info(
+            "support ticket closed silently ticket=%s admin=%s note=%r",
+            ticket_number,
+            admin.id,
+            note[:120],
+        )
+        return True
 
     def _enqueue_ai_draft(self, ticket_number: str) -> None:
         asyncio.create_task(
@@ -598,6 +691,24 @@ class SupportFeature(BaseFeature):
         )
         if not row:
             return False, await self._support_ticket_reply_error(ticket_number)
+
+        # Отправленный ответ — одобренный: кладём пару «обращение → ответ» в
+        # базу, чтобы следующий черновик по похожему вопросу опирался на него,
+        # а не сочинял заново. Источник различаем: отправленный как есть
+        # черновик подтверждает модель, свой текст админа — поправляет её.
+        try:
+            ticket_row = await self.user_storage.get_ticket_by_number(ticket_number)
+            question = str((ticket_row or {}).get("user_message") or "").strip()
+            if question:
+                await self.user_storage.add_support_faq_entry(
+                    question=question,
+                    answer=body,
+                    ticket_number=ticket_number,
+                    approved_by=admin.id,
+                    source="draft_sent" if from_ai_draft else "admin_reply",
+                )
+        except Exception as e:
+            logger.debug("support faq store ticket=%s: %s", ticket_number, e)
 
         user_dm = self._format_response_message(
             {"ticket_number": ticket_number, "admin_response": body}
@@ -749,6 +860,41 @@ class SupportFeature(BaseFeature):
                 err = "Пустой ответ."
                 return
 
+            # Reply на черновик с командой — не ответ человеку, а работа с
+            # черновиком: /fix правит его, /close закрывает тикет молча.
+            low = body.casefold()
+            if low.startswith(("/fix", "/правка")):
+                instruction = body.split(maxsplit=1)
+                instruction = instruction[1].strip() if len(instruction) > 1 else ""
+                if not instruction:
+                    err = "После /fix напишите, что именно поправить."
+                    return
+                await processing.edit_text("⏳ Правлю черновик…")
+                ok = await self._revise_draft(
+                    ticket_number=ticket_number,
+                    instruction=instruction,
+                    admin=message.from_user,
+                )
+                err = None if ok else "Не удалось переписать черновик."
+                if ok:
+                    await processing.delete()
+                return
+            if low.startswith(("/close", "/закрыть")):
+                note = body.split(maxsplit=1)
+                note = note[1].strip() if len(note) > 1 else ""
+                ok = await self._close_ticket_silently(
+                    ticket_number=ticket_number,
+                    admin=message.from_user,
+                    note=note,
+                )
+                err = None if ok else "Не удалось закрыть тикет."
+                if ok:
+                    await processing.edit_text(
+                        f"🔒 Тикет {ticket_number} закрыт без ответа. "
+                        "Пользователю ничего не отправлено."
+                    )
+                return
+
             ok_send, err = await self._deliver_ticket_reply(
                 ticket_number=ticket_number,
                 body=body,
@@ -810,6 +956,28 @@ class SupportFeature(BaseFeature):
                     reply_markup=None,
                 )
             await self._generate_and_post_ai_draft(ticket_number)
+            return
+
+        if action == "cl":
+            closed = await self._close_ticket_silently(
+                ticket_number=ticket_number, admin=query.from_user
+            )
+            if not closed:
+                await query.answer("Не удалось закрыть", show_alert=True)
+                return
+            await query.answer("Закрыт без ответа")
+            if query.message:
+                await edit_admin_channel_message(
+                    self._bot,
+                    message_id=query.message.message_id,
+                    text=(
+                        f"🔒 <b>Тикет закрыт без ответа</b> · "
+                        f"<code>{html.escape(ticket_number)}</code>\n\n"
+                        "Пользователю ничего не отправлено."
+                    ),
+                    chat_id=query.message.chat.id,
+                    reply_markup=None,
+                )
             return
 
         if action != "ok":
