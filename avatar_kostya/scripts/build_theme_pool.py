@@ -141,36 +141,54 @@ def _parse(raw: str) -> List[Dict[str, str]]:
     return out
 
 
-_SYSTEM_CLEAN = """
-Тебе дают нумерованный список тем для коротких молитв. Часть из них — одно
-и то же разными словами: «не замечаю хорошего», «не умею благодарить» и
-«не хватает благодарности» это одна тема.
+def _clean_duplicates(rows: List[Dict[str, str]], *, threshold: float = 0.86) -> List[Dict[str, str]]:
+    """Убирает смысловые повторы по близости смысла, а не по словам.
 
-Найди такие группы и в каждой оставь ОДНУ — ту, что звучит живее и ближе к
-тому, как человек сказал бы о себе. Остальные номера из группы — в отброс.
+    «Не замечаю хорошего», «не умею благодарить» и «не хватает
+    благодарности» — одна тема тремя формулировками, и похожесть по словам
+    её не ловит: общих слов почти нет.
 
-Темы, которые просто близки по области, но описывают разные положения
-(«долги и кредиты» и «потеря работы»), не трогай: это разные молитвы.
-
-Верни строго JSON без пояснений: {"drop": [номера, которые убрать]}
-""".strip()
-
-
-async def _clean_duplicates(rows: List[Dict[str, str]], complete_fn) -> List[Dict[str, str]]:
-    """Убирает смысловые повторы: похожесть по словам их не ловит."""
+    Просить об этом модель не вышло: на списке в полсотни пунктов она
+    уходит в рассуждения и возвращает пустую строку с finish=length —
+    задача «найди все пары среди N» для неё слишком переборная. Векторы
+    с этим справляются сразу и стоят копейки.
+    """
     if len(rows) < 12:
         return rows
-    listed = "\n".join(f"{i}. {r['trend']}" for i, r in enumerate(rows, 1))
-    raw, _ = await complete_fn(_SYSTEM_CLEAN, listed, temperature=0.2, max_tokens=2000)
-    text = re.sub(r"^```(?:json)?\s*|\s*```$", "", (raw or "").strip())
     try:
-        drop = set(int(x) for x in (json.loads(text) or {}).get("drop", []))
+        from config import config
+        from rag.embeddings import make_openai_embedding_function
+
+        ef = make_openai_embedding_function(
+            api_key=str(getattr(config, "OPENAI_API_KEY", "") or "")
+        )
+        texts = [f"{r['trend']}. {r['brief']}" for r in rows]
+        vecs = ef(texts)
     except Exception as e:
-        logger.warning("вычистка повторов не удалась: %s", e)
+        logger.warning("вычистка повторов пропущена: %s", e)
         return rows
-    kept = [r for i, r in enumerate(rows, 1) if i not in drop]
-    print(f"смысловых повторов убрано: {len(rows) - len(kept)}")
-    return kept
+
+    import math
+
+    def cos(a, b) -> float:
+        num = sum(x * y for x, y in zip(a, b))
+        na = math.sqrt(sum(x * x for x in a))
+        nb = math.sqrt(sum(y * y for y in b))
+        return num / (na * nb) if na and nb else 0.0
+
+    keep: List[int] = []
+    dropped = []
+    for i in range(len(rows)):
+        twin = next((j for j in keep if cos(vecs[i], vecs[j]) >= threshold), None)
+        if twin is None:
+            keep.append(i)
+        else:
+            dropped.append((rows[i]["trend"], rows[twin]["trend"]))
+    for a, b in dropped[:8]:
+        print(f"    повтор: «{a}» ≈ «{b}»")
+    if dropped:
+        print(f"смысловых повторов убрано: {len(dropped)}")
+    return [rows[i] for i in keep]
 
 
 async def main() -> int:
@@ -216,7 +234,7 @@ async def main() -> int:
         users = [f"Tanda sobre: {r}. Evita repetir temas de otras tandas." for r in rounds]
 
     if args.clean_only:
-        kept = await _clean_duplicates(kept, deepseek_complete)
+        kept = _clean_duplicates(kept)
         dest = theme_pool_path(lang)
         dest.write_text(json.dumps(kept, ensure_ascii=False, indent=2), encoding="utf-8")
         print(f"сохранено: {len(kept)} тем → {dest}")
@@ -245,7 +263,7 @@ async def main() -> int:
             added += 1
         print(f"  [{i}/{len(users)}] +{added} (всего {len(kept)})")
 
-    kept = await _clean_duplicates(kept, deepseek_complete)
+    kept = _clean_duplicates(kept)
     dest = theme_pool_path(lang)
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text(json.dumps(kept, ensure_ascii=False, indent=2), encoding="utf-8")
