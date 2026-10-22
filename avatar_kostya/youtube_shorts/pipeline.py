@@ -29,7 +29,7 @@ from youtube_prayer.render import SHORT_H, SHORT_W, format_prayer_theme_label, r
 from youtube_prayer.cast_broll import build_cast_montage
 from youtube_prayer.stock_broll import build_broll_montage
 from youtube_prayer.topic_history import append_used_trends, load_recent_trends
-from youtube_prayer.trends import fetch_google_trends, select_prayer_topics
+from youtube_prayer.trends import fetch_trends_for_lang, select_prayer_topics
 from youtube_prayer.work_cleanup import cleanup_item_media_after_youtube_upload
 from youtube_prayer.youtube_uploader import (
     YoutubeOAuthError,
@@ -227,7 +227,7 @@ async def run_daily_youtube_shorts_pipeline(
                 + ("\n…" if len(recent) > 10 else "")
             )
 
-        trends = await fetch_google_trends(geo=prof.geo, limit=24)
+        trends = await fetch_trends_for_lang(lang, limit=48)
         topics = await select_prayer_topics(
             trends,
             n=count,
