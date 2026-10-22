@@ -52,6 +52,30 @@ logger = logging.getLogger(__name__)
 _SPOKEN_PAUSE = "..."
 
 
+def cast_indices(day: str, total: int, count: int) -> set:
+    """Номера роликов пачки, которые собираем из банка героев.
+
+    Раньше это были просто первые N. Беда в том, что час премьеры тоже
+    выбирается по номеру: ролик №1 всегда выходит в 7 утра, №5 — в 22. А
+    тема у номера своя и неизменная. Выходило, что «с героями» неотличимо
+    от «утром» и от «про тревогу» — три признака двигались вместе, и
+    сравнивать просмотры было бессмысленно.
+
+    Утренний слот даёт вчетверо больше ночного, так что перекос решал
+    исход заранее. Поэтому окно едет по дням: за пять дней каждый слот
+    успевает побывать и с героями, и на стоке.
+    """
+    if count <= 0 or total <= 0:
+        return set()
+    if count >= total:
+        return set(range(1, total + 1))
+    try:
+        shift = datetime.strptime(day, "%Y-%m-%d").date().toordinal() % total
+    except Exception:
+        shift = 0
+    return {((shift + k) % total) + 1 for k in range(count)}
+
+
 def _cast_count(lang: str) -> int:
     """Сколько роликов пачки собирать из банка героев. 0 — только сток."""
     code = normalize_lang(lang)
@@ -139,6 +163,7 @@ async def run_daily_youtube_shorts_pipeline(
     prof = profile(lang)
     cast_count = _cast_count(lang)
     day = datetime.now(_MSK).strftime("%Y-%m-%d")
+
     day_dir = run_dir_for_day(work_root, day)
     day_dir.mkdir(parents=True, exist_ok=True)
 
@@ -218,6 +243,9 @@ async def run_daily_youtube_shorts_pipeline(
         trend_pool = list(trends)
         theme_names: List[str] = []
 
+        cast_slots = cast_indices(day, len(topics), cast_count)
+        if cast_slots:
+            logger.info("cast: герои в роликах %s из %s", sorted(cast_slots), len(topics))
         for i, topic in enumerate(topics, 1):
             slug = _slug(topic.trend)
             item_dir = day_dir / f"{i:02d}_{slug}"
@@ -282,7 +310,7 @@ async def run_daily_youtube_shorts_pipeline(
             # стоком. Так в один день видно оба видеоряда рядом и можно
             # сравнить, не рискуя всей пачкой.
             broll = None
-            if i <= cast_count:
+            if i in cast_slots:
                 # Героиня выбирается на ролик целиком: внутри одного сюжета
                 # лицо меняться не должно.
                 from youtube_prayer.cast import heroine as _heroine
