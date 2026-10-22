@@ -6,6 +6,7 @@ from youtube_prayer.langs import normalize_lang
 
 import json
 import logging
+from datetime import date
 import re
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
@@ -250,23 +251,138 @@ def _fallback_topics(
                 "Молитва о доверии Богу, когда будущее неясно.",
                 "mountain path fog soft light",
             ),
+            PrayerTopic(
+                "бессонница и ночные мысли",
+                "Молитва на ночь, когда голова не отпускает.",
+                "night window city lights slow",
+            ),
+            PrayerTopic(
+                "деньги и долги",
+                "Молитва о хлебе насущном и выходе из долгов.",
+                "morning kitchen table quiet",
+            ),
+            PrayerTopic(
+                "болезнь и ожидание диагноза",
+                "Молитва о здоровье и о мире в сердце, пока ждёшь ответа.",
+                "hospital window soft daylight",
+            ),
+            PrayerTopic(
+                "взрослые дети отдалились",
+                "Молитва о детях, которые выросли и перестали звонить.",
+                "empty room warm afternoon light",
+            ),
+            PrayerTopic(
+                "обида на близкого",
+                "Молитва о том, чтобы отпустить обиду и не носить её.",
+                "two chairs garden evening",
+            ),
+            PrayerTopic(
+                "потеря работы",
+                "Молитва о новом деле и о достоинстве в трудный час.",
+                "road sunrise open field",
+            ),
+            PrayerTopic(
+                "старение и страх немощи",
+                "Молитва о силе и спокойствии, когда годы берут своё.",
+                "hands elderly warm light",
+            ),
+            PrayerTopic(
+                "одиночество в браке",
+                "Молитва о тепле между двумя, когда рядом, но порознь.",
+                "window rain two cups",
+            ),
+            PrayerTopic(
+                "вина за прошлое",
+                "Молитва о прощении себя и о том, чтобы идти дальше.",
+                "old photographs soft light",
+            ),
+            PrayerTopic(
+                "горе и утрата",
+                "Молитва о тех, кого больше нет рядом, и о силе жить.",
+                "candle flame quiet dark",
+            ),
+            PrayerTopic(
+                "сомнение в вере",
+                "Молитва, когда молиться не получается и Бог кажется далёким.",
+                "empty church shaft of light",
+            ),
+            PrayerTopic(
+                "забота о пожилых родителях",
+                "Молитва о терпении и нежности к тем, кто растил тебя.",
+                "hands together table warm",
+            ),
+            PrayerTopic(
+                "раздражение на самых близких",
+                "Молитва о мягкости там, где срываешься чаще всего.",
+                "kitchen evening warm lamp",
+            ),
+            PrayerTopic(
+                "страх за детей",
+                "Молитва о детях, когда за них тревожно и не дотянуться.",
+                "open window curtains breeze",
+            ),
+            PrayerTopic(
+                "начало дня без сил",
+                "Утренняя молитва, когда встать уже трудно.",
+                "dawn light bedroom curtains",
+            ),
+            PrayerTopic(
+                "ожидание ответа от Бога",
+                "Молитва о терпении, когда просишь долго и тихо.",
+                "long path morning mist",
+            ),
+            PrayerTopic(
+                "зависть и сравнение с другими",
+                "Молитва о благодарности за своё и о покое сердца.",
+                "quiet garden summer light",
+            ),
+            PrayerTopic(
+                "ссора, после которой тяжело молчать",
+                "Молитва о первом шаге к примирению.",
+                "doorway warm interior evening",
+            ),
+            PrayerTopic(
+                "переезд и чужое место",
+                "Молитва о доме там, где пока всё незнакомо.",
+                "boxes empty apartment light",
+            ),
+            PrayerTopic(
+                "тяжёлый разговор впереди",
+                "Молитва о словах и спокойствии перед трудным разговором.",
+                "calm sea horizon morning",
+            ),
         ]
     from youtube_prayer.topic_history import trends_similar
 
+    # Добор шёл с начала списка, и когда все темы успевали попасть в
+    # недавние, круг замыкался: пять первых выходили каждую ночь месяц
+    # подряд. Теперь при доборе первыми идут те, что показывали дольше
+    # всех, а порядок внутри равных сдвигается по дням.
+    fresh = [s for s in seeds if not any(trends_similar(s.trend, r) for r in exclude)]
+    recency = {}
+    for pos, r in enumerate(exclude):
+        for s in seeds:
+            if s.trend not in recency and trends_similar(s.trend, r):
+                recency[s.trend] = pos
+    stale = sorted(
+        (s for s in seeds if s.trend in recency),
+        key=lambda s: -recency[s.trend],
+    )
+    shift = 0
+    if fresh:
+        try:
+            shift = date.today().toordinal() % len(fresh)
+        except Exception:
+            shift = 0
+        fresh = fresh[shift:] + fresh[:shift]
+
     out: List[PrayerTopic] = []
-    for s in seeds:
-        if any(trends_similar(s.trend, r) for r in exclude):
+    for s in fresh + stale:
+        if any(trends_similar(s.trend, x.trend) for x in out):
             continue
         out.append(s)
         if len(out) >= n:
             break
-    if len(out) < n:
-        for s in seeds:
-            if any(trends_similar(s.trend, x.trend) for x in out):
-                continue
-            out.append(s)
-            if len(out) >= n:
-                break
     return out[: max(1, n)]
 
 
