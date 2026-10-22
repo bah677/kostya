@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
-from youtube_prayer.langs import normalize_lang
+from youtube_prayer.langs import normalize_lang, profile
 
 import json
 import logging
+import os
+from pathlib import Path
 from datetime import date
 import re
 import xml.etree.ElementTree as ET
@@ -76,6 +78,42 @@ async def fetch_google_trends(*, geo: str = "RU", limit: int = 12) -> List[str]:
     return titles[:limit]
 
 
+# Один регион даёт слишком узкую выборку: у испанского это только Мексика,
+# хотя канал смотрят во всей Латинской Америке и в Испании. Берём несколько
+# стран и складываем, повторы отсеиваются по тексту.
+TRENDS_GEOS = {
+    "ru": ("RU", "BY", "KZ"),
+    "es": ("MX", "ES", "AR", "CO", "CL", "PE"),
+    "en": ("US", "GB", "CA", "AU"),
+}
+
+
+async def fetch_trends_for_lang(lang: str = "ru", *, limit: int = 48) -> List[str]:
+    """Тренды по всем регионам языка, в порядке стран."""
+    code = normalize_lang(lang)
+    geos = TRENDS_GEOS.get(code) or (profile(code).geo,)
+    per = max(8, limit // max(1, len(geos)))
+    out: List[str] = []
+    seen = set()
+    for geo in geos:
+        try:
+            chunk = await fetch_google_trends(geo=geo, limit=per)
+        except Exception as e:
+            logger.warning("trends geo=%s: %s", geo, e)
+            continue
+        added = 0
+        for t in chunk:
+            key = t.strip().casefold()
+            if key and key not in seen:
+                seen.add(key)
+                out.append(t)
+                added += 1
+        logger.info("trends geo=%s: +%s (всего %s)", geo, added, len(out))
+        if len(out) >= limit:
+            break
+    return out[:limit]
+
+
 async def fetch_google_trends_ru(*, limit: int = 12) -> List[str]:
     return await fetch_google_trends(geo="RU", limit=limit)
 
@@ -108,6 +146,42 @@ _BRIEF_TMPL = {
 }
 
 
+def theme_pool_path(lang: str = "ru") -> Path:
+    """Файл с темами этого языка. Рядом с данными, а не в коде."""
+    code = normalize_lang(lang)
+    raw = (os.getenv("YT_PRAYER_THEMES_DIR") or "").strip()
+    base = Path(raw) if raw else Path("data/youtube_prayer")
+    if not base.is_absolute():
+        base = Path(__file__).resolve().parents[1] / base
+    return base / f"themes_{code}.json"
+
+
+def load_theme_pool(lang: str = "ru") -> List[PrayerTopic]:
+    """Темы из файла. Пусто — значит работаем по списку из кода.
+
+    Файл собирается скриптом из наших же записей клуба: там люди своими
+    словами приносят свои беды, и это живее любого придуманного списка.
+    """
+    p = theme_pool_path(lang)
+    if not p.is_file():
+        return []
+    try:
+        rows = json.loads(p.read_text(encoding="utf-8"))
+    except Exception as e:
+        logger.warning("пул тем %s не прочитан: %s", p.name, e)
+        return []
+    out: List[PrayerTopic] = []
+    for r in rows if isinstance(rows, list) else []:
+        if not isinstance(r, dict):
+            continue
+        trend = str(r.get("trend") or "").strip()
+        brief = str(r.get("brief") or "").strip()
+        broll = str(r.get("broll_query") or r.get("broll") or "").strip()
+        if trend and brief:
+            out.append(PrayerTopic(trend, brief, broll or "soft warm light calm"))
+    return out
+
+
 def _fallback_topics(
     n: int,
     *,
@@ -115,6 +189,7 @@ def _fallback_topics(
     lang: str = "ru",
 ) -> List[PrayerTopic]:
     code = normalize_lang(lang)
+    pool = load_theme_pool(code)
     if code == "es":
         # Запасные темы на случай, когда тренды ничего пригодного не дали.
         # Раньше их было только две ветки — en и «всё остальное, то есть
@@ -353,6 +428,9 @@ def _fallback_topics(
             ),
         ]
     from youtube_prayer.topic_history import trends_similar
+
+    if pool:
+        seeds = pool
 
     # Добор шёл с начала списка, и когда все темы успевали попасть в
     # недавние, круг замыкался: пять первых выходили каждую ночь месяц
