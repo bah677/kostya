@@ -779,6 +779,18 @@ class PaymentFeature(BaseFeature):
                 )
                 await callback.answer()
             
+            # Подтверждение «да, продлеваю себе» из развилки по просьбе с Доски
+            elif data.startswith("pay_self_confirm:"):
+                try:
+                    _, raw_tariff, raw_currency = data.split(":", 2)
+                    await state.update_data(self_payment_confirmed=True)
+                    await self._handle_currency_selection(
+                        callback, state, raw_currency, int(raw_tariff)
+                    )
+                except ValueError:
+                    logger.warning("pay_self_confirm: кривой колбэк %r", data)
+                    await callback.answer()
+
             # Выбор валюты RUB
             elif data.startswith("payment_currency_rub_"):
                 tariff_id = int(data.replace("payment_currency_rub_", ""))
@@ -1023,6 +1035,58 @@ class PaymentFeature(BaseFeature):
                 callback.message, text=pay_txt.PAYMENT_CREATE_FAILED, edit=True
             )
             return
+        # Защита от молчаливой оплаты себе вместо просьбы с Доски.
+        #
+        # Режим подарка живёт в FSM. Если состояние потерялось между откликом
+        # на просьбу и оплатой — перезапуск бота, /start, возврат в меню на
+        # следующий день — человек попадал на обычный экран, деньги уходили на
+        # его собственную лицензию, а просьба оставалась висеть «взятой».
+        # Насчитано четыре таких платежа от трёх человек; людям, которым они
+        # хотели помочь, не досталось ничего. См. docs/wish_board_audit.md
+        #
+        # Поэтому: если у плательщика есть взятая просьба о продлении, а заказ
+        # собирается обычный — не создаём его молча, а спрашиваем прямо.
+        if (
+            not is_member_gift
+            and not is_gift
+            and not data.get("self_payment_confirmed")
+        ):
+            pending_wish = await self.user_storage.wish_active_for_donor(user_id)
+            if (
+                pending_wish
+                and str(pending_wish.get("gift_type") or "") == "subscription"
+                and str(pending_wish.get("status") or "") == "taken"
+            ):
+                from bot.texts import ru_wish_board as wb_txt
+
+                await state.update_data(
+                    pending_wish_id=int(pending_wish["id"]),
+                    pending_tariff_id=int(tariff_id),
+                    pending_currency=currency_code,
+                )
+                await render_user_screen(
+                    callback.message,
+                    text=wb_txt.confirm_self_payment_html(pending_wish),
+                    reply_markup=InlineKeyboardMarkup(
+                        inline_keyboard=[
+                            [
+                                InlineKeyboardButton(
+                                    text=wb_txt.BTN_PAY_FOR_WISH,
+                                    callback_data=f"wb:gift:{int(pending_wish['id'])}",
+                                )
+                            ],
+                            [
+                                InlineKeyboardButton(
+                                    text=wb_txt.BTN_PAY_FOR_SELF,
+                                    callback_data=f"pay_self_confirm:{tariff_id}:{currency_code}",
+                                )
+                            ],
+                        ]
+                    ),
+                    edit=True,
+                )
+                return
+
         # 🔥 СОЗДАЕМ ЗАКАЗ
         order_id = await self.user_storage.create_order(
             user_id=user_id,
@@ -1036,6 +1100,22 @@ class PaymentFeature(BaseFeature):
             else None,
             gift_recipient_username=gift_recipient_username,
         )
+
+        # Связь «просьба ↔ заказ» в базе. До этого она жила только в FSM, и
+        # восстановить её постфактум было невозможно даже вручную.
+        wish_id_fsm = data.get("wish_board_wish_id")
+        if order_id and wish_id_fsm:
+            try:
+                await self.user_storage.wish_bind_order(
+                    int(wish_id_fsm), int(order_id)
+                )
+            except Exception as e:
+                logger.warning(
+                    "wish_bind_order wish=%s order=%s: %s",
+                    wish_id_fsm,
+                    order_id,
+                    e,
+                )
 
         # Запускаем дожим, если он есть
         followup = self.feature_manager.get("followup")

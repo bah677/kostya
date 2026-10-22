@@ -129,6 +129,10 @@ class Config:
     WISH_BOARD_GROUP_REMINDER_GAP_DAYS: int = 3
     WISH_BOARD_GROUP_REMINDER_MAX: int = 3
     WISH_BOARD_MAX_ACTIVE_PER_REQUESTER: int = 2
+    #: Автозакрытие done_pending, если проситель молчит N дней.
+    #: Раньше таймаута у этого состояния не было вовсе, и дело дарителя
+    #: висело неделями, блокируя ему новые просьбы.
+    WISH_BOARD_DONE_PENDING_AUTOCONFIRM_DAYS: int = 5
     #: Сбор «подводное ружьё» (отдельная схема speargun, не выручка клуба).
     SPEARGUN_FUND_ENABLED: bool = False
     SPEARGUN_DEEP_LINK: str = "gun"
@@ -672,6 +676,12 @@ def load_config() -> Config:
         ),
         WISH_BOARD_GROUP_REMINDER_GAP_DAYS=max(
             1, int(os.getenv("WISH_BOARD_GROUP_REMINDER_GAP_DAYS", "3") or "3")
+        ),
+        WISH_BOARD_DONE_PENDING_AUTOCONFIRM_DAYS=max(
+            1,
+            int(
+                os.getenv("WISH_BOARD_DONE_PENDING_AUTOCONFIRM_DAYS", "5") or "5"
+            ),
         ),
         WISH_BOARD_GROUP_REMINDER_MAX=max(
             1, int(os.getenv("WISH_BOARD_GROUP_REMINDER_MAX", "3") or "3")

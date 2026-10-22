@@ -372,6 +372,26 @@ class PaidOrderFulfillment:
                 int(completed_wish["id"]),
             )
             await wb_notify.reply_group_wish_fulfilled(self.bot, completed_wish)
+            # Правим саму карточку в группе, а не только отвечаем под ней.
+            # Без этого выполненная просьба продолжала висеть с заголовком
+            # «нужна помощь» и живой ссылкой «Откликнуться»: на 22 октября так
+            # висели 18 из 20 выполненных просьб, часть — с июля. Ручное
+            # подтверждение (_confirm_done) карточку правит, а автоматическое
+            # закрытие по оплате подписки — нет, и именно через него проходит
+            # почти весь поток.
+            try:
+                await wb_notify.edit_digest_wish_post(
+                    self.bot,
+                    self.user_storage,
+                    completed_wish,
+                    status="completed",
+                )
+            except Exception as e:
+                logger.error(
+                    "wish board digest edit on complete wish=%s: %s",
+                    completed_wish.get("id"),
+                    e,
+                )
         else:
             try:
                 await self.bot.send_message(

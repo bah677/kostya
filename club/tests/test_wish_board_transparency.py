@@ -1,0 +1,78 @@
+"""Прозрачность Доски добрых дел — тексты и подсказки.
+
+Повод — аудит docs/wish_board_audit.md: человек не понимал, какая просьба его
+блокирует, не узнавал об отказе дарителя и об истечении срока, а выполненные
+просьбы продолжали висеть в группе как живые.
+"""
+
+from __future__ import annotations
+
+from bot.texts import ru_wish_board as wb
+
+
+def _wish(**kw):
+    base = {"id": 54, "button_title": "Продление участия в клубе на месяц"}
+    base.update(kw)
+    return base
+
+
+def test_donor_busy_names_the_request():
+    """Текст обязан назвать номер и суть — иначе человек её не найдёт."""
+    html = wb.err_donor_busy_html(_wish(), taken_days=5)
+    assert "№54" in html
+    assert "Продление участия в клубе на месяц" in html
+    assert "5 дн. назад" in html
+
+
+def test_donor_busy_without_taken_date():
+    html = wb.err_donor_busy_html(_wish(), taken_days=0)
+    assert "№54" in html
+    assert "дн. назад" not in html
+
+
+def test_donor_busy_escapes_title():
+    html = wb.err_donor_busy_html(_wish(button_title="<b>взлом</b> & co"))
+    assert "<b>взлом</b>" not in html
+    assert "&lt;b&gt;" in html
+
+
+def test_taken_before_hint_only_for_repeats():
+    assert wb.wish_taken_before_hint(0) == ""
+    assert wb.wish_taken_before_hint(1) == ""
+    assert "4" in wb.wish_taken_before_hint(4)
+    assert "7" in wb.wish_taken_before_hint(7)
+
+
+def test_self_payment_confirmation_warns_clearly():
+    html = wb.confirm_self_payment_html(_wish(id=52))
+    assert "№52" in html
+    # Главное предупреждение: деньги зачтутся плательщику, а не просителю
+    assert "зачтётся вам" in html
+
+
+def test_self_payment_confirmation_escapes_title():
+    html = wb.confirm_self_payment_html(_wish(button_title='сломать "кавычки" <i>'))
+    assert "<i>" not in html.split("Сейчас оформляется")[0].replace("<b>", "")
+
+
+def test_notifications_exist_and_are_human():
+    for text in (
+        wb.NOTIFY_DONOR_RELEASED_HTML,
+        wb.NOTIFY_WISH_EXPIRED_HTML,
+        wb.NOTIFY_AUTOCONFIRMED_REQUESTER_HTML,
+        wb.NOTIFY_AUTOCONFIRMED_DONOR_HTML,
+    ):
+        assert len(text) > 40
+        # без канцелярита и без обвинений в адрес человека
+        assert "обязан" not in text.lower()
+        assert "вы не" not in text.lower()
+
+
+def test_released_notice_says_request_is_open_again():
+    assert "снова открыта" in wb.NOTIFY_DONOR_RELEASED_HTML
+
+
+def test_buttons_present():
+    assert wb.BTN_OPEN_BLOCKING
+    assert wb.BTN_PAY_FOR_WISH
+    assert wb.BTN_PAY_FOR_SELF

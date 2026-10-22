@@ -995,6 +995,11 @@ class WishBoardFeature(BaseFeature):
             wish, text, viewer_user_id=user_id
         )
         text = self._append_role_hint(wish, user_id, text)
+        # Просьбу могли уже брать и бросать несколько раз — одну взяли семь.
+        # Ни просящий, ни следующий даритель об этом не знали.
+        if str(wish.get("status") or "") == "open":
+            taken_before = await self.user_storage.wish_take_count(wish_id)
+            text += wb_txt.wish_taken_before_hint(taken_before)
         kb_rows = self._detail_actions(wish, user_id)
         await render_user_screen(
             message,
@@ -1116,11 +1121,36 @@ class WishBoardFeature(BaseFeature):
         self, message: Message, user_id: int, wish_id: int
     ) -> None:
         if await self.user_storage.wish_count_taken_by_donor(user_id) >= 1:
-            await render_user_screen(
-                message,
-                text=wb_txt.ERR_DONOR_BUSY,
-                edit=True,
-            )
+            # Называем, какая именно просьба блокирует, и даём на неё кнопку.
+            # Прежний текст не говорил ни того, ни другого — через несколько
+            # дней человек свою просьбу уже не помнил и писал в поддержку
+            # «пишет, что просьба есть, а я её не вижу».
+            blocking = await self.user_storage.wish_active_for_donor(user_id)
+            if blocking:
+                taken_at = blocking.get("taken_at")
+                days = 0
+                if taken_at:
+                    days = max(0, (datetime.now(timezone.utc) - taken_at).days)
+                kb = with_main_menu(
+                    [
+                        [
+                            InlineKeyboardButton(
+                                text=wb_txt.BTN_OPEN_BLOCKING,
+                                callback_data=f"{CB_VIEW_PREFIX}{int(blocking['id'])}",
+                            )
+                        ]
+                    ]
+                )
+                await render_user_screen(
+                    message,
+                    text=wb_txt.err_donor_busy_html(blocking, taken_days=days),
+                    reply_markup=kb,
+                    edit=True,
+                )
+            else:
+                await render_user_screen(
+                    message, text=wb_txt.ERR_DONOR_BUSY, edit=True
+                )
             return
         wish = await self.user_storage.wish_take(wish_id, user_id)
         if not wish:
@@ -1152,6 +1182,18 @@ class WishBoardFeature(BaseFeature):
             await wb_notify.post_admin_lifecycle(
                 self._tg_bot, event=wb_txt.ADM_EVENT_RELEASED, wish=wish
             )
+            # Просителю об отказе раньше не сообщали вообще — он оставался с
+            # мыслью «мою просьбу взяли» и больше ничего не узнавал.
+            try:
+                await wb_notify.notify_user_html(
+                    self._tg_bot,
+                    int(wish["requester_user_id"]),
+                    wb_txt.NOTIFY_DONOR_RELEASED_HTML,
+                )
+            except Exception as e:
+                logger.warning(
+                    "wish release notify requester wish=%s: %s", wish_id, e
+                )
             await self._edit_digest(wish)
         await self._show_wish_detail(message, user_id, wish_id)
 
@@ -1458,6 +1500,42 @@ class WishBoardFeature(BaseFeature):
             await wb_notify.post_admin_lifecycle(
                 bot, event=wb_txt.ADM_EVENT_EXPIRED, wish=w
             )
+            # Раньше об истечении знали только админы: человек создавал
+            # просьбу, ждал и никогда не узнавал, что срок вышел.
+            try:
+                await wb_notify.notify_user_html(
+                    bot,
+                    int(w["requester_user_id"]),
+                    wb_txt.NOTIFY_WISH_EXPIRED_HTML,
+                )
+            except Exception as e:
+                logger.warning("wish expire notify wish=%s: %s", w.get("id"), e)
+            await self._edit_digest(w)
+
+        # done_pending без таймаута висел неделями: даритель своё сделал, а
+        # дело у него не закрывалось и новую просьбу взять было нельзя.
+        autoconfirm_days = int(
+            getattr(config, "WISH_BOARD_DONE_PENDING_AUTOCONFIRM_DAYS", 5) or 5
+        )
+        for w in await self.user_storage.wish_autoconfirm_stale_done_pending(
+            autoconfirm_days
+        ):
+            await wb_notify.post_admin_lifecycle(
+                bot,
+                event=wb_txt.ADM_EVENT_COMPLETED,
+                wish=w,
+                extra=f"авто: проситель молчал {autoconfirm_days} дн.",
+            )
+            for uid, text in (
+                (w.get("requester_user_id"), wb_txt.NOTIFY_AUTOCONFIRMED_REQUESTER_HTML),
+                (w.get("donor_user_id"), wb_txt.NOTIFY_AUTOCONFIRMED_DONOR_HTML),
+            ):
+                if not uid:
+                    continue
+                try:
+                    await wb_notify.notify_user_html(bot, int(uid), text)
+                except Exception as e:
+                    logger.warning("wish autoconfirm notify uid=%s: %s", uid, e)
             await self._edit_digest(w)
 
         released = await self.user_storage.wish_release_stale_taken(hours_timeout)

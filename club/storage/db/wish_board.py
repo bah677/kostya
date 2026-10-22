@@ -1122,3 +1122,126 @@ class WishBoardMixin:
             event_type,
             json.dumps(meta) if meta is not None else None,
         )
+
+    # ── Связь «просьба ↔ оплата» и прозрачность состояний ────────────────
+    #
+    # Добавлено по аудиту (docs/wish_board_audit.md). До этого связь жила
+    # только в FSM, и при её потере деньги уходили дарителю на собственную
+    # лицензию, а просьба оставалась висеть «взятой».
+
+    async def wish_active_for_donor(self, donor_id: int) -> Optional[Dict[str, Any]]:
+        """Просьба, которая сейчас блокирует дарителя.
+
+        Нужна для текста ошибки: раньше человеку писали «у вас уже есть
+        просьба в работе», не называя какую и не давая на неё ссылку. Через
+        несколько дней он её уже не помнит — так и возникали обращения
+        «пишет, что просьба есть, а я её не вижу».
+        """
+        try:
+            async with self.get_connection() as conn:
+                row = await conn.fetchrow(
+                    """
+                    SELECT * FROM wish_requests
+                    WHERE donor_user_id = $1 AND status = ANY($2::varchar[])
+                    ORDER BY taken_at DESC NULLS LAST
+                    LIMIT 1
+                    """,
+                    donor_id,
+                    ["taken", "done_pending"],
+                )
+                return dict(row) if row else None
+        except Exception as e:
+            logger.error("wish_active_for_donor uid=%s: %s", donor_id, e)
+            return None
+
+    async def wish_bind_order(self, wish_id: int, order_id: int) -> bool:
+        """Привязывает заказ к просьбе с обеих сторон."""
+        try:
+            async with self.get_connection() as conn:
+                async with conn.transaction():
+                    await conn.execute(
+                        "UPDATE wish_requests SET order_id = $2, updated_at = NOW() "
+                        "WHERE id = $1",
+                        int(wish_id),
+                        int(order_id),
+                    )
+                    await conn.execute(
+                        "UPDATE orders SET wish_id = $2 WHERE id = $1",
+                        int(order_id),
+                        int(wish_id),
+                    )
+            return True
+        except Exception as e:
+            logger.error(
+                "wish_bind_order wish=%s order=%s: %s", wish_id, order_id, e
+            )
+            return False
+
+    async def wish_by_order(self, order_id: int) -> Optional[Dict[str, Any]]:
+        try:
+            async with self.get_connection() as conn:
+                row = await conn.fetchrow(
+                    """
+                    SELECT w.* FROM wish_requests w
+                    JOIN orders o ON o.wish_id = w.id
+                    WHERE o.id = $1
+                    """,
+                    int(order_id),
+                )
+                return dict(row) if row else None
+        except Exception as e:
+            logger.error("wish_by_order order=%s: %s", order_id, e)
+            return None
+
+    async def wish_autoconfirm_stale_done_pending(
+        self, days: int
+    ) -> List[Dict[str, Any]]:
+        """Закрывает просьбы, которые даритель отметил выполненными, а проситель молчит.
+
+        У состояния done_pending не было таймаута вообще: просьба №51 провисела
+        так три недели. Даритель свою часть сделал, а дело у него не закрывалось.
+        """
+        try:
+            async with self.get_connection() as conn:
+                rows = await conn.fetch(
+                    """
+                    UPDATE wish_requests
+                    SET status = 'completed',
+                        confirmed_at = NOW(),
+                        updated_at = NOW()
+                    WHERE status = 'done_pending'
+                      AND completed_at IS NOT NULL
+                      AND completed_at < NOW() - ($1::text || ' days')::interval
+                    RETURNING *
+                    """,
+                    str(int(days)),
+                )
+                out = []
+                for row in rows:
+                    await self._wish_log_event(
+                        conn, int(row["id"]), None, "autoconfirmed", None
+                    )
+                    out.append(dict(row))
+                return out
+        except Exception as e:
+            logger.error("wish_autoconfirm_stale_done_pending: %s", e)
+            return []
+
+    async def wish_take_count(self, wish_id: int) -> int:
+        """Сколько раз просьбу уже брали — показываем в карточке.
+
+        Одну просьбу брали и бросали до семи раз; просящий об этом не знал.
+        """
+        try:
+            async with self.get_connection() as conn:
+                return int(
+                    await conn.fetchval(
+                        "SELECT count(*) FROM wish_events "
+                        "WHERE wish_id = $1 AND event_type = 'taken'",
+                        int(wish_id),
+                    )
+                    or 0
+                )
+        except Exception as e:
+            logger.error("wish_take_count wish=%s: %s", wish_id, e)
+            return 0

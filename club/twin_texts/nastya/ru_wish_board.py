@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import html
+import re
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -12,15 +13,19 @@ from bot.utils.telegram_html import sanitize_telegram_html
 
 HUB_TITLE_HTML = (
     "<b>💫 Доска добрых дел</b>\n\n"
-    "Здесь участники клуба могут попросить поддержку, а любой пользователь бота — "
-    "откликнуться и помочь.\n\n"
-    "<b>Как это устроено:</b>\n"
-    "• Просьбу может оставить только участник с <b>активной подпиской</b>\n"
-    "• Откликнуться может <b>любой</b> пользователь бота\n"
-    "• Каждая просьба проходит <b>модерацию</b>\n\n"
+    "Здесь участник клуба может попросить поддержку, а любой — откликнуться и помочь.\n\n"
+    "Прямых сборов и переводов на карту здесь нет: в клубе люди из разных стран, "
+    "и такие переводы могут нарушать законы тех стран, где живут участники.\n\n"
+    "Просьбу может оставить участник с <b>активной подпиской</b>, откликнуться — любой. "
+    "Каждая просьба проходит <b>модерацию</b>, обычно в течение суток.\n\n"
     "Просим относиться друг к другу с любовью и уважением 🙏\n\n"
     "<blockquote>Носите бремя друг друга, и таким образом исполните закон Христов.\n\n"
     "<i>(Гал. 6:2)</i></blockquote>"
+)
+
+HUB_GIFT_HINT_HTML = (
+    "Хочешь подарить продление конкретному человеку — не через общую доску? "
+    "Нажми кнопку ниже."
 )
 
 BTN_REQUESTER = "🙏 Попросить помощь"
@@ -29,15 +34,17 @@ BTN_MY_WISHES = "📋 Мои просьбы"
 BTN_MY_DONATIONS = "🤝 Мои отклики"
 BTN_OTHER_WISHES = "🎁 Другие просьбы"
 BTN_GENEROSITY = "⭐ Рейтинг щедрости"
+BTN_TAKE = "✨ ИСПОЛНИТЬ ЖЕЛАНИЕ"
 BTN_BACK_HUB = "◀️ Назад"
 BTN_MAIN_MENU = "🏠 Главное меню"
+BTN_GIFT_SPECIFIC_PERSON = "🎁 Подарить конкретному человеку"
 
 # --- Создание просьбы ---
 
 CHOOSE_TYPE_HTML = (
-    "<b>Что вам нужно?</b>\n\n"
-    "• <b>Продление в клубе</b> — только подписка, даритель оплатит продление\n"
-    "• <b>Другая помощь</b> — поддержка делом, вниманием, советом"
+    "<b>Что тебе нужно?</b>\n\n"
+    "• <b>Продление в клубе</b> — даритель оплатит твоё участие\n"
+    "• <b>Другая помощь</b> — поддержка делом, временем, советом"
 )
 
 BTN_TYPE_SUBSCRIPTION = "📅 Продлить участие в клубе"
@@ -96,11 +103,65 @@ NOT_MEMBER_HTML = (
     "сможете попросить помощь здесь."
 )
 
+# T3: реквизиты / карта в тексте
+CARD_BLOCKED_HTML = (
+    "Мы не можем опубликовать просьбу с номером карты или реквизитами "
+    "для перевода — на доске нет денежных сборов.\n\n"
+    "Но помощь бывает разной. Если сейчас нечем платить за участие в клубе — "
+    "попроси продлить подписку, это здесь работает чаще всего."
+)
+BTN_ASK_EXTENSION = "📅 Попросить продление"
+BTN_EDIT_DESC = "✏️ Изменить текст"
+
+# T4: уже есть pending на модерации
+PENDING_EXISTS_HTML = (
+    "Твоя просьба от {date} ещё на модерации — мы её не потеряли.\n\n"
+    "Дождись ответа или отмени её, если передумал(а)."
+)
+BTN_CANCEL_AND_NEW = "🗑 Отменить и создать новую"
+BTN_WAIT_MODERATION = "👌 Хорошо, подожду"
+
+# T6–T10 и кнопки к ним
+NO_DONOR_YET_HTML = (
+    "Твоя просьба всё ещё в списке — пока никто не откликнулся.\n\n"
+    "Мы напомним о ней в группе ещё раз. Иногда нужно просто немного подождать."
+)
+
+DONOR_REMIND_HTML = (
+    "Напоминаем: ты откликнулся(ась) на просьбу «{title}».\n\n"
+    "Если всё получается — отметь, когда будет сделано. "
+    "Если передумал(а) или не выходит, просто верни просьбу в список, это нормально."
+)
+
+DONOR_TIMEOUT_RETURNED_HTML = (
+    "Просьба «{title}» вернулась в общий список — прошли сутки.\n\n"
+    "Ничего страшного. Если захочешь вернуться к ней, она снова открыта."
+)
+
+DONOR_CANCELLED_BY_REQUESTER_HTML = (
+    "Просьба «{title}», на которую ты откликнулся(ась), отменена автором.\n\n"
+    "Если вы уже договорились и это недоразумение — напиши ему."
+)
+
+CONFIRM_CANCEL_TAKEN_HTML = (
+    "За твою просьбу уже взялся человек, он собирается помочь.\n\n"
+    "Точно отменить?"
+)
+
+BTN_CONFIRM_CANCEL = "Да, отменить"
+BTN_KEEP_WISH = "Нет, оставить"
+BTN_DONE_MARK = "✅ Готово"
+BTN_RETURN_POOL = "↩️ Вернуть в список"
+BTN_WRITE_REQUESTER = "💬 Написать"
+
 # --- Пул и список ---
 
 POOL_TITLE_HTML = (
-    "<b>🎁 Открытые просьбы</b>\n\n"
-    "Выберите, кому хотите помочь:"
+    "<b>🎁 Открытые просьбы — ждут дарителя</b>\n\n"
+    "Здесь только <b>открытые</b> просьбы участников клуба, на которые ещё никто не откликнулся.\n\n"
+    "Просьбы, которые уже <b>в работе у другого дарителя</b>, или <b>завершены</b>, "
+    "в этом списке <b>не показываются</b>.\n\n"
+    "Если готовы помочь — выберите просьбу и нажмите «ИСПОЛНИТЬ ЖЕЛАНИЕ»."
 )
 
 POOL_EMPTY_HTML = (
@@ -153,7 +214,6 @@ ERR_WISH_NOT_FOUND = "❌ Просьба не найдена."
 
 # --- Действия дарителя / просителя ---
 
-BTN_TAKE = "🤝 Взять эту просьбу"
 BTN_RELEASE = "↩️ Отказаться от просьбы"
 BTN_GIFT_SUB = "🎁 Подарить продление"
 BTN_MARK_DONE = "✅ Помощь оказана"
@@ -258,14 +318,14 @@ NOTIFY_TAKEN_REQUESTER_HTML = (
 
 def wish_summary_html(wish: Dict[str, Any], *, desc_max_len: int = 350) -> str:
     """Краткое описание просьбы для уведомлений и списков."""
-    wid = int(wish["id"])
     gtype = GIFT_TYPE_LABELS.get(wish.get("gift_type") or "", wish.get("gift_type"))
+    label = wish_button_label(wish)
     desc = sanitize_telegram_html(str(wish.get("description") or ""))
     if len(desc) > desc_max_len:
         desc = desc[: desc_max_len - 1] + "…"
     return (
-        f"<b>Просьба #{wid}</b> — {escape(str(gtype))}\n"
-        f"{desc}"
+        f"<b>{escape(str(label))}</b> — {escape(str(gtype))}\n"
+        f"<blockquote>{desc}</blockquote>"
     )
 
 
@@ -278,18 +338,18 @@ def notify_dispute_donor_html(wish: Dict[str, Any]) -> str:
 def clarify_to_requester_html(wish_id: int, text: str) -> str:
     body = sanitize_telegram_html(text)
     return (
-        f"<b>💬 Вопрос по просьбе #{wish_id}</b>\n\n"
-        f"Даритель спрашивает <b>анонимно</b>:\n\n"
-        f"{body}\n\n"
-        f"Ответьте кнопкой ниже — бот перешлёт дарителю без вашего имени."
+        "<b>💬 Вопрос по вашей просьбе</b>\n\n"
+        "Даритель спрашивает <b>анонимно</b>:\n\n"
+        f"<blockquote>{body}</blockquote>\n\n"
+        "Ответьте кнопкой ниже — бот перешлёт дарителю без вашего имени."
     )
 
 
 def clarify_to_donor_html(wish_id: int, text: str) -> str:
     body = sanitize_telegram_html(text)
     return (
-        f"<b>💬 Ответ по просьбе #{wish_id}</b>\n\n"
-        f"{body}"
+        "<b>💬 Ответ по вашей просьбе</b>\n\n"
+        f"<blockquote>{body}</blockquote>"
     )
 
 
@@ -310,8 +370,9 @@ def notify_taken_requester_html(wish: Dict[str, Any]) -> str:
 
 
 NOTIFY_APPROVED_REQUESTER_HTML = (
-    "✅ <b>Просьба одобрена</b>\n\n"
-    "Она появилась в общем списке — дарители смогут откликнуться."
+    "Твоя просьба опубликована 🙏\n\n"
+    "Она появилась в общем списке и в группе клуба. "
+    "Как только кто-то откликнется — сразу напишем."
 )
 
 NOTIFY_DONOR_CONFIRMED_HTML = (
@@ -364,10 +425,21 @@ ADM_EVENT_CANCELLED = "Отменена автором просьбы"
 ADM_EVENT_APPROVED = "Одобрена → в общем списке"
 ADM_EVENT_REJECTED = "Отклонена"
 ADM_EVENT_EXPIRED = "Истекла (авто)"
+ADM_EVENT_ADMIN_REOPENED = "Возвращена в общий пул (админ)"
 
+NOTIFY_ADMIN_REOPENED_REQUESTER_HTML = (
+    "<b>💫 Ваша просьба снова на доске добрых дел</b>\n\n"
+    "Прежний даритель не завершил помощь — просьба снова доступна "
+    "другим участникам клуба. Мы опубликовали её в группе как новую."
+)
+NOTIFY_ADMIN_REOPENED_DONOR_HTML = (
+    "<b>↩️ Просьба возвращена в общий пул</b>\n\n"
+    "Просьба #{wish_id} снова открыта для других дарителей — "
+    "оплата или помощь не были завершены в срок."
+)
 
-def admin_event_taken_timeout(timeout_days: int) -> str:
-    return f"Таймаут {timeout_days} дн. → снова в пуле"
+def admin_event_taken_timeout(timeout_hours: int) -> str:
+    return f"Таймаут {timeout_hours} ч. → снова в пуле"
 
 
 ADM_NO_ACCESS = "⛔ Нет доступа"
@@ -380,13 +452,50 @@ ADM_REJECT_REASON_SHORT = "❌ Причина слишком короткая. �
 ADM_REJECT_FAILED = "❌ Не удалось отклонить — возможно, заявка уже обработана."
 ADM_REJECT_DONE = "✅ Просьба #{wish_id} отклонена, автор уведомлён."
 
-# --- Дайджест ---
+ADM_MODERATION_REMIND_HTML = (
+    "<b>⏳ Напоминание: просьба ждёт модерации</b>\n\n"
+    "Просьба #{wish_id} без решения уже дольше обычного. "
+    "Одобри или отклони кнопками ниже."
+)
+ADM_MODERATION_OVERDUE_HTML = (
+    "<b>🔴 Просрочено: модерация &gt; 24 ч</b>\n\n"
+    "Просьба #{wish_id} всё ещё в pending. Нужно решение."
+)
 
-DIGEST_HEADER_HTML = "<b>💫 Новые просьбы на доске добрых дел</b> ({count})"
-DIGEST_SINGLE_POST_HEADER_HTML = "<b>💫 Новая просьба на доске добрых дел</b>"
+# --- Дайджест / живой пост ---
+
+DIGEST_HEADER_HTML = (
+    "<b>💫 На доске добрых дел — новые просьбы</b> ({count})\n\n"
+    "Участники клуба ждут дарителя. Откликнитесь в меню — поможем связаться."
+)
+DIGEST_SINGLE_POST_HEADER_HTML = (
+    "<b>💫 Новая просьба на доске добрых дел</b>\n\n"
+    "Участник клуба ждёт дарителя — можно откликнуться через меню."
+)
+GROUP_REMINDER_HEADER_HTML = (
+    "<b>🙏 Чья-то мечта всё ещё ждёт своего ангела</b>\n\n"
+    "Просьба уже несколько дней открыта — если можете помочь, откликнитесь через меню."
+)
 DIGEST_LINK_BOARD = "💫 Открыть доску добрых дел"
-DIGEST_LINK_RESPOND = "Откликнуться в боте"
-DIGEST_RESPOND_HINT = "/menu → Доска добрых дел → Откликнуться и помочь"
+DIGEST_LINK_RESPOND = "Откликнуться"
+DIGEST_RESPOND_HINT = "меню → Доска добрых дел → Откликнуться и помочь"
+
+DIGEST_STATUS_OPEN_HEADER = "🟢 Ищут дарителя"
+DIGEST_STATUS_TAKEN_LINE = "Даритель нашёлся. Спасибо!"
+DIGEST_STATUS_TAKEN_HEADER = "🤝 Уже откликнулись"
+DIGEST_STATUS_COMPLETED_HEADER = "✨ Исполнено"
+DIGEST_STATUS_COMPLETED_LINE = (
+    "Просьба закрыта. Спасибо всем, кто откликается!"
+)
+DIGEST_STATUS_REMOVED_HEADER = "⚪️ Просьба снята"
+
+PINNED_BOARD_INTRO_HTML = (
+    "<b>💫 Доска добрых дел</b>\n\n"
+    "Здесь участники клуба просят поддержку, а другие откликаются и помогают.\n\n"
+    "Прямых сборов и переводов на карту здесь нет: в клубе люди из разных стран, "
+    "и такие переводы могут нарушать законы тех стран, где живут участники.\n\n"
+    "Открыть доску: {board_link}"
+)
 
 PASSIVE_COMPLETED_BANNER_HTML = (
     "<b>✨ Это желание уже исполнил кто-то другой</b>\n\n"
@@ -457,9 +566,9 @@ STATUS_DONE_PENDING_YOURS = "Ждёт вашего подтверждения"
 STATUS_DONE_PENDING_WAIT = "Ждём подтверждения автора"
 
 CARD_LABEL_TYPE = "Тип"
-CARD_LABEL_STATUS = "Статус"
 CARD_LABEL_REQUESTER = "Автор просьбы"
 CARD_LABEL_REQUESTER_ANON = "анонимно"
+CARD_VIEWER_HEADING = "Просьба о помощи"
 CARD_LABEL_LIST_UNTIL = "В общем списке до"
 CARD_TITLE = "Просьба #{id}"
 GENEROSITY_NEW_DONOR = "Новый даритель"
@@ -592,6 +701,114 @@ def digest_single_post_html(
     )
 
 
+def group_reminder_post_html(
+    wish: Dict[str, Any], *, respond_url: str = ""
+) -> str:
+    return (
+        f"{GROUP_REMINDER_HEADER_HTML}\n\n"
+        f"{digest_item_html(wish, respond_url=respond_url)}"
+    )
+
+
+def _digest_wish_body_html(wish: Dict[str, Any]) -> str:
+    """Текст просьбы без кнопки отклика — для живого поста."""
+    gtype = GIFT_TYPE_LABELS.get(wish.get("gift_type") or "", wish.get("gift_type"))
+    label = wish_button_label(wish)
+    desc = sanitize_telegram_html(str(wish.get("description") or ""))
+    if len(desc) > 400:
+        desc = desc[:397] + "…"
+    anon = (
+        CARD_LABEL_REQUESTER_ANON
+        if wish.get("is_anonymous")
+        else "от имени участника"
+    )
+    return (
+        f"<b>{escape(label)}</b>\n"
+        f"<i>{escape(str(gtype))} · {escape(anon)}</i>\n"
+        f"<blockquote>{desc}</blockquote>"
+    )
+
+
+def digest_live_post_html(
+    wish: Dict[str, Any],
+    *,
+    status: Optional[str] = None,
+    respond_url: str = "",
+) -> str:
+    """Тело поста в теме дайджеста по статусу (open/taken/completed/cancelled/expired)."""
+    st = (status or wish.get("status") or "open").strip().lower()
+    body = _digest_wish_body_html(wish)
+
+    if st == "open":
+        url = (respond_url or "").strip()
+        if url:
+            respond_line = f'<a href="{escape(url)}">{escape(DIGEST_LINK_RESPOND)}</a>'
+        else:
+            respond_line = f"Откликнуться: {escape(DIGEST_RESPOND_HINT)}"
+        return f"{DIGEST_STATUS_OPEN_HEADER}\n\n{body}\n\n{respond_line}"
+
+    if st in ("taken", "done_pending"):
+        return (
+            f"{DIGEST_STATUS_TAKEN_HEADER}\n\n"
+            f"{body}\n\n"
+            f"{DIGEST_STATUS_TAKEN_LINE}"
+        )
+
+    if st == "completed":
+        return (
+            f"{DIGEST_STATUS_COMPLETED_HEADER}\n\n"
+            f"{body}\n\n"
+            f"{DIGEST_STATUS_COMPLETED_LINE}"
+        )
+
+    # cancelled / expired / rejected / прочее снятое
+    return f"{DIGEST_STATUS_REMOVED_HEADER}\n\n{body}"
+
+
+def pinned_board_intro_html(*, board_url: str = "") -> str:
+    url = (board_url or "").strip()
+    if url:
+        board_link = f'<a href="{escape(url)}">{DIGEST_LINK_BOARD}</a>'
+    else:
+        board_link = escape(DIGEST_RESPOND_HINT.replace(" → Откликнуться и помочь", ""))
+    return PINNED_BOARD_INTRO_HTML.format(board_link=board_link)
+
+
+def pending_exists_html(wish: Dict[str, Any]) -> str:
+    """T4: уже есть просьба на модерации."""
+    created = wish.get("created_at")
+    if isinstance(created, datetime):
+        date_s = created.strftime("%d.%m.%Y")
+    else:
+        date_s = str(created or "недавно")
+    return PENDING_EXISTS_HTML.format(date=escape(date_s))
+
+
+def donor_remind_html(wish: Dict[str, Any]) -> str:
+    """T7: напоминание дарителю."""
+    return DONOR_REMIND_HTML.format(title=escape(wish_button_label(wish)))
+
+
+def donor_timeout_returned_html(wish: Dict[str, Any]) -> str:
+    """T8: просьба вернулась в пул после таймаута (дарителю)."""
+    return DONOR_TIMEOUT_RETURNED_HTML.format(title=escape(wish_button_label(wish)))
+
+
+def donor_cancelled_by_requester_html(wish: Dict[str, Any]) -> str:
+    """T9: проситель отменил взятую просьбу (дарителю)."""
+    return DONOR_CANCELLED_BY_REQUESTER_HTML.format(
+        title=escape(wish_button_label(wish))
+    )
+
+
+def adm_moderation_remind_html(wish_id: int) -> str:
+    return ADM_MODERATION_REMIND_HTML.format(wish_id=int(wish_id))
+
+
+def adm_moderation_overdue_html(wish_id: int) -> str:
+    return ADM_MODERATION_OVERDUE_HTML.format(wish_id=int(wish_id))
+
+
 def generosity_leaderboard_html(rows: List[Dict[str, Any]]) -> str:
     if not rows:
         return GENEROSITY_EMPTY_HTML
@@ -599,6 +816,48 @@ def generosity_leaderboard_html(rows: List[Dict[str, Any]]) -> str:
     for i, row in enumerate(rows, start=1):
         lines.append(f"{i}. {escape(generosity_line(row))}")
     return "\n".join(lines)
+
+
+def wish_button_label(wish: Dict[str, Any]) -> str:
+    """Подпись для inline-кнопки (без технического номера)."""
+    title = (wish.get("button_title") or "").strip()
+    if title:
+        return title[:48]
+    desc = re.sub(r"\s+", " ", str(wish.get("description") or "").strip())
+    if desc:
+        snippet = desc[:45]
+        if len(desc) > 45:
+            snippet += "…"
+        return snippet
+    gtype = GIFT_TYPE_LABELS.get(wish.get("gift_type") or "", "Просьба")
+    return str(gtype)[:48]
+
+
+def _requester_line(
+    wish: Dict[str, Any],
+    *,
+    requester: Optional[Dict[str, Any]] = None,
+    for_admin: bool = False,
+) -> str:
+    if for_admin:
+        if not wish.get("is_anonymous"):
+            if requester:
+                return (
+                    f"{CARD_LABEL_REQUESTER}: {escape(display_name(requester))} "
+                    f"(<code>{requester.get('user_id')}</code>)"
+                )
+            return (
+                f"{CARD_LABEL_REQUESTER}: <code>{wish.get('requester_user_id')}</code>"
+            )
+        return (
+            f"{CARD_LABEL_REQUESTER}: {CARD_LABEL_REQUESTER_ANON} "
+            f"(<code>{wish.get('requester_user_id')}</code>)"
+        )
+    if not wish.get("is_anonymous"):
+        if requester:
+            return f"<b>{CARD_LABEL_REQUESTER}:</b> {escape(display_name(requester))}"
+        return f"<b>{CARD_LABEL_REQUESTER}:</b> участник клуба"
+    return f"<b>{CARD_LABEL_REQUESTER}:</b> {CARD_LABEL_REQUESTER_ANON}"
 
 
 def format_wish_card(
@@ -610,59 +869,37 @@ def format_wish_card(
 ) -> str:
     wid = int(wish["id"])
     gtype = GIFT_TYPE_LABELS.get(wish.get("gift_type") or "", wish.get("gift_type"))
-    if for_admin:
-        status = STATUS_LABELS.get(wish.get("status") or "", wish.get("status"))
-    else:
-        status = status_label_for_viewer(wish, viewer_user_id)
     desc = sanitize_telegram_html(str(wish.get("description") or ""))
 
-    lines = [
-        f"<b>{CARD_TITLE.format(id=wid)}</b>",
-        f"{CARD_LABEL_TYPE}: {escape(str(gtype))}",
-        f"{CARD_LABEL_STATUS}: {escape(str(status))}",
-    ]
-
     if for_admin:
-        if not wish.get("is_anonymous"):
-            if requester:
-                lines.append(
-                    f"{CARD_LABEL_REQUESTER}: {escape(display_name(requester))} "
-                    f"(<code>{requester.get('user_id')}</code>)"
-                )
-            else:
-                lines.append(
-                    f"{CARD_LABEL_REQUESTER}: <code>{wish.get('requester_user_id')}</code>"
-                )
-        else:
-            lines.append(
-                f"{CARD_LABEL_REQUESTER}: {CARD_LABEL_REQUESTER_ANON} "
-                f"(<code>{wish.get('requester_user_id')}</code>)"
-            )
+        status = STATUS_LABELS.get(wish.get("status") or "", wish.get("status"))
+        lines = [
+            f"<b>{CARD_TITLE.format(id=wid)}</b>",
+            f"{CARD_LABEL_TYPE}: {escape(str(gtype))}",
+            f"Статус: {escape(str(status))}",
+            _requester_line(wish, requester=requester, for_admin=True),
+        ]
+        if wish.get("button_title"):
+            lines.append(f"Кнопка: {escape(str(wish['button_title']))}")
         if wish.get("donor_user_id"):
-            lines.append(
-                f"Даритель: <code>{wish['donor_user_id']}</code>"
-            )
-    else:
-        if not wish.get("is_anonymous"):
-            if requester:
+            lines.append(f"Даритель: <code>{wish['donor_user_id']}</code>")
+        if wish.get("status") in ("open", "pending_moderation"):
+            exp = wish.get("expires_at")
+            if isinstance(exp, datetime):
                 lines.append(
-                    f"{CARD_LABEL_REQUESTER}: {escape(display_name(requester))}"
+                    f"{CARD_LABEL_LIST_UNTIL}: {exp.strftime('%d.%m.%Y')} "
+                    f"(потом снимется из списка)"
                 )
-            else:
-                lines.append(f"{CARD_LABEL_REQUESTER}: участник клуба")
-        else:
-            lines.append(f"{CARD_LABEL_REQUESTER}: {CARD_LABEL_REQUESTER_ANON}")
+        lines.extend(["", f"<blockquote>{desc}</blockquote>"])
+        return "\n".join(lines)
 
-    if wish.get("status") in ("open", "pending_moderation"):
-        exp = wish.get("expires_at")
-        if isinstance(exp, datetime):
-            lines.append(
-                f"{CARD_LABEL_LIST_UNTIL}: {exp.strftime('%d.%m.%Y')} "
-                f"(потом снимется из списка)"
-            )
-
-    lines.append("")
-    lines.append(desc)
+    lines = [
+        f"<b>{CARD_VIEWER_HEADING}</b>",
+        f"<b>{CARD_LABEL_TYPE}:</b> {escape(str(gtype))}",
+        _requester_line(wish, requester=requester, for_admin=False),
+        "",
+        f"<blockquote>{desc}</blockquote>",
+    ]
     return "\n".join(lines)
 
 
@@ -675,20 +912,25 @@ def digest_header_html(count: int, *, board_url: str = "") -> str:
 
 
 def digest_item_html(wish: Dict[str, Any], *, respond_url: str = "") -> str:
-    wid = int(wish["id"])
     gtype = GIFT_TYPE_LABELS.get(wish.get("gift_type") or "", wish.get("gift_type"))
+    label = wish_button_label(wish)
     desc = sanitize_telegram_html(str(wish.get("description") or ""))
     if len(desc) > 400:
         desc = desc[:397] + "…"
-    anon = CARD_LABEL_REQUESTER_ANON if wish.get("is_anonymous") else "от имени участника"
+    anon = (
+        CARD_LABEL_REQUESTER_ANON
+        if wish.get("is_anonymous")
+        else "от имени участника"
+    )
     url = (respond_url or "").strip()
     if url:
         respond_line = f'<a href="{escape(url)}">{escape(DIGEST_LINK_RESPOND)}</a>'
     else:
         respond_line = f"Откликнуться: {escape(DIGEST_RESPOND_HINT)}"
     return (
-        f"<b>#{wid}</b> — {escape(str(gtype))} ({anon})\n"
-        f"{desc}\n"
+        f"<b>{escape(label)}</b>\n"
+        f"<i>{escape(str(gtype))} · {escape(anon)}</i>\n"
+        f"<blockquote>{desc}</blockquote>\n"
         f"{respond_line}"
     )
 
@@ -704,3 +946,88 @@ def admin_event_html(
     if extra:
         base += f"\n{sanitize_telegram_html(extra)}"
     return base
+
+
+# ── Прозрачность состояний (по аудиту docs/wish_board_audit.md) ──────────────
+
+def err_donor_busy_html(wish: dict, *, taken_days: int = 0) -> str:
+    """Какая именно просьба блокирует — с названием и сроком.
+
+    Прежний текст («у вас уже есть просьба в работе, сначала завершите её»)
+    не называл просьбу и не давал на неё ссылку. Через несколько дней человек
+    её уже не помнил — отсюда обращения «пишет, что просьба есть, а я её
+    не вижу».
+    """
+    title = escape(str(wish.get("button_title") or "")[:80])
+    when = ""
+    if taken_days > 0:
+        when = f" — вы взяли её {taken_days} дн. назад"
+    return (
+        "❌ У вас уже есть просьба в работе.\n\n"
+        f"<b>№{int(wish.get('id') or 0)}</b> · «{title}»{when}\n\n"
+        "Откройте её кнопкой ниже: там можно довести дело до конца "
+        "или отказаться, чтобы просьба вернулась в общую ленту."
+    )
+
+
+BTN_OPEN_BLOCKING = "Открыть мою просьбу"
+
+#: Просителю: даритель отказался. Раньше об этом узнавали только админы.
+NOTIFY_DONOR_RELEASED_HTML = (
+    "Ваша просьба снова открыта.\n\n"
+    "Тот, кто взялся помочь, не смог довести дело до конца — так бывает. "
+    "Просьба вернулась в общую ленту, её увидят другие участники."
+)
+
+#: Просителю: никто не откликнулся и срок вышел.
+NOTIFY_WISH_EXPIRED_HTML = (
+    "Срок вашей просьбы истёк.\n\n"
+    "В этот раз никто не успел откликнуться. Если нужда осталась — "
+    "создайте просьбу заново через /menu → «💫 Доска добрых дел», "
+    "мы поднимем её в ленте."
+)
+
+#: Обеим сторонам: просьбу закрыли автоматически.
+NOTIFY_AUTOCONFIRMED_REQUESTER_HTML = (
+    "Ваша просьба закрыта.\n\n"
+    "Помощь была отмечена выполненной, и подтверждения мы не дождались — "
+    "закрыли сами, чтобы дело не висело. Если что-то пошло не так, "
+    "напишите нам через /support."
+)
+NOTIFY_AUTOCONFIRMED_DONOR_HTML = (
+    "Спасибо! Ваше доброе дело закрыто.\n\n"
+    "Проситель не подтвердил его вовремя, поэтому мы закрыли просьбу сами. "
+    "Теперь вы снова можете взять новую."
+)
+
+
+def wish_taken_before_hint(count: int) -> str:
+    """Подсказка в карточке: просьбу уже брали и бросали."""
+    if count < 2:
+        return ""
+    return (
+        f"\n\n<i>Эту просьбу уже брали {count} раз(а) — "
+        f"и до конца пока не довели. Если возьмётесь, пожалуйста, "
+        f"доведите или сразу откажитесь.</i>"
+    )
+
+
+BTN_PAY_FOR_WISH = "Оплатить за просителя"
+BTN_PAY_FOR_SELF = "Нет, продлить себе"
+
+
+def confirm_self_payment_html(wish: Dict[str, Any]) -> str:
+    """Развилка: человек взял просьбу, а оплачивает обычный тариф.
+
+    Без этого вопроса деньги молча уходили на его собственную лицензию, а
+    просьба оставалась висеть взятой. Экран оплаты выглядел одинаково в обоих
+    случаях и получателя не называл.
+    """
+    title = escape(str(wish.get("button_title") or "")[:80])
+    return (
+        "⚠️ Уточним, кому идёт оплата.\n\n"
+        f"Вы взялись помочь с просьбой <b>№{int(wish.get('id') or 0)}</b> — "
+        f"«{title}», и она ещё не закрыта.\n\n"
+        "Сейчас оформляется обычное продление — <b>оно зачтётся вам</b>, "
+        "а не просителю. Если вы хотели помочь, выберите первую кнопку."
+    )
