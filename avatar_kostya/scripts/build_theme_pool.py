@@ -35,6 +35,9 @@ _ROOT = Path(__file__).resolve().parents[1]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
+# config подтягивает .env — без него нет ключа модели.
+from config import config  # noqa: E402,F401
+
 logger = logging.getLogger("themes")
 
 _SYSTEM_RU = """
