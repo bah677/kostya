@@ -148,3 +148,55 @@ def test_final_remind_window_is_before_timeout():
     src = inspect.getsource(WishBoardMixin.wish_list_taken_needing_final_remind)
     assert "make_interval(hours => $1 - $2)" in src
     assert "donor_final_reminded_at IS NULL" in src
+
+
+# ── Просьба подарить участие третьему лицу ───────────────────────────────────
+#
+# Такие просьбы заводятся с gift_type='other', кнопки «Подарить продление» у
+# них нет (бот не знает получателя), и дарители брали их и отказывались:
+# на №57 сменилось пятеро, на №60 — трое, двое из них отказывались и брали
+# снова в ту же минуту.
+
+
+def test_detects_gift_for_a_friend():
+    assert wb.looks_like_third_party_gift({
+        "gift_type": "other",
+        "button_title": "Моей подруге нужна поддержка",
+        "description": "Прошу для неё сделать оплату в виде 1 месяца клуба",
+    })
+    assert wb.looks_like_third_party_gift({
+        "gift_type": "other",
+        "button_title": "прошу поддержать мою подругу",
+        "description": "подарить участие в клубе на месяц",
+    })
+
+
+def test_plain_subscription_request_is_not_third_party():
+    """У обычной просьбы о себе кнопка работает — подсказка там лишняя."""
+    assert not wb.looks_like_third_party_gift({
+        "gift_type": "subscription",
+        "button_title": "Продление участия на месяц",
+        "description": "прошу продлить мне",
+    })
+
+
+def test_prayer_request_is_not_a_gift():
+    assert not wb.looks_like_third_party_gift({
+        "gift_type": "other",
+        "button_title": "Прошу вашей молитвы",
+        "description": "помолитесь обо мне, дорогие",
+    })
+
+
+def test_empty_request_is_not_a_gift():
+    assert not wb.looks_like_third_party_gift({"gift_type": "other"})
+
+
+def test_howto_names_every_step():
+    t = wb.THIRD_PARTY_GIFT_HOWTO_HTML
+    assert "/payment" in t
+    assert "Подарить подписку" in t
+    assert "Уточнить детали" in t
+    assert "Помощь оказана" in t
+    # предупреждение про одноразовость ссылки
+    assert "одноразов" in t

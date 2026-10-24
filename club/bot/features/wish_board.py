@@ -997,9 +997,20 @@ class WishBoardFeature(BaseFeature):
         text = self._append_role_hint(wish, user_id, text)
         # Просьбу могли уже брать и бросать несколько раз — одну взяли семь.
         # Ни просящий, ни следующий даритель об этом не знали.
-        if str(wish.get("status") or "") == "open":
+        status_now = str(wish.get("status") or "")
+        if status_now == "open":
             taken_before = await self.user_storage.wish_take_count(wish_id)
             text += wb_txt.wish_taken_before_hint(taken_before)
+
+        # Просьба «подарите участие моей подруге» заводится как other, и кнопки
+        # «Подарить продление» у неё нет: бот не знает получателя. Даритель
+        # брал просьбу, не находил, что нажать, и отказывался — на №57 так
+        # сменилось пятеро. Показываем, как это делается подарочным кодом.
+        if wb_txt.looks_like_third_party_gift(wish):
+            donor_now = wish.get("donor_user_id")
+            viewer_is_donor = bool(donor_now) and int(donor_now) == user_id
+            if status_now == "open" or (status_now == "taken" and viewer_is_donor):
+                text += wb_txt.THIRD_PARTY_GIFT_HOWTO_HTML
         kb_rows = self._detail_actions(wish, user_id)
         await render_user_screen(
             message,
