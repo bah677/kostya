@@ -22,6 +22,7 @@ from bot.services.club_removal_card import (
     build_club_removal_card_html,
 )
 from bot.texts import ru_subscription_reminder as sub_txt
+from bot.texts import ru_wish_board as wb_txt
 from bot.utils.admin_channel import (
     resolve_admin_service_thread_id,
     send_admin_html_message,
@@ -601,6 +602,88 @@ class SubscriptionReminderFeature(BaseFeature):
                 )
             await asyncio.sleep(0.5)
 
+    async def _hold_removal_for_wish(
+        self, lic: Dict[str, Any], *, today_msk: date
+    ) -> bool:
+        """True — исключение отложено, потому что по человеку есть живая просьба.
+
+        В день планового исключения пишем дарителю (он держит просьбу и может
+        не знать, что человека вот-вот выставят) и самому просителю, чтобы он
+        не гадал, почему доступ кончился, а группа осталась.
+        """
+        grace_days = int(getattr(config, "WISH_BOARD_KICK_GRACE_DAYS", 7) or 0)
+        if grace_days <= 0:
+            return False
+        user_id = int(lic["user_id"])
+
+        wish = await self.user_storage.wish_active_for_requester(user_id)
+        if not isinstance(wish, dict):
+            return False
+        # Отсрочка — исключение из общего правила, поэтому включаем её только
+        # на заведомо валидной просьбе: кривые данные не должны оставлять
+        # человека в группе навсегда.
+        try:
+            wish_id = int(wish.get("id"))
+        except (TypeError, ValueError):
+            return False
+        status = str(wish.get("status") or "")
+        if status not in ("taken", "done_pending", "open", "pending_moderation"):
+            return False
+
+        expires_at = lic.get("expires_at")
+        if isinstance(expires_at, datetime):
+            exp_date = (
+                expires_at.replace(tzinfo=timezone.utc)
+                if expires_at.tzinfo is None
+                else expires_at
+            ).astimezone(MSK_TZ).date()
+            overdue = (today_msk - exp_date).days
+            if overdue > grace_days:
+                logger.info(
+                    "wish hold: отсрочка исчерпана uid=%s wish=%s (просрочка %s дн.)",
+                    user_id,
+                    wish.get("id"),
+                    overdue,
+                )
+                return False
+            days_left = max(0, grace_days - overdue)
+        else:
+            days_left = grace_days
+
+        slug = f"wish_hold_{wish_id}"
+        taken = status in ("taken", "done_pending")
+
+        # Пишем один раз на просьбу, а не каждый день отсрочки.
+        first_time = await self.user_storage.try_claim_subscription_outreach(
+            user_id, slug, today_msk
+        )
+        if first_time:
+            try:
+                await self._send_html(
+                    user_id, wb_txt.kick_hold_requester_html(taken=taken), None
+                )
+            except Exception as e:
+                logger.warning("wish hold requester uid=%s: %s", user_id, e)
+            donor_id = wish.get("donor_user_id")
+            if taken and donor_id:
+                try:
+                    await self._send_html(
+                        int(donor_id),
+                        wb_txt.kick_hold_donor_html(wish, days_left=days_left),
+                        None,
+                    )
+                except Exception as e:
+                    logger.warning("wish hold donor uid=%s: %s", donor_id, e)
+
+        logger.info(
+            "wish hold: исключение отложено uid=%s wish=%s статус=%s осталось %s дн.",
+            user_id,
+            wish_id,
+            wish.get("status"),
+            days_left,
+        )
+        return True
+
     async def _post_bonus_remove_one(
         self,
         lic: Dict[str, Any],
@@ -617,6 +700,18 @@ class SubscriptionReminderFeature(BaseFeature):
         if await should_skip_subscription_outreach_slug(
             self.user_storage, user_id, _OUTREACH_SLUG_POST_BONUS_FINAL
         ):
+            return
+
+        # Не выставляем за дверь того, кому уже вызвались помочь.
+        #
+        # Было так: человек просит продление на Доске, даритель берёт просьбу
+        # и собирается платить, а бот тем временем закрывает просителю вход в
+        # группу. Так случилось с просьбой №58 — даритель держал её три дня,
+        # и просителя кикнули, пока он ждал.
+        #
+        # Отсрочка ограничена: иначе открытая просьба давала бы бесконечный
+        # доступ. Слот рассылки НЕ занимаем — проверка повторится завтра.
+        if await self._hold_removal_for_wish(lic, today_msk=today_msk):
             return
 
         claimed = await self.user_storage.try_claim_subscription_outreach(

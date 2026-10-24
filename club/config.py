@@ -129,6 +129,9 @@ class Config:
     WISH_BOARD_GROUP_REMINDER_GAP_DAYS: int = 3
     WISH_BOARD_GROUP_REMINDER_MAX: int = 3
     WISH_BOARD_MAX_ACTIVE_PER_REQUESTER: int = 2
+    #: Отсрочка исключения из группы, если по человеку есть живая просьба
+    #: о продлении на ДДД. Ноль — отсрочки нет.
+    WISH_BOARD_KICK_GRACE_DAYS: int = 7
     #: Автозакрытие done_pending, если проситель молчит N дней.
     #: Раньше таймаута у этого состояния не было вовсе, и дело дарителя
     #: висело неделями, блокируя ему новые просьбы.
@@ -676,6 +679,9 @@ def load_config() -> Config:
         ),
         WISH_BOARD_GROUP_REMINDER_GAP_DAYS=max(
             1, int(os.getenv("WISH_BOARD_GROUP_REMINDER_GAP_DAYS", "3") or "3")
+        ),
+        WISH_BOARD_KICK_GRACE_DAYS=max(
+            0, int(os.getenv("WISH_BOARD_KICK_GRACE_DAYS", "7") or "7")
         ),
         WISH_BOARD_DONE_PENDING_AUTOCONFIRM_DAYS=max(
             1,

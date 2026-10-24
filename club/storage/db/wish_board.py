@@ -1245,3 +1245,38 @@ class WishBoardMixin:
         except Exception as e:
             logger.error("wish_take_count wish=%s: %s", wish_id, e)
             return 0
+
+    async def wish_active_for_requester(
+        self, requester_id: int
+    ) -> Optional[Dict[str, Any]]:
+        """Живая просьба о продлении, по которой человека ещё ждут.
+
+        Нужна, чтобы не выкидывать из группы того, кому уже вызвались помочь:
+        человек просит продление, даритель берёт просьбу и собирается платить,
+        а бот тем временем выставляет просителя за дверь. Так случилось с
+        просьбой №58: даритель держал её три дня, и просителя кикнули.
+
+        Взятая просьба важнее открытой — её и возвращаем первой.
+        """
+        try:
+            async with self.get_connection() as conn:
+                row = await conn.fetchrow(
+                    """
+                    SELECT * FROM wish_requests
+                    WHERE requester_user_id = $1
+                      AND gift_type = 'subscription'
+                      AND status = ANY($2::varchar[])
+                    ORDER BY array_position(
+                                 ARRAY['taken','done_pending','open','pending_moderation'],
+                                 status::text
+                             ),
+                             created_at DESC
+                    LIMIT 1
+                    """,
+                    int(requester_id),
+                    ["taken", "done_pending", "open", "pending_moderation"],
+                )
+                return dict(row) if row else None
+        except Exception as e:
+            logger.error("wish_active_for_requester uid=%s: %s", requester_id, e)
+            return None
