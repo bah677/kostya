@@ -78,15 +78,24 @@ class MemberGiftExtensionFeature(BaseFeature):
     ) -> bool:
         wish = await self.user_storage.wish_get(wish_id)
         if not wish:
+            logger.info("wish gift отклонён: просьба %s не найдена", wish_id)
             return False
-        if wish.get("status") != "taken":
-            return False
-        if wish.get("gift_type") != "subscription":
-            return False
-        if int(wish.get("donor_user_id") or 0) != donor_id:
-            return False
-        if int(wish.get("requester_user_id") or 0) != recipient_id:
-            return False
+        # Отказ пишем в лог с причиной: человек видит одно и то же
+        # «уже нельзя оплатить» на все пять случаев, и без лога разобраться,
+        # какой именно сработал, невозможно.
+        for label, ok in (
+            (f"статус {wish.get('status')!r}, нужен 'taken'",
+             wish.get("status") == "taken"),
+            (f"тип {wish.get('gift_type')!r}, нужен 'subscription'",
+             wish.get("gift_type") == "subscription"),
+            (f"даритель {wish.get('donor_user_id')} != {donor_id}",
+             int(wish.get("donor_user_id") or 0) == int(donor_id or 0)),
+            (f"получатель {wish.get('requester_user_id')} != {recipient_id}",
+             int(wish.get("requester_user_id") or 0) == int(recipient_id or 0)),
+        ):
+            if not ok:
+                logger.info("wish gift отклонён: просьба %s — %s", wish_id, label)
+                return False
         return True
 
     async def start_for_recipient(
@@ -98,9 +107,23 @@ class MemberGiftExtensionFeature(BaseFeature):
         edit: bool = False,
         wish_id: Optional[int] = None,
         hide_recipient_identity: bool = False,
+        donor_id: Optional[int] = None,
     ) -> None:
-        """Подарок конкретному участнику без шага поиска (доска желаний)."""
-        donor_id = message.from_user.id if message.from_user else None
+        """Подарок конкретному участнику без шага поиска (доска желаний).
+
+        donor_id передаётся явно и это важно. Единственный вызов приходит из
+        колбэка кнопки «🎁 Подарить продление», где `message` — это
+        `callback.message`, то есть сообщение, отправленное БОТОМ. Его
+        `from_user` — сам бот, а не человек, нажавший кнопку.
+
+        Пока дарителя брали отсюда, `_validate_wish_board_gift` сравнивал
+        `wish.donor_user_id` с id бота, не совпадало никогда, и каждый
+        даритель получал «Эту просьбу уже нельзя оплатить». Кнопка на доске
+        не работала ни разу.
+        """
+        if donor_id is None and message.from_user:
+            donor_id = message.from_user.id
+        donor_id = int(donor_id) if donor_id else None
         if donor_id and recipient_id == donor_id:
             await render_user_screen(message, text=mg_txt.ERR_SELF, edit=edit)
             return

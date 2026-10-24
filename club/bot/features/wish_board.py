@@ -1242,6 +1242,8 @@ class WishBoardFeature(BaseFeature):
                 message, text=wb_txt.ERR_GIFT_UNAVAILABLE, edit=True
             )
             return
+        # user_id передаём явно: `message` здесь — это callback.message,
+        # то есть сообщение бота, и его from_user — сам бот.
         await mgift.start_for_recipient(
             message,
             state,
@@ -1249,6 +1251,7 @@ class WishBoardFeature(BaseFeature):
             edit=True,
             wish_id=wish_id,
             hide_recipient_identity=bool(wish.get("is_anonymous")),
+            donor_id=user_id,
         )
 
     async def _mark_done(
