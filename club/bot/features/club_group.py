@@ -18,6 +18,11 @@ from aiogram.types import (
 )
 
 from bot.features.base import BaseFeature
+from bot.club_access import (
+    REASON_AUDIT,
+    SOURCE_AUDIT,
+    ClubAccessRevoker,
+)
 from bot.texts import ru_club_group as club_txt
 from bot.logging.message_copier import MessageCopier
 from bot.logging.club_join_debug import (
@@ -807,6 +812,7 @@ class ClubGroupFeature(BaseFeature):
         cached = await self.user_storage.list_club_member_cache_user_ids()
         removed_audit: List[Tuple[int, Optional[Dict[str, Any]]]] = []
         cache_pruned_only: List[Tuple[int, Optional[Dict[str, Any]], str]] = []
+        revoker = ClubAccessRevoker(self.user_storage, self.bot)
 
         for uid in cached:
             if uid in admin_ids:
@@ -830,6 +836,7 @@ class ClubGroupFeature(BaseFeature):
                 continue
 
             grace = config.CLUB_GROUP_EXPIRED_LICENSE_GRACE_DAYS
+            last_license_expires = await self.user_storage.last_license_expires_at(uid)
             pending = await self.user_storage.get_pending_gift_ticket(uid)
             if pending:
                 # Вход потеряли событием — активируем билет, не исключаем
@@ -854,26 +861,42 @@ class ClubGroupFeature(BaseFeature):
             ):
                 continue
 
+            # Ночной аудит — ПОДСТРАХОВКА за плановым исключением в 9 МСК, а
+            # не самостоятельное решение. Поэтому и кик, и все его проверки
+            # идут через общий механизм bot/club_access: там же отсрочка по
+            # просьбе ДДД и защита от повторного исключения.
+            decision = await revoker.revoke(
+                uid,
+                reason=REASON_AUDIT,
+                source=SOURCE_AUDIT,
+                expires_at=last_license_expires,
+            )
+            if decision.held:
+                logger.info(
+                    "[%s] wish hold (аудит): не исключаем uid=%s — просьба №%s (%s)",
+                    self.name,
+                    uid,
+                    (decision.wish or {}).get("id"),
+                    (decision.wish or {}).get("status"),
+                )
+                continue
+            if not decision.removed:
+                logger.info(
+                    "[%s] аудит: uid=%s пропущен (%s)",
+                    self.name,
+                    uid,
+                    decision.outcome.value,
+                )
+                continue
+
             logger.info(
                 "[%s] Удаление из клуба (нет действующей подписки или истекла > %s дн.) user_id=%s",
                 self.name,
                 grace,
                 uid,
             )
-            try:
-                await self.bot.ban_chat_member(chat_id=config.CLUB_GROUP_ID, user_id=uid)
-                await self.bot.unban_chat_member(chat_id=config.CLUB_GROUP_ID, user_id=uid)
-            except Exception as e:
-                logger.error("[%s] kick uid=%s: %s", self.name, uid, e)
-                continue
-
-            await self.user_storage.delete_club_member_cache(uid)
             profile = await self.user_storage.get_user(uid)
             removed_audit.append((uid, profile))
-            await self.user_storage.record_club_member_exclusion(
-                uid, reason="nightly_audit", source="club_group"
-            )
-            await self.user_storage.mark_license_expired(uid)
 
         if removed_audit:
             await self._notify_support_topic_club_removals(removed_audit)

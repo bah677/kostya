@@ -607,49 +607,28 @@ class SubscriptionReminderFeature(BaseFeature):
     ) -> bool:
         """True — исключение отложено, потому что по человеку есть живая просьба.
 
+        Решение «держать или нет» живёт в bot/services/wish_board_kick_hold:
+        его же спрашивает ночной аудит клубной группы. Если бы проверка была
+        только здесь, аудит отменил бы отсрочку — его порог короче.
+
         В день планового исключения пишем дарителю (он держит просьбу и может
         не знать, что человека вот-вот выставят) и самому просителю, чтобы он
         не гадал, почему доступ кончился, а группа осталась.
         """
-        grace_days = int(getattr(config, "WISH_BOARD_KICK_GRACE_DAYS", 7) or 0)
-        if grace_days <= 0:
-            return False
+        from bot.services.wish_board_kick_hold import days_left, wish_holding_removal
+
         user_id = int(lic["user_id"])
+        wish = await wish_holding_removal(
+            self.user_storage,
+            user_id,
+            expires_at=lic.get("expires_at"),
+            today_msk=today_msk,
+        )
+        if not wish:
+            return False
 
-        wish = await self.user_storage.wish_active_for_requester(user_id)
-        if not isinstance(wish, dict):
-            return False
-        # Отсрочка — исключение из общего правила, поэтому включаем её только
-        # на заведомо валидной просьбе: кривые данные не должны оставлять
-        # человека в группе навсегда.
-        try:
-            wish_id = int(wish.get("id"))
-        except (TypeError, ValueError):
-            return False
+        wish_id = int(wish["id"])
         status = str(wish.get("status") or "")
-        if status not in ("taken", "done_pending", "open", "pending_moderation"):
-            return False
-
-        expires_at = lic.get("expires_at")
-        if isinstance(expires_at, datetime):
-            exp_date = (
-                expires_at.replace(tzinfo=timezone.utc)
-                if expires_at.tzinfo is None
-                else expires_at
-            ).astimezone(MSK_TZ).date()
-            overdue = (today_msk - exp_date).days
-            if overdue > grace_days:
-                logger.info(
-                    "wish hold: отсрочка исчерпана uid=%s wish=%s (просрочка %s дн.)",
-                    user_id,
-                    wish.get("id"),
-                    overdue,
-                )
-                return False
-            days_left = max(0, grace_days - overdue)
-        else:
-            days_left = grace_days
-
         slug = f"wish_hold_{wish_id}"
         taken = status in ("taken", "done_pending")
 
@@ -679,18 +658,18 @@ class SubscriptionReminderFeature(BaseFeature):
                 try:
                     await self._send_html(
                         int(donor_id),
-                        wb_txt.kick_hold_donor_html(wish, days_left=days_left),
+                        wb_txt.kick_hold_donor_html(wish, days_left=days_left(wish)),
                         None,
                     )
                 except Exception as e:
                     logger.warning("wish hold donor uid=%s: %s", donor_id, e)
 
         logger.info(
-            "wish hold: исключение отложено uid=%s wish=%s статус=%s осталось %s дн.",
+            "wish hold (плановый): исключение отложено uid=%s wish=%s статус=%s осталось %s дн.",
             user_id,
             wish_id,
-            wish.get("status"),
-            days_left,
+            status,
+            days_left(wish),
         )
         return True
 
@@ -758,25 +737,30 @@ class SubscriptionReminderFeature(BaseFeature):
                 user_id,
             )
 
-        if club_gid and club_group:
-            try:
-                await self.bot.ban_chat_member(chat_id=club_gid, user_id=user_id)
-                await self.bot.unban_chat_member(chat_id=club_gid, user_id=user_id)
-                logger.info("🚪 User %s removed from group %s", user_id, club_gid)
-                await self.user_storage.record_club_member_exclusion(
-                    user_id,
-                    reason="bonus_expired",
-                    source="subscription_reminder",
-                )
-            except Exception as e:
-                logger.error("❌ kick uid=%s: %s", user_id, e)
-        else:
-            logger.info(
-                "ℹ️ CLUB_GROUP_ID=0 или нет club_group — kick пропущен uid=%s",
-                user_id,
-            )
+        # Сам кик, журнал, снятие лицензии и кэш группы — в общем механизме
+        # bot/club_access: его же зовёт ночной аудит. Раньше у каждого был
+        # свой код, и они расходились — десять человек оказались исключены
+        # обоими по очереди.
+        from bot.club_access import (
+            REASON_SCHEDULED,
+            SOURCE_SCHEDULED,
+            ClubAccessRevoker,
+        )
 
-        await self.user_storage.mark_license_expired(user_id)
+        decision = await ClubAccessRevoker(self.user_storage, self.bot).revoke(
+            user_id,
+            reason=REASON_SCHEDULED,
+            source=SOURCE_SCHEDULED,
+            expires_at=lic.get("expires_at"),
+        )
+        if not decision.removed:
+            logger.info(
+                "post_bonus: uid=%s не исключён (%s)",
+                user_id,
+                decision.outcome.value,
+            )
+            return
+
         card = await build_club_removal_card_html(
             self.user_storage,
             user_id,

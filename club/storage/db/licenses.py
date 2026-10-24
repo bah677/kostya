@@ -961,3 +961,19 @@ class LicensesMixin:
         except Exception as e:
             logger.error(f"❌ Failed to mark license expired: {e}")
             return False
+
+    async def last_license_expires_at(self, user_id: int) -> Optional[datetime]:
+        """Последняя известная дата окончания доступа (даже если лицензия истекла).
+
+        Нужна ночному аудиту, чтобы считать отсрочку по просьбе ДДД от той же
+        точки, что и плановое исключение, — иначе два механизма разошлись бы.
+        """
+        try:
+            async with self.get_connection() as conn:
+                return await conn.fetchval(
+                    "SELECT MAX(expires_at) FROM license WHERE user_id = $1",
+                    int(user_id),
+                )
+        except Exception as e:
+            logger.error("last_license_expires_at uid=%s: %s", user_id, e)
+            return None

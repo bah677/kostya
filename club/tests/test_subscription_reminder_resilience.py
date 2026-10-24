@@ -11,6 +11,18 @@ from bot.texts import ru_subscription_reminder as sub_txt
 from config import config
 
 
+class _NoRecentExclusions:
+    """Соединение-заглушка: «недавних исключений нет»."""
+
+    async def __aenter__(self):
+        conn = AsyncMock()
+        conn.fetchval = AsyncMock(return_value=None)
+        return conn
+
+    async def __aexit__(self, *exc):
+        return False
+
+
 def test_process_all_continues_after_step_failure():
     async def _run():
         feature = SubscriptionReminderFeature(AsyncMock(), AsyncMock())
@@ -85,6 +97,16 @@ def test_post_bonus_skips_duplicate_dm_but_still_kicks():
         storage.get_user = AsyncMock(return_value={"first_name": "Анжела"})
         storage.mark_license_expired = AsyncMock(return_value=True)
         storage.record_club_member_exclusion = AsyncMock()
+        # Исключение идёт через общий механизм bot/club_access, у него свои
+        # проверки: нет ли уже действующего доступа, не убирали ли только что,
+        # нет ли живой просьбы на ДДД. На голом AsyncMock каждая из них
+        # ответила бы «да» и кик бы не состоялся.
+        storage.user_has_active_license = AsyncMock(return_value=False)
+        storage.wish_active_for_requester = AsyncMock(return_value=None)
+        storage.delete_club_member_cache = AsyncMock()
+        storage.get_connection = MagicMock(
+            return_value=_NoRecentExclusions()
+        )
 
         bot = AsyncMock()
         feature = SubscriptionReminderFeature(storage, bot)
