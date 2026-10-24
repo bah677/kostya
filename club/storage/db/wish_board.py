@@ -574,6 +574,10 @@ class WishBoardMixin:
                     """
                     UPDATE wish_requests
                     SET status = 'done_pending',
+                        -- Момент отметки нужен, чтобы у состояния был отсчёт:
+                        -- без него просьба висела без срока. №51 так провисела
+                        -- три недели, и автозакрытие её не видело.
+                        completed_at = COALESCE(completed_at, NOW()),
                         updated_at = NOW()
                     WHERE id = $1
                       AND status = 'taken'
@@ -1210,8 +1214,11 @@ class WishBoardMixin:
                         confirmed_at = NOW(),
                         updated_at = NOW()
                     WHERE status = 'done_pending'
-                      AND completed_at IS NOT NULL
-                      AND completed_at < NOW() - ($1::text || ' days')::interval
+                      -- coalesce: у строк, отмеченных до исправления
+                      -- wish_mark_done, completed_at пуст — считаем от
+                      -- updated_at, иначе они не закроются никогда.
+                      AND COALESCE(completed_at, updated_at)
+                          < NOW() - ($1::text || ' days')::interval
                     RETURNING *
                     """,
                     str(int(days)),

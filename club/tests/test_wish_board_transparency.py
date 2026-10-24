@@ -76,3 +76,31 @@ def test_buttons_present():
     assert wb.BTN_OPEN_BLOCKING
     assert wb.BTN_PAY_FOR_WISH
     assert wb.BTN_PAY_FOR_SELF
+
+
+# ── Автозакрытие «ждёт подтверждения» ────────────────────────────────────────
+#
+# Просьба №51 провисела в этом состоянии три недели, и автозакрытие её не
+# видело: wish_mark_done ставил только status, а completed_at оставался пустым.
+# Отсчитывать было не от чего.
+
+
+def test_mark_done_records_the_moment():
+    """В SQL отметки выполнения должен проставляться completed_at."""
+    import inspect
+
+    from storage.db.wish_board import WishBoardMixin
+
+    src = inspect.getsource(WishBoardMixin.wish_mark_done)
+    assert "completed_at" in src, "без completed_at состоянию нечем отсчитывать срок"
+    assert "done_pending" in src
+
+
+def test_autoconfirm_falls_back_to_updated_at():
+    """Строки, отмеченные до исправления, тоже должны закрываться."""
+    import inspect
+
+    from storage.db.wish_board import WishBoardMixin
+
+    src = inspect.getsource(WishBoardMixin.wish_autoconfirm_stale_done_pending)
+    assert "COALESCE(completed_at, updated_at)" in src
