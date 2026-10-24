@@ -807,8 +807,27 @@ class WishBoardFeature(BaseFeature):
             limit=per_page + 1, offset=page * per_page
         )
         if not wishes:
+            # Пустая доска — не тупик: предлагаем ангельский взнос, он не
+            # привязан к конкретной просьбе. Кнопка внизу, под описанием.
             await render_user_screen(
-                message, text=wb_txt.POOL_EMPTY_HTML, edit=edit
+                message,
+                text=wb_txt.pool_empty_html(),
+                reply_markup=with_main_menu(
+                    [
+                        [
+                            callback_button(
+                                ap_txt.BTN_ANGEL, "ap:intro", style="success"
+                            )
+                        ],
+                        [
+                            InlineKeyboardButton(
+                                text=wb_txt.BTN_BACK_HUB, callback_data=CB_HUB
+                            )
+                        ],
+                    ]
+                ),
+                edit=edit,
+                add_main_menu=False,
             )
             return
 

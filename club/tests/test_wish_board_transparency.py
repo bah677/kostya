@@ -200,3 +200,51 @@ def test_howto_names_every_step():
     assert "Помощь оказана" in t
     # предупреждение про одноразовость ссылки
     assert "одноразов" in t
+
+
+# ── Ангельский взнос ─────────────────────────────────────────────────────────
+#
+# Минимум подняли до 8 000 ₽, а он был прописан руками в шести местах текстов
+# и мог разъехаться с проверкой суммы. Плюс пустая доска раньше была тупиком:
+# «загляните позже» — и человек уходил ни с чем, хотя помочь мог.
+
+
+def test_angel_minimum_is_single_source():
+    """Тексты берут минимум из сервиса, а не хранят своё число."""
+    from bot.services.angel_pool_service import MIN_AMOUNT_RUB
+    from bot.texts import ru_angel_pool as ap
+
+    shown = f"{MIN_AMOUNT_RUB:,}".replace(",", " ")
+    for t in (ap.INTRO_HTML, ap.PROMPT_AMOUNT_RUB_HTML, ap.ERR_AMOUNT_TOO_LOW_RUB):
+        assert shown in t, t[:60]
+    assert "7 000" not in ap.INTRO_HTML
+
+
+def test_angel_presets_start_at_minimum():
+    from bot.services.angel_pool_service import MIN_AMOUNT_RUB, PRESET_AMOUNTS_RUB
+
+    assert PRESET_AMOUNTS_RUB[0] == MIN_AMOUNT_RUB
+    assert list(PRESET_AMOUNTS_RUB) == sorted(PRESET_AMOUNTS_RUB)
+
+
+def test_minimum_buys_whole_extensions():
+    """Минимума должно хватать на несколько продлений, иначе смысла нет."""
+    from bot.services.angel_pool_service import MIN_AMOUNT_RUB, compute_extension_slots
+
+    assert compute_extension_slots(MIN_AMOUNT_RUB, 1200) >= 5
+
+
+def test_empty_pool_offers_angel():
+    from bot.services.angel_pool_service import MIN_AMOUNT_RUB
+
+    html = wb.pool_empty_html()
+    assert "ангел" in html.lower()
+    assert f"{MIN_AMOUNT_RUB:,}".replace(",", " ") in html
+    # объясняет механику, а не просто зовёт
+    assert "случай" in html.lower()
+    assert "заканчивается" in html
+
+
+def test_empty_pool_is_not_a_dead_end():
+    html = wb.pool_empty_html()
+    assert "загляните позже" not in html.lower()

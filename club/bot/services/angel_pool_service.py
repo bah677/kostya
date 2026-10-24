@@ -8,10 +8,10 @@ import re
 from dataclasses import dataclass
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
-MIN_AMOUNT_RUB = 7000
+MIN_AMOUNT_RUB = 8000
 MIN_AMOUNT_USD = 100
 
-PRESET_AMOUNTS_RUB = (7000, 14000, 35000)
+PRESET_AMOUNTS_RUB = (8000, 16000, 40000)
 PRESET_AMOUNTS_USD = (100, 200, 500)
 
 # Для текста: эквивалент € (~100 USD).

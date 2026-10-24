@@ -44,7 +44,8 @@ class TestComputeExtensionSlots:
 
 class TestMinAmount:
     def test_limits(self):
-        assert min_amount_for_currency("RUB") == 7000
+        # Минимум поднят с 7 000 до 8 000 ₽ решением владельца (24.10.2026).
+        assert min_amount_for_currency("RUB") == 8000
         assert min_amount_for_currency("USD") == 100
 
 
@@ -56,7 +57,7 @@ class TestPresetAmounts:
         )
 
         assert preset_amounts_for_currency("RUB") == PRESET_AMOUNTS_RUB
-        assert PRESET_AMOUNTS_RUB == (7000, 14000, 35000)
+        assert PRESET_AMOUNTS_RUB == (8000, 16000, 40000)
 
     def test_usd_presets(self):
         from bot.services.angel_pool_service import (
