@@ -115,7 +115,10 @@ class Config:
     #: Устарело: используйте WISH_BOARD_TAKEN_TIMEOUT_HOURS. Держим для env-fallback.
     WISH_BOARD_TAKEN_TIMEOUT_DAYS: int = 1
     #: Напоминание дарителю через N часов после взятия.
-    WISH_BOARD_DONOR_REMIND_HOURS: int = 6
+    #: Первое напоминание дарителю после отклика.
+    WISH_BOARD_DONOR_REMIND_HOURS: int = 3
+    #: Второе и последнее — за N часов до возврата просьбы в ленту.
+    WISH_BOARD_DONOR_FINAL_REMIND_HOURS: int = 4
     #: Напоминание модераторам / просрочка модерации / «дарителя нет».
     WISH_BOARD_MODERATION_REMIND_HOURS: int = 12
     WISH_BOARD_MODERATION_OVERDUE_HOURS: int = 24
@@ -650,7 +653,7 @@ def load_config() -> Config:
             1, (_wish_board_taken_timeout_hours_from_env() + 23) // 24
         ),
         WISH_BOARD_DONOR_REMIND_HOURS=max(
-            1, int(os.getenv("WISH_BOARD_DONOR_REMIND_HOURS", "6") or "6")
+            1, int(os.getenv("WISH_BOARD_DONOR_REMIND_HOURS", "3") or "3")
         ),
         WISH_BOARD_MODERATION_REMIND_HOURS=max(
             1, int(os.getenv("WISH_BOARD_MODERATION_REMIND_HOURS", "12") or "12")
@@ -679,6 +682,10 @@ def load_config() -> Config:
         ),
         WISH_BOARD_GROUP_REMINDER_GAP_DAYS=max(
             1, int(os.getenv("WISH_BOARD_GROUP_REMINDER_GAP_DAYS", "3") or "3")
+        ),
+        WISH_BOARD_DONOR_FINAL_REMIND_HOURS=max(
+            1,
+            int(os.getenv("WISH_BOARD_DONOR_FINAL_REMIND_HOURS", "4") or "4"),
         ),
         WISH_BOARD_KICK_GRACE_DAYS=max(
             0, int(os.getenv("WISH_BOARD_KICK_GRACE_DAYS", "7") or "7")

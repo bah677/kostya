@@ -1592,6 +1592,46 @@ class WishBoardFeature(BaseFeature):
             )
             await self.user_storage.wish_mark_donor_reminded(wid)
 
+        # Второе, последнее касание — перед самым возвратом просьбы в ленту.
+        # Одного раннего напоминания не хватало: 26 откликов из 44 кончились
+        # молчаливым таймаутом, человек просто забывал.
+        final_list = await self.user_storage.wish_list_taken_needing_final_remind(
+            timeout_hours=int(config.WISH_BOARD_TAKEN_TIMEOUT_HOURS),
+            warn_before_hours=int(
+                getattr(config, "WISH_BOARD_DONOR_FINAL_REMIND_HOURS", 4) or 4
+            ),
+        )
+        for w in final_list:
+            donor_id = w.get("donor_user_id")
+            if not donor_id:
+                continue
+            wid = int(w["id"])
+            kb = InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        InlineKeyboardButton(
+                            text=wb_txt.BTN_DONE_MARK,
+                            callback_data=f"{CB_DONE_PREFIX}{wid}",
+                        )
+                    ],
+                    [
+                        InlineKeyboardButton(
+                            text=wb_txt.BTN_RETURN_POOL,
+                            callback_data=f"{CB_RELEASE_PREFIX}{wid}",
+                        )
+                    ],
+                ]
+            )
+            await wb_notify.notify_user_html(
+                bot,
+                int(donor_id),
+                wb_txt.donor_final_remind_html(
+                    w, hours_left=int(w.get("hours_left") or 0)
+                ),
+                reply_markup=kb,
+            )
+            await self.user_storage.wish_mark_donor_final_reminded(wid)
+
         overdue_h = config.WISH_BOARD_MODERATION_OVERDUE_HOURS
         pending_mods = await self.user_storage.wish_list_pending_moderation_reminders(
             remind_after_hours=config.WISH_BOARD_MODERATION_REMIND_HOURS,

@@ -104,3 +104,47 @@ def test_autoconfirm_falls_back_to_updated_at():
 
     src = inspect.getsource(WishBoardMixin.wish_autoconfirm_stale_done_pending)
     assert "COALESCE(completed_at, updated_at)" in src
+
+
+# ── Напоминания дарителю ─────────────────────────────────────────────────────
+#
+# Было одно напоминание через 6 часов после отклика — и всё. При недельном
+# сроке человек успевал забыть: 26 откликов из 44 кончились молчаливым
+# таймаутом, просьбы стояли замороженными 90% своей жизни.
+
+
+def test_final_remind_names_the_deadline():
+    html = wb.donor_final_remind_html(_wish(), hours_left=4)
+    assert "через 4 ч" in html
+    assert "вернётся в общую ленту" in html
+
+
+def test_final_remind_without_known_hours():
+    html = wb.donor_final_remind_html(_wish(), hours_left=0)
+    assert "совсем скоро" in html
+
+
+def test_final_remind_does_not_shame():
+    """Вернуть просьбу — нормально, а не провал."""
+    html = wb.donor_final_remind_html(_wish(), hours_left=2)
+    assert "нормально" in html
+    for bad in ("обязаны", "подвели", "не выполнили"):
+        assert bad not in html.lower()
+
+
+def test_final_remind_escapes_title():
+    html = wb.donor_final_remind_html(
+        _wish(button_title="<b>взлом</b>"), hours_left=3
+    )
+    assert "<b>взлом</b>" not in html
+
+
+def test_final_remind_window_is_before_timeout():
+    """Окно предупреждения считается от таймаута, а не от момента отклика."""
+    import inspect
+
+    from storage.db.wish_board import WishBoardMixin
+
+    src = inspect.getsource(WishBoardMixin.wish_list_taken_needing_final_remind)
+    assert "make_interval(hours => $1 - $2)" in src
+    assert "donor_final_reminded_at IS NULL" in src

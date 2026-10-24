@@ -1287,3 +1287,58 @@ class WishBoardMixin:
         except Exception as e:
             logger.error("wish_active_for_requester uid=%s: %s", requester_id, e)
             return None
+
+    async def wish_list_taken_needing_final_remind(
+        self, *, timeout_hours: int, warn_before_hours: int
+    ) -> List[Dict[str, Any]]:
+        """Взятые просьбы, которые скоро вернутся в ленту.
+
+        Второе и последнее касание дарителя: первое уходит вскоре после
+        отклика, это — перед самым возвратом. Между ними человек успевает
+        забыть: 26 откликов из 44 кончились молчаливым таймаутом.
+        """
+        try:
+            async with self.get_connection() as conn:
+                rows = await conn.fetch(
+                    """
+                    SELECT *,
+                           round(
+                               extract(epoch FROM (
+                                   taken_at + make_interval(hours => $1) - NOW()
+                               )) / 3600.0
+                           ) AS hours_left
+                    FROM wish_requests
+                    WHERE status = 'taken'
+                      AND taken_at IS NOT NULL
+                      AND donor_user_id IS NOT NULL
+                      AND donor_final_reminded_at IS NULL
+                      AND COALESCE(is_test, FALSE) = FALSE
+                      -- окно: уже пора предупредить, но срок ещё не вышел
+                      AND taken_at <= NOW() - make_interval(hours => $1 - $2)
+                      AND taken_at > NOW() - make_interval(hours => $1)
+                    ORDER BY taken_at ASC
+                    LIMIT 50
+                    """,
+                    int(timeout_hours),
+                    int(warn_before_hours),
+                )
+                return [dict(r) for r in rows]
+        except Exception as e:
+            logger.error("wish_list_taken_needing_final_remind: %s", e)
+            return []
+
+    async def wish_mark_donor_final_reminded(self, wish_id: int) -> bool:
+        try:
+            async with self.get_connection() as conn:
+                await conn.execute(
+                    "UPDATE wish_requests SET donor_final_reminded_at = NOW(), "
+                    "updated_at = NOW() WHERE id = $1",
+                    int(wish_id),
+                )
+                await self._wish_log_event(
+                    conn, int(wish_id), None, "wb_donor_final_reminded", None
+                )
+            return True
+        except Exception as e:
+            logger.error("wish_mark_donor_final_reminded id=%s: %s", wish_id, e)
+            return False
