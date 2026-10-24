@@ -654,9 +654,19 @@ class SubscriptionReminderFeature(BaseFeature):
         taken = status in ("taken", "done_pending")
 
         # Пишем один раз на просьбу, а не каждый день отсрочки.
-        first_time = await self.user_storage.try_claim_subscription_outreach(
-            user_id, slug, today_msk
+        #
+        # try_claim_subscription_outreach уникален по связке (user, slug, ДЕНЬ),
+        # поэтому сам по себе он отсрочку не покрывает: назавтра слот снова
+        # свободен и письмо ушло бы повторно. Сначала проверяем, писали ли мы
+        # по этой просьбе вообще — slug именной, с её номером.
+        already = await self.user_storage.has_subscription_outreach_since(
+            user_id, slug, datetime.now(timezone.utc) - timedelta(days=90)
         )
+        first_time = False
+        if not already:
+            first_time = await self.user_storage.try_claim_subscription_outreach(
+                user_id, slug, today_msk
+            )
         if first_time:
             try:
                 await self._send_html(

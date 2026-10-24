@@ -14,10 +14,11 @@ from bot.features.subscription_reminder import SubscriptionReminderFeature
 TODAY = date(2026, 10, 24)
 
 
-def _feature(wish, *, claimed=True):
+def _feature(wish, *, claimed=True, already_sent=False):
     storage = AsyncMock()
     storage.wish_active_for_requester = AsyncMock(return_value=wish)
     storage.try_claim_subscription_outreach = AsyncMock(return_value=claimed)
+    storage.has_subscription_outreach_since = AsyncMock(return_value=already_sent)
     f = SubscriptionReminderFeature(storage, AsyncMock())
     f.feature_manager = MagicMock()
     f._send_html = AsyncMock(return_value=True)
@@ -95,6 +96,28 @@ def test_no_second_notification_when_slot_taken():
     f, _ = _feature(_wish(), claimed=False)
     assert _run(f._hold_removal_for_wish(_lic(1), today_msk=TODAY)) is True
     assert f._send_html.await_count == 0
+
+
+def test_no_renotification_on_following_days():
+    """Слот try_claim уникален ПО ДНЮ — назавтра он снова свободен.
+
+    Если полагаться только на него, письмо про отсрочку уходило бы каждый
+    день все семь дней. Поэтому сначала проверяем, писали ли мы по этой
+    просьбе вообще.
+    """
+    f, storage = _feature(_wish(), claimed=True, already_sent=True)
+    assert _run(f._hold_removal_for_wish(_lic(2), today_msk=TODAY)) is True
+    assert f._send_html.await_count == 0
+    # слот даже не пытаемся занимать, раз письмо уже было
+    storage.try_claim_subscription_outreach.assert_not_awaited()
+
+
+def test_lookup_is_scoped_to_this_wish():
+    """Проверка «писали ли уже» идёт по именному слоту просьбы."""
+    f, storage = _feature(_wish(id=77))
+    _run(f._hold_removal_for_wish(_lic(0), today_msk=TODAY))
+    slug = storage.has_subscription_outreach_since.await_args.args[1]
+    assert slug == "wish_hold_77"
 
 
 def test_open_request_notifies_requester_only():
